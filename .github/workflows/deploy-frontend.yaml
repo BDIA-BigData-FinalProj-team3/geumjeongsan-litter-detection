@@ -3,7 +3,9 @@ name: Deploy Frontend to S3
 on:
   push:
     branches: [ test ]  # main 브랜치에 push할 때 자동 배포
-
+    paths:
+      - 'frontend/**'
+      
 jobs:
   deploy:
     runs-on: ubuntu-latest

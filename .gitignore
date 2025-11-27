@@ -61,3 +61,18 @@ Thumbs.db
 # Optional (if using testing frameworks)
 # ===========================
 coverage
+
+# ===========================
+# Java / Gradle
+# ===========================
+*.class
+*.jar
+*.war
+*.ear
+target/
+build/
+.gradle/
+.mvn/
+mvnw
+mvnw.cmd
+!.mvn/wrapper/maven-wrapper.jar

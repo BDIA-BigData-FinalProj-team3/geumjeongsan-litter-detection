@@ -1,0 +1,26 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: geumjeongsan-backend
+
+app:
+  deployment:
+    time: ${DEPLOYMENT_TIME:}
+  build:
+    number: ${BUILD_NUMBER:unknown}
+  commit:
+    sha: ${COMMIT_SHA:unknown}
+  environment: ${ENVIRONMENT:test}
+
+# Actuator 설정 (Spring Boot 기본 헬스체크도 사용 가능)
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: always
+

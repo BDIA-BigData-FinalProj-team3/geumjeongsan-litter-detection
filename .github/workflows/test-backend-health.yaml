@@ -1,0 +1,40 @@
+name: Test Backend Health Check
+
+on:
+  workflow_dispatch:  # 수동 실행
+  schedule:
+    - cron: '*/30 * * * *'  # 30분마다 실행 (선택사항)
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Health check
+        run: |
+          BACKEND_URL="${{ secrets.BACKEND_URL }}"
+          
+          if [ -z "$BACKEND_URL" ]; then
+            echo "❌ BACKEND_URL secret이 설정되지 않았습니다."
+            exit 1
+          fi
+          
+          echo "=== Health Check ==="
+          HEALTH_RESPONSE=$(curl -s ${BACKEND_URL}/health)
+          echo "$HEALTH_RESPONSE" | jq .
+          
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" ${BACKEND_URL}/health)
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "❌ Health check failed with status: $HTTP_CODE"
+            exit 1
+          fi
+          
+          echo -e "\n=== Deployment Info ==="
+          DEPLOYMENT_INFO=$(curl -s ${BACKEND_URL}/deployment-info)
+          echo "$DEPLOYMENT_INFO" | jq .
+          
+          echo -e "\n=== Response Time ==="
+          time curl -s -o /dev/null ${BACKEND_URL}/health
+          
+          echo -e "\n=== All checks passed! ✓ ==="
+
