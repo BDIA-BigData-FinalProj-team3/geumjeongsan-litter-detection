@@ -81,14 +81,7 @@ jobs:
             --document-name "AWS-RunShellScript" \
             --comment "Deploy geumjeongsan-admin backend from GitHub Actions" \
             --instance-ids "$INSTANCE_ID" \
-            --parameters '{
-              "commands": ["/home/ubuntu/backend/deploy_backend.sh"],
-              "environment": [
-                "DATABASE_URL=${{ secrets.DATABASE_URL }}",
-                "DATABASE_USERNAME=${{ secrets.DATABASE_USERNAME }}",
-                "DATABASE_PASSWORD=${{ secrets.DATABASE_PASSWORD }}"
-              ]
-            }' \
+            --parameters "{\"commands\":[\"export DATABASE_URL='${{ secrets.DATABASE_URL }}'\",\"export DATABASE_USERNAME='${{ secrets.DATABASE_USERNAME }}'\",\"export DATABASE_PASSWORD='${{ secrets.DATABASE_PASSWORD }}'\",\"/home/ubuntu/backend/deploy_backend.sh\"]}" \
             --query "Command.CommandId" \
             --output text)
 
