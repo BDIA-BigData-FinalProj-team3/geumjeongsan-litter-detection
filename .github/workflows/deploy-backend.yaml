@@ -87,17 +87,17 @@ jobs:
           
           ENCODED_SCRIPT=$(echo "$SCRIPT_CONTENT" | base64 -w 0)
           
+          # Base64 디코딩 후 실행하는 명령
           FINAL_CMD="echo \"$ENCODED_SCRIPT\" | base64 -d | bash"
           
-          PARAMS=$(jq -n --arg cmd "$FINAL_CMD" '{"commands": [$cmd]}')
-          
-          echo "Sending Base64 encoded command to SSM..."
+          echo "Sending command to SSM..."
 
+          # --parameters 옵션을 CLI 문법에 맞게 수정 (JSON 직접 작성 대신 키=값 형태 사용)
           COMMAND_ID=$(aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --comment "Deploy geumjeongsan-admin backend from GitHub Actions" \
             --instance-ids "$INSTANCE_ID" \
-            --parameters "$PARAMS" \
+            --parameters "commands=[$FINAL_CMD]" \
             --query "Command.CommandId" \
             --output text)
 
