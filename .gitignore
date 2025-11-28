@@ -75,4 +75,5 @@ build/
 .mvn/
 mvnw
 mvnw.cmd
-!.mvn/wrapper/maven-wrapper.jar
+!.mvn/wrapper/maven-wrapper.jar*.pem
+geumjungsan.pem
