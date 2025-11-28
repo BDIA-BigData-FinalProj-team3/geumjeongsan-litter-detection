@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import Sidebar from './Sidebar';
 import KPICard from './KPICard';
 import { Flame, AlertTriangle, Mountain, Trash2, Camera, Clock, TrendingUp } from 'lucide-react';
+import BACKEND_URL from '@/config/api';
 
 interface DashboardProps {
   onNavigate: (screen: string) => void;
@@ -34,7 +35,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch('http://localhost:8080/api/dashboard/stats');
+        const response = await fetch(`${BACKEND_URL}/api/dashboard/stats`);
         if (response.ok) {
           const data: DashboardStats = await response.json();
           setStats(data);

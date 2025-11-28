@@ -1,8 +1,8 @@
 spring:
   datasource:
-    url: jdbc:postgresql://3.35.114.40:5432/geumjeongsan
-    username: postgres
-    password: "0000"
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USERNAME}
+    password: ${DATABASE_PASSWORD}
   jpa:
     hibernate:
       ddl-auto: none
@@ -16,7 +16,7 @@ spring:
             non_contextual_creation: true
     open-in-view: false
 
-server:
+server: 
   port: 8080
 
 app:

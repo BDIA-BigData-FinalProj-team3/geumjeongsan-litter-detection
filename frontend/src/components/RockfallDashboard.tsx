@@ -1,6 +1,7 @@
 import { Mountain, AlertTriangle, Clock, MapPin, HelpCircle } from 'lucide-react';
 import Sidebar from './Sidebar';
 import { useState, useEffect } from 'react';
+import BACKEND_URL from '@/config/api';
 
 interface RockfallDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -33,7 +34,7 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
     const fetchRockfalls = async () => {
       setLoading(true);
       try {
-        const response = await fetch('http://localhost:8080/api/rockfalls/dashboard');
+        const response = await fetch(`${BACKEND_URL}/api/rockfalls/dashboard`);
         if (response.ok) {
           const dashboardData = await response.json();
           setActiveRockfalls(dashboardData.activeIncidents || []);

@@ -32,6 +32,8 @@ jobs:
         run: |
           cd frontend
           npm run build
+        env:
+          VITE_BACKEND_URL: ${{ secrets.BACKEND_URL }}
 
       # 5. AWS 인증 설정
       - name: Configure AWS credentials

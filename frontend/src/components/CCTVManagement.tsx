@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import Sidebar from './Sidebar';
 import { X, ArrowLeft, Search, ChevronDown, ArrowUpDown, Maximize } from 'lucide-react';
+import BACKEND_URL from '@/config/api';
 
 interface CCTVManagementProps {
   onNavigate: (screen: string) => void;
@@ -64,7 +65,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     const fetchCCTV = async () => {
       setLoading(true);
       try {
-        const response = await fetch('http://localhost:8080/api/cctv');
+        const response = await fetch(`${BACKEND_URL}/api/cctv`);
         if (response.ok) {
           const data = await response.json();
           setCctvList(data);

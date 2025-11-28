@@ -1,6 +1,7 @@
 import { Trash2, AlertTriangle, Clock, MapPin, HelpCircle } from 'lucide-react';
 import Sidebar from './Sidebar';
 import { useState, useEffect } from 'react';
+import BACKEND_URL from '@/config/api';
 
 interface TrashDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -33,7 +34,7 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
     const fetchTrashIncidents = async () => {
       setLoading(true);
       try {
-        const response = await fetch('http://localhost:8080/api/trash/dashboard');
+        const response = await fetch(`${BACKEND_URL}/api/trash/dashboard`);
         if (response.ok) {
           const dashboardData = await response.json();
           setActiveTrashIncidents(dashboardData.activeIncidents || []);

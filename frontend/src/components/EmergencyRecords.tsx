@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { AlertTriangle, Plus, Edit2, Trash2, X, Search } from 'lucide-react';
 import Sidebar from './Sidebar';
+import BACKEND_URL from '@/config/api';
 
 interface EmergencyRecordsProps {
   onNavigate?: (screen: string) => void;
@@ -49,7 +50,7 @@ export default function EmergencyRecords({ onNavigate }: EmergencyRecordsProps) 
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch('http://localhost:8080/api/emergencies');
+        const response = await fetch(`${BACKEND_URL}/api/emergencies`);
         
         if (response.ok) {
           const data: EmergencyRecord[] = await response.json();
@@ -99,12 +100,12 @@ export default function EmergencyRecords({ onNavigate }: EmergencyRecordsProps) 
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch(`http://localhost:8080/api/emergencies/${id}`, {
+        const response = await fetch(`${BACKEND_URL}/api/emergencies/${id}`, {
           method: 'DELETE'
         });
         if (response.ok) {
           // DB에서 삭제된 후, 전체 목록을 다시 조회
-          const fetchResponse = await fetch('http://localhost:8080/api/emergencies');
+          const fetchResponse = await fetch(`${BACKEND_URL}/api/emergencies`);
           if (fetchResponse.ok) {
             const data: EmergencyRecord[] = await fetchResponse.json();
             setRecords(data || []);
@@ -128,7 +129,7 @@ export default function EmergencyRecords({ onNavigate }: EmergencyRecordsProps) 
     try {
       if (editingRecord) {
         // 수정
-        const response = await fetch(`http://localhost:8080/api/emergencies/${editingRecord.id}`, {
+        const response = await fetch(`${BACKEND_URL}/api/emergencies/${editingRecord.id}`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json'
@@ -137,7 +138,7 @@ export default function EmergencyRecords({ onNavigate }: EmergencyRecordsProps) 
         });
         if (response.ok) {
           // DB에서 수정된 후, 전체 목록을 다시 조회
-          const fetchResponse = await fetch('http://localhost:8080/api/emergencies');
+          const fetchResponse = await fetch(`${BACKEND_URL}/api/emergencies`);
           if (fetchResponse.ok) {
             const data: EmergencyRecord[] = await fetchResponse.json();
             setRecords(data || []); // 목록 업데이트 (최신순으로 정렬된 데이터)
@@ -159,7 +160,7 @@ export default function EmergencyRecords({ onNavigate }: EmergencyRecordsProps) 
           submitData.incidentTime = submitData.incidentTime.replace('T', ' ');
         }
         
-        const response = await fetch('http://localhost:8080/api/emergencies', {
+        const response = await fetch(`${BACKEND_URL}/api/emergencies`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
@@ -168,7 +169,7 @@ export default function EmergencyRecords({ onNavigate }: EmergencyRecordsProps) 
         });
         if (response.ok) {
           // DB에 저장된 후, 전체 목록을 다시 조회
-          const fetchResponse = await fetch('http://localhost:8080/api/emergencies');
+          const fetchResponse = await fetch(`${BACKEND_URL}/api/emergencies`);
           if (fetchResponse.ok) {
             const data: EmergencyRecord[] = await fetchResponse.json();
             setRecords(data || []); // 목록 업데이트 (최신순으로 정렬된 데이터)

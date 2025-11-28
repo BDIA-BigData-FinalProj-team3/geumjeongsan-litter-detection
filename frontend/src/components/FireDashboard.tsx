@@ -1,6 +1,7 @@
 import { Flame, AlertTriangle, Clock, Wind, MapPin, HelpCircle, X } from 'lucide-react';
 import Sidebar from './Sidebar';
 import { useState, useEffect } from 'react';
+import BACKEND_URL from '@/config/api';
 
 interface FireDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -36,7 +37,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
     setError(null);
     try {
       // 화재 대시보드 데이터 조회 (발생/처리완료 모두 포함)
-      const response = await fetch('http://localhost:8080/api/fires/dashboard');
+      const response = await fetch(`${BACKEND_URL}/api/fires/dashboard`);
       if (response.ok) {
         const dashboardData = await response.json();
         setActiveFires(dashboardData.activeIncidents || []);

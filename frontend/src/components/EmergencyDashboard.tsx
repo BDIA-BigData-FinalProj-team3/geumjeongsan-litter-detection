@@ -1,6 +1,7 @@
 import { AlertTriangle, Activity, Clock, MapPin, HelpCircle } from 'lucide-react';
 import Sidebar from './Sidebar';
 import { useState, useEffect } from 'react';
+import BACKEND_URL from '@/config/api';
 
 interface EmergencyDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -33,7 +34,7 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
     const fetchEmergencies = async () => {
       setLoading(true);
       try {
-        const response = await fetch('http://localhost:8080/api/emergency-dashboard');
+        const response = await fetch(`${BACKEND_URL}/api/emergency-dashboard`);
         if (response.ok) {
           const dashboardData = await response.json();
           setActiveEmergencies(dashboardData.activeIncidents || []);

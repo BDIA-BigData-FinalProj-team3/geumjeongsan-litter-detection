@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Menu, User, LogOut, ChevronDown, Flame, Trash2, Camera, Wrench, X, Plus, Minus, Download, Bell, AlertCircle, Move, MessageSquare, Eye } from 'lucide-react';
 import Sidebar from './Sidebar';
 import mapImage from 'figma:asset/e2eee362b605222576aa0e01e59c017ebe22e4e9.png';
+import BACKEND_URL from '@/config/api';
 
 interface MainMapProps {
   onNavigate: (screen: string) => void;
@@ -146,7 +147,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     const fetchMapData = async () => {
       setLoading(true);
       try {
-        const response = await fetch('http://localhost:8080/api/map/data');
+        const response = await fetch(`${BACKEND_URL}/api/map/data`);
         if (response.ok) {
           const data = await response.json();
           setMapData(data);
