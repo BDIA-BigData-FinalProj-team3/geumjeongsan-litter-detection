@@ -74,14 +74,28 @@ jobs:
 
       # 8) SSM으로 EC2에서 배포 스크립트 실행
       - name: Deploy on EC2 via SSM
+        env:
+          DB_URL: ${{ secrets.DATABASE_URL }}
+          DB_USER: ${{ secrets.DATABASE_USERNAME }}
+          DB_PASS: ${{ secrets.DATABASE_PASSWORD }}
         run: |
           INSTANCE_ID="${{ secrets.BACKEND_EC2_INSTANCE_ID }}"
+          
+          # 1. 실행할 쉘 명령어 구성
+          # 환경 변수를 export 하고 스크립트를 실행합니다.
+          SHELL_CMD="export DATABASE_URL=\"$DB_URL\" && export DATABASE_USERNAME=\"$DB_USER\" && export DATABASE_PASSWORD=\"$DB_PASS\" && /home/ubuntu/backend/deploy_backend.sh"
+          
+          # 2. jq를 사용하여 안전한 JSON 파라미터 생성
+          # GitHub Actions Runner(ubuntu-latest)에는 jq가 설치되어 있어 안전하게 JSON을 생성할 수 있습니다.
+          PARAMS=$(jq -n --arg cmd "$SHELL_CMD" '{"commands": [$cmd]}')
+          
+          echo "Generated Parameters: $PARAMS"
 
           COMMAND_ID=$(aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --comment "Deploy geumjeongsan-admin backend from GitHub Actions" \
             --instance-ids "$INSTANCE_ID" \
-            --parameters "{\"commands\":[\"export DATABASE_URL='${{ secrets.DATABASE_URL }}'\",\"export DATABASE_USERNAME='${{ secrets.DATABASE_USERNAME }}'\",\"export DATABASE_PASSWORD='${{ secrets.DATABASE_PASSWORD }}'\",\"/home/ubuntu/backend/deploy_backend.sh\"]}" \
+            --parameters "$PARAMS" \
             --query "Command.CommandId" \
             --output text)
 
