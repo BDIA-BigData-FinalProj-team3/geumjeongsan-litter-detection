@@ -1,26 +1,56 @@
 import { AlertTriangle, Activity, Clock, MapPin, HelpCircle } from 'lucide-react';
 import Sidebar from './Sidebar';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 interface EmergencyDashboardProps {
   onNavigate?: (screen: string) => void;
 }
 
+interface Emergency {
+  id: number;
+  type?: string;
+  cctvId: string;
+  incidentTime: string;  // 백엔드 필드명과 일치
+  status: string;
+  severity: 'high' | 'medium' | 'low';
+  handler: string;
+  responseTime?: string;
+  duration?: string;
+}
+
 export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardProps) {
   const [viewMode, setViewMode] = useState<'active' | 'completed'>('active');
   const [showTooltip, setShowTooltip] = useState(false);
+  const [activeEmergencies, setActiveEmergencies] = useState<Emergency[]>([]);
+  const [completedEmergencies, setCompletedEmergencies] = useState<Emergency[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [todayCount, setTodayCount] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [avgResponseTime, setAvgResponseTime] = useState(0);
+  const [riskAreas, setRiskAreas] = useState<string[]>([]);
 
-  const activeEmergencies = [
-    { id: 1, type: '응급환자', cctvId: 'CCTV-001', time: '2025-11-25 14:20', status: '대응중', severity: 'high', handler: '119' },
-    { id: 2, type: '낙상사고', cctvId: 'CCTV-003', time: '2025-11-25 14:00', status: '대기중', severity: 'medium', handler: '미배정' },
-    { id: 3, type: '심정지', cctvId: 'CCTV-005', time: '2025-11-25 13:45', status: '대응중', severity: 'high', handler: '직원 김민수' },
-  ];
-
-  const completedEmergencies = [
-    { id: 4, type: '부상', cctvId: 'CCTV-002', time: '2025-11-25 13:30', responseTime: '2025-11-25 13:42', duration: '12분', status: '처리완료', severity: 'medium', handler: '직원 박영희' },
-    { id: 5, type: '심정지', cctvId: 'CCTV-001', time: '2025-11-25 12:30', responseTime: '2025-11-25 12:35', duration: '5분', status: '처리완료', severity: 'high', handler: '119' },
-    { id: 6, type: '낙상사고', cctvId: 'CCTV-004', time: '2025-11-25 11:30', responseTime: '2025-11-25 11:48', duration: '18분', status: '처리완료', severity: 'low', handler: '직원 이준호' },
-  ];
+  useEffect(() => {
+    const fetchEmergencies = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch('http://localhost:8080/api/emergency-dashboard');
+        if (response.ok) {
+          const dashboardData = await response.json();
+          setActiveEmergencies(dashboardData.activeIncidents || []);
+          setCompletedEmergencies(dashboardData.resolvedIncidents || []);
+          setTodayCount(dashboardData.todayCount || 0);
+          setPendingCount(dashboardData.pendingCount || 0);
+          setAvgResponseTime(dashboardData.avgResponseTime || 0);
+          setRiskAreas(dashboardData.riskAreas || []);
+        }
+      } catch (err) {
+        console.error('응급 상황 데이터 조회 실패:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchEmergencies();
+  }, []);
 
   const emergencies = viewMode === 'active' ? activeEmergencies : completedEmergencies;
 
@@ -39,7 +69,7 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
                   <span className="text-gray-600">당일 발생</span>
                   <AlertTriangle className="w-5 h-5 text-red-500" />
                 </div>
-                <div className="text-gray-900">3건</div>
+                <div className="text-gray-900">{todayCount}건</div>
               </div>
 
               <div className="bg-white p-6 shadow-sm border border-gray-200 rounded-lg">
@@ -47,7 +77,7 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
                   <span className="text-gray-600">대기중</span>
                   <Activity className="w-5 h-5 text-orange-500" />
                 </div>
-                <div className="text-gray-900">1건</div>
+                <div className="text-gray-900">{pendingCount}건</div>
               </div>
 
               <div className="bg-white p-6 shadow-sm border border-gray-200 rounded-lg">
@@ -55,7 +85,7 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
                   <span className="text-gray-600">평균 대응시간</span>
                   <Clock className="w-5 h-5 text-blue-500" />
                 </div>
-                <div className="text-gray-900">8.5분</div>
+                <div className="text-gray-900">{avgResponseTime > 0 ? `${avgResponseTime.toFixed(1)}분` : '-'}</div>
               </div>
 
               <div className="bg-white p-6 shadow-sm border border-gray-200 rounded-lg relative">
@@ -69,7 +99,7 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
                   </div>
                   {showTooltip && (
                     <div className="absolute right-0 bottom-8 bg-gray-900 text-white text-xs px-3 py-2 whitespace-nowrap shadow-lg" style={{ borderRadius: '4px' }}>
-                      당월 6건 발생 지역
+                      당월 발생 지역
                       <div className="absolute -bottom-1 right-2 w-2 h-2 bg-gray-900 transform rotate-45"></div>
                     </div>
                   )}
@@ -78,7 +108,7 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
                   <span className="text-gray-600">위험지역</span>
                   <MapPin className="w-5 h-5 text-purple-500" />
                 </div>
-                <div className="text-gray-900">등산로 2</div>
+                <div className="text-gray-900">{riskAreas.length > 0 ? riskAreas[0] : '-'}</div>
               </div>
             </div>
 
@@ -134,13 +164,13 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
                   <tbody>
                     {emergencies.map((emergency) => (
                       <tr key={emergency.id} className="border-b border-gray-100 hover:bg-gray-50">
-                        <td className="px-6 py-4 text-gray-900">{emergency.type}</td>
+                        <td className="px-6 py-4 text-gray-900">{emergency.type || '응급환자'}</td>
                         <td className="px-6 py-4 text-gray-600">{emergency.cctvId}</td>
-                        <td className="px-6 py-4 text-gray-600">{emergency.time}</td>
-                        {viewMode === 'completed' && 'responseTime' in emergency && (
+                        <td className="px-6 py-4 text-gray-600">{emergency.incidentTime || '-'}</td>
+                        {viewMode === 'completed' && (
                           <>
-                            <td className="px-6 py-4 text-gray-600">{emergency.responseTime}</td>
-                            <td className="px-6 py-4 text-gray-600">{emergency.duration}</td>
+                            <td className="px-6 py-4 text-gray-600">{emergency.responseTime || '-'}</td>
+                            <td className="px-6 py-4 text-gray-600">{emergency.duration || '-'}</td>
                           </>
                         )}
                         <td className="px-6 py-4">

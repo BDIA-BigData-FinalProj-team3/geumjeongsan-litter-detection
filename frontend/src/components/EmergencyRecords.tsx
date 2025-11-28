@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { AlertTriangle, Plus, Edit2, Trash2, X, Search, Calendar } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { AlertTriangle, Plus, Edit2, Trash2, X, Search } from 'lucide-react';
 import Sidebar from './Sidebar';
 
 interface EmergencyRecordsProps {
@@ -22,54 +22,13 @@ interface EmergencyRecord {
 }
 
 export default function EmergencyRecords({ onNavigate }: EmergencyRecordsProps) {
-  const [records, setRecords] = useState<EmergencyRecord[]>([
-    {
-      id: 1,
-      patientName: '홍길동',
-      age: 45,
-      gender: '남',
-      location: '등산로 2',
-      cctvId: 'CCTV-001',
-      incidentTime: '2025-11-25 14:20',
-      symptoms: '심정지',
-      severity: 'critical',
-      status: '이송완료',
-      responseTeam: '119구조대 A팀',
-      notes: 'AED 사용 후 이송'
-    },
-    {
-      id: 2,
-      patientName: '김영희',
-      age: 32,
-      gender: '여',
-      location: '등산로 3',
-      cctvId: 'CCTV-003',
-      incidentTime: '2025-11-25 14:00',
-      symptoms: '낙상사고',
-      severity: 'moderate',
-      status: '대응중',
-      responseTeam: '119구조대 B팀',
-      notes: '발목 부상 의심'
-    },
-    {
-      id: 3,
-      patientName: '박철수',
-      age: 58,
-      gender: '남',
-      location: '공원중앙',
-      cctvId: 'CCTV-005',
-      incidentTime: '2025-11-25 13:45',
-      symptoms: '호흡곤란',
-      severity: 'critical',
-      status: '처리완료',
-      responseTeam: '119구조대 A팀',
-      notes: '천식 환자, 산소 공급 후 회복'
-    },
-  ]);
+  const [records, setRecords] = useState<EmergencyRecord[]>([]);
 
   const [showModal, setShowModal] = useState(false);
   const [editingRecord, setEditingRecord] = useState<EmergencyRecord | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [formData, setFormData] = useState<Partial<EmergencyRecord>>({
     patientName: '',
     age: 0,
@@ -83,6 +42,33 @@ export default function EmergencyRecords({ onNavigate }: EmergencyRecordsProps) 
     responseTeam: '',
     notes: ''
   });
+
+  // API에서 데이터 로드
+  useEffect(() => {
+    const fetchRecords = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch('http://localhost:8080/api/emergencies');
+        
+        if (response.ok) {
+          const data: EmergencyRecord[] = await response.json();
+          setRecords(data || []); // 빈 배열이어도 정상 처리
+        } else {
+          const errorText = await response.text();
+          setError(`응급환자 기록을 불러오는데 실패했습니다. (${response.status}: ${errorText})`);
+          console.error('응급환자 기록 조회 실패:', response.status, errorText);
+        }
+      } catch (err: any) {
+        const errorMessage = err.message || '알 수 없는 오류';
+        setError(`서버에 연결할 수 없습니다: ${errorMessage}. 백엔드가 실행 중인지 확인해주세요.`);
+        console.error('API 호출 실패:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchRecords();
+  }, []);
 
   const handleCreate = () => {
     setEditingRecord(null);
@@ -108,23 +94,133 @@ export default function EmergencyRecords({ onNavigate }: EmergencyRecordsProps) 
     setShowModal(true);
   };
 
-  const handleDelete = (id: number) => {
+  const handleDelete = async (id: number) => {
     if (confirm('정말로 이 기록을 삭제하시겠습니까?')) {
-      setRecords(records.filter(r => r.id !== id));
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(`http://localhost:8080/api/emergencies/${id}`, {
+          method: 'DELETE'
+        });
+        if (response.ok) {
+          // DB에서 삭제된 후, 전체 목록을 다시 조회
+          const fetchResponse = await fetch('http://localhost:8080/api/emergencies');
+          if (fetchResponse.ok) {
+            const data: EmergencyRecord[] = await fetchResponse.json();
+            setRecords(data || []);
+          }
+        } else {
+          setError('삭제에 실패했습니다.');
+        }
+      } catch (err) {
+        setError('삭제 중 오류가 발생했습니다.');
+        console.error('삭제 실패:', err);
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingRecord) {
-      // 수정
-      setRecords(records.map(r => r.id === editingRecord.id ? { ...formData, id: r.id } as EmergencyRecord : r));
-    } else {
-      // 신규 등록
-      const newId = Math.max(...records.map(r => r.id), 0) + 1;
-      setRecords([...records, { ...formData, id: newId } as EmergencyRecord]);
+    setLoading(true);
+    setError(null);
+    try {
+      if (editingRecord) {
+        // 수정
+        const response = await fetch(`http://localhost:8080/api/emergencies/${editingRecord.id}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(formData)
+        });
+        if (response.ok) {
+          // DB에서 수정된 후, 전체 목록을 다시 조회
+          const fetchResponse = await fetch('http://localhost:8080/api/emergencies');
+          if (fetchResponse.ok) {
+            const data: EmergencyRecord[] = await fetchResponse.json();
+            setRecords(data || []); // 목록 업데이트 (최신순으로 정렬된 데이터)
+          }
+          // 모달 닫기 및 상태 초기화
+          setShowModal(false);
+          setEditingRecord(null); // 수정 모드 해제
+          setError(null); // 성공 시 에러 메시지 제거
+        } else {
+          const errorText = await response.text();
+          setError(`수정 실패: ${errorText || '알 수 없는 오류'}`);
+        }
+      } else {
+        // 신규 등록
+        // incidentTime 형식 확인 및 변환
+        const submitData = { ...formData };
+        if (submitData.incidentTime) {
+          // datetime-local 형식 (2025-11-28T10:00)을 백엔드 형식 (2025-11-28 10:00)으로 변환
+          submitData.incidentTime = submitData.incidentTime.replace('T', ' ');
+        }
+        
+        const response = await fetch('http://localhost:8080/api/emergencies', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(submitData)
+        });
+        if (response.ok) {
+          // DB에 저장된 후, 전체 목록을 다시 조회
+          const fetchResponse = await fetch('http://localhost:8080/api/emergencies');
+          if (fetchResponse.ok) {
+            const data: EmergencyRecord[] = await fetchResponse.json();
+            setRecords(data || []); // 목록 업데이트 (최신순으로 정렬된 데이터)
+            // 모달 닫기 및 상태 초기화
+            setShowModal(false);
+            setEditingRecord(null); // 수정 모드 해제
+            setError(null); // 성공 시 에러 메시지 제거
+            // 폼 초기화
+            setFormData({
+              patientName: '',
+              age: 0,
+              gender: '남',
+              location: '',
+              cctvId: '',
+              incidentTime: '',
+              symptoms: '',
+              severity: 'moderate',
+              status: '대응중',
+              responseTeam: '',
+              notes: ''
+            });
+          } else {
+            const errorText = await fetchResponse.text();
+            setError(`목록 조회 실패: ${errorText || '알 수 없는 오류'}`);
+            console.error('목록 조회 실패:', fetchResponse.status, errorText);
+          }
+        } else {
+          let errorText = '';
+          try {
+            errorText = await response.text();
+            // 빈 응답인 경우 헤더에서 에러 메시지 확인
+            if (!errorText || errorText.trim().length === 0) {
+              errorText = response.headers.get('X-Error-Message') || '알 수 없는 오류';
+            }
+          } catch (e) {
+            errorText = '응답을 읽을 수 없습니다';
+          }
+          setError(`등록 실패 (${response.status}): ${errorText}`);
+          console.error('등록 실패:', {
+            status: response.status,
+            statusText: response.statusText,
+            errorText: errorText,
+            requestData: formData
+          });
+        }
+      }
+    } catch (err) {
+      setError('서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해주세요.');
+      console.error('저장 실패:', err);
+    } finally {
+      setLoading(false);
     }
-    setShowModal(false);
   };
 
   const filteredRecords = records.filter(record =>
@@ -144,13 +240,33 @@ export default function EmergencyRecords({ onNavigate }: EmergencyRecordsProps) 
               <h1 className="text-gray-900">응급환자 기록 관리</h1>
               <button
                 onClick={handleCreate}
-                className="px-6 py-3 bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center gap-2"
+                disabled={loading}
+                className="px-6 py-3 bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ borderRadius: '0px' }}
               >
                 <Plus className="w-5 h-5" />
                 신규 기록 등록
               </button>
             </div>
+
+            {/* 에러 메시지 */}
+            {error && (
+              <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700" style={{ borderRadius: '0px' }}>
+                <div className="flex items-center justify-between">
+                  <span>{error}</span>
+                  <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* 로딩 표시 */}
+            {loading && (
+              <div className="mb-6 p-4 bg-blue-50 border border-blue-200 text-blue-700 text-center" style={{ borderRadius: '0px' }}>
+                처리 중...
+              </div>
+            )}
 
             {/* 검색 바 */}
             <div className="bg-white p-4 shadow-sm border border-gray-200 mb-6" style={{ borderRadius: '0px' }}>
@@ -286,7 +402,7 @@ export default function EmergencyRecords({ onNavigate }: EmergencyRecordsProps) 
       {/* 등록/수정 모달 */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto" style={{ borderRadius: '0px' }}>
+          <div className="bg-white w-full max-w-2xl" style={{ borderRadius: '0px' }}>
             <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between">
               <h2 className="text-white">{editingRecord ? '응급환자 기록 수정' : '신규 응급환자 기록 등록'}</h2>
               <button onClick={() => setShowModal(false)} className="text-white hover:text-gray-200">
@@ -359,8 +475,11 @@ export default function EmergencyRecords({ onNavigate }: EmergencyRecordsProps) 
                   <input
                     type="datetime-local"
                     required
-                    value={formData.incidentTime?.replace(' ', 'T')}
-                    onChange={(e) => setFormData({ ...formData, incidentTime: e.target.value.replace('T', ' ') })}
+                    value={formData.incidentTime ? formData.incidentTime.replace(' ', 'T').substring(0, 16) : ''}
+                    onChange={(e) => {
+                      const value = e.target.value.replace('T', ' ');
+                      setFormData({ ...formData, incidentTime: value });
+                    }}
                     className="w-full px-4 py-2 border border-gray-300 focus:outline-none focus:border-emerald-500"
                     style={{ borderRadius: '0px' }}
                   />

@@ -41,19 +41,62 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
   const [selectedPowers, setSelectedPowers] = useState<string[]>([]);
 
+  const [cctvList, setCctvList] = useState<Array<{
+    id: number;
+    cctvCode: string;
+    name: string;
+    locationDesc: string | null;
+    installDate: string | null;
+    modelName: string | null;
+    resolution: string | null;
+    isActive: boolean | null;
+    powerStatus: string | null;
+    longitude: number | null;
+    latitude: number | null;
+    incidentCount: number;
+    lastIncidentTime: string | null;
+    lastIncidentType: string | null;
+  }>>([]);
+  const [loading, setLoading] = useState(false);
+
+  // CCTV 목록 가져오기
+  useEffect(() => {
+    const fetchCCTV = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch('http://localhost:8080/api/cctv');
+        if (response.ok) {
+          const data = await response.json();
+          setCctvList(data);
+        } else {
+          const errorText = await response.text();
+          console.error('CCTV 데이터를 불러오는데 실패했습니다:', response.status, errorText);
+        }
+      } catch (err) {
+        console.error('API 호출 실패:', err);
+        setCctvList([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchCCTV();
+  }, []);
+
   // Set initial selected CCTV if provided
   useEffect(() => {
     if (initialSelectedCCTVId) {
-      const location = getLocation(initialSelectedCCTVId);
-      setSelectedCCTV({
-        id: initialSelectedCCTVId,
-        location,
-        installDate: '2024-01-15',
-        model: 'HD-2000X',
-        type: '고정',
-      });
+      const cctv = cctvList.find(c => c.id === initialSelectedCCTVId);
+      if (cctv) {
+        setSelectedCCTV({
+          id: cctv.id,
+          location: cctv.locationDesc || cctv.name,
+          installDate: cctv.installDate || '2024-01-15',
+          model: cctv.modelName || 'HD-2000X',
+          type: '고정',
+        });
+      }
     }
-  }, [initialSelectedCCTVId]);
+  }, [initialSelectedCCTVId, cctvList]);
 
   const getLocation = (id: string) => {
     const idNum = parseInt(id.split('-')[1]);
@@ -63,50 +106,33 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     return `전망대 ${idNum - 13}`;
   };
 
-  const cctvThumbnails = [
-    { id: 'CCTV-001', time: '2025-11-21 14:23', detecting: true },
-    { id: 'CCTV-002', time: '2025-11-21 14:20', detecting: false },
-    { id: 'CCTV-003', time: '2025-11-21 14:18', detecting: true },
-    { id: 'CCTV-004', time: '2025-11-21 14:15', detecting: false },
-    { id: 'CCTV-005', time: '2025-11-21 14:12', detecting: true },
-    { id: 'CCTV-006', time: '2025-11-21 14:10', detecting: false },
-    { id: 'CCTV-007', time: '2025-11-21 14:08', detecting: false },
-    { id: 'CCTV-008', time: '2025-11-21 14:05', detecting: true },
-    { id: 'CCTV-009', time: '2025-11-21 14:03', detecting: false },
-    { id: 'CCTV-010', time: '2025-11-21 14:00', detecting: false },
-    { id: 'CCTV-011', time: '2025-11-21 13:58', detecting: true },
-    { id: 'CCTV-012', time: '2025-11-21 13:55', detecting: false },
-    { id: 'CCTV-013', time: '2025-11-21 13:53', detecting: false },
-    { id: 'CCTV-014', time: '2025-11-21 13:50', detecting: true },
-    { id: 'CCTV-015', time: '2025-11-21 13:48', detecting: false },
-    { id: 'CCTV-016', time: '2025-11-21 13:45', detecting: false },
-  ];
+  // CCTV 썸네일 데이터 (최근 사건이 있는 CCTV만 표시)
+  const cctvThumbnails = cctvList
+    .filter(cctv => cctv.incidentCount > 0)
+    .slice(0, 16)
+    .map(cctv => ({
+      id: `CCTV-${cctv.id.toString().padStart(3, '0')}`,
+      time: cctv.lastIncidentTime || new Date().toISOString().slice(0, 16).replace('T', ' '),
+      detecting: cctv.incidentCount > 0,
+    }));
 
-  const events: Event[] = [
-    { id: '1', time: '2025-11-21 14:23', trashType: '비닐봉투', accuracy: '94%' },
-    { id: '2', time: '2025-11-21 13:45', trashType: '플라스틱', accuracy: '89%' },
-    { id: '3', time: '2025-11-21 12:30', trashType: '종이', accuracy: '91%' },
-  ];
-
-  // CCTV 현황 데이터 (중복 없이 각 CCTV ID별 상태) - 전원 상태가 off이면 상태는 무조건 점검필요
-  const cctvStatusDataRaw = [
-    { id: 'CCTV-001', location: '등산로 1', status: '정상', power: 'on' as const, lastDetection: '2025-11-21 14:23', detectedIncident: '쓰레기' },
-    { id: 'CCTV-002', location: '등산로 2', status: '정상', power: 'on' as const, lastDetection: '2025-11-21 14:20', detectedIncident: '화재' },
-    { id: 'CCTV-003', location: '등산로 3', status: '점검필요', power: 'on' as const, lastDetection: '2025-11-21 14:18', detectedIncident: '낙석' },
-    { id: 'CCTV-004', location: '등산로 4', status: '정상', power: 'on' as const, lastDetection: '2025-11-21 14:15', detectedIncident: '쓰레기' },
-    { id: 'CCTV-005', location: '등산로 입구 1', status: '정상', power: 'on' as const, lastDetection: '2025-11-21 14:12', detectedIncident: '화재' },
-    { id: 'CCTV-006', location: '등산로 입구 2', status: '정상', power: 'off' as const, lastDetection: '2025-11-21 14:10', detectedIncident: '쓰레기' },
-    { id: 'CCTV-007', location: '등산로 입구 3', status: '정상', power: 'on' as const, lastDetection: '2025-11-21 14:08', detectedIncident: '낙석' },
-    { id: 'CCTV-008', location: '등산로 입구 4', status: '점검필요', power: 'on' as const, lastDetection: '2025-11-21 14:05', detectedIncident: '쓰레기' },
-    { id: 'CCTV-009', location: '등산로 입구 5', status: '정상', power: 'on' as const, lastDetection: '2025-11-21 14:03', detectedIncident: '화재' },
-    { id: 'CCTV-010', location: '휴게소 1', status: '정상', power: 'on' as const, lastDetection: '2025-11-21 14:00', detectedIncident: '낙석' },
-    { id: 'CCTV-011', location: '휴게소 2', status: '정상', power: 'off' as const, lastDetection: '2025-11-21 13:58', detectedIncident: '쓰레기' },
-    { id: 'CCTV-012', location: '휴게소 3', status: '정상', power: 'on' as const, lastDetection: '2025-11-21 13:55', detectedIncident: '화재' },
-    { id: 'CCTV-013', location: '휴게소 4', status: '정상', power: 'on' as const, lastDetection: '2025-11-21 13:53', detectedIncident: '쓰레기' },
-    { id: 'CCTV-014', location: '전망대 1', status: '정상', power: 'on' as const, lastDetection: '2025-11-21 13:50', detectedIncident: '낙석' },
-    { id: 'CCTV-015', location: '전망대 2', status: '정상', power: 'off' as const, lastDetection: '2025-11-21 13:48', detectedIncident: '화재' },
-    { id: 'CCTV-016', location: '전망대 3', status: '점검필요', power: 'on' as const, lastDetection: '2025-11-21 13:45', detectedIncident: '쓰레기' },
-  ];
+  // CCTV 현황 데이터 (DB에서 가져온 데이터 기반)
+  const cctvStatusDataRaw = cctvList.map(cctv => {
+    const incidentTypeMap: { [key: string]: string } = {
+      'FIRE': '화재',
+      'ROCKFALL': '낙석',
+      'TRASH': '쓰레기',
+      'EMERGENCY': '응급',
+    };
+    return {
+      id: `CCTV-${cctv.id.toString().padStart(3, '0')}`,
+      location: cctv.locationDesc || cctv.name,
+      status: (cctv.isActive && cctv.powerStatus === 'on') ? '정상' : '점검필요',
+      power: (cctv.powerStatus === 'on' ? 'on' : 'off') as const,
+      lastDetection: cctv.lastIncidentTime || '없음',
+      detectedIncident: cctv.lastIncidentType ? (incidentTypeMap[cctv.lastIncidentType] || cctv.lastIncidentType) : '없음',
+    };
+  });
 
   // Apply rule: if power is off, status must be '점검필요'
   const cctvStatusData = cctvStatusDataRaw.map(cctv => ({
@@ -241,13 +267,14 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   const filteredLogData = selectedCCTV ? logData.filter(log => log.id === selectedCCTV.id) : logData;
 
   const handleCCTVClick = (cctvId: string) => {
-    if (selectedCCTV) {
-      // If already selected, just update selection
+    const cctvIdNum = parseInt(cctvId.split('-')[1]);
+    const cctv = cctvList.find(c => c.id === cctvIdNum);
+    if (cctv) {
       setSelectedCCTV({
         id: cctvId,
-        location: getLocation(cctvId),
-        installDate: '2024-01-15',
-        model: 'HD-2000X',
+        location: cctv.locationDesc || cctv.name,
+        installDate: cctv.installDate || '2024-01-15',
+        model: cctv.modelName || 'HD-2000X',
         type: '고정',
       });
     } else {
@@ -405,25 +432,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                       </button>
                     </div>
                     <div className="space-y-4">
-                      {events.map((event) => (
-                        <div
-                          key={event.id}
-                          onClick={() => setSelectedEvent(event)}
-                          className="bg-gray-50 p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
-                          style={{ borderRadius: '0px' }}
-                        >
-                          <div className="flex gap-4">
-                            <div className="w-20 h-20 bg-gray-800 flex items-center justify-center" style={{ borderRadius: '0px' }}>
-                              <span className="text-white text-xs">썸네일</span>
-                            </div>
-                            <div className="flex-1">
-                              <p className="text-sm text-gray-600">탐지 시간: {event.time}</p>
-                              <p className="text-sm text-gray-900">쓰레기 종류: {event.trashType}</p>
-                              <p className="text-sm text-gray-900">정확도: {event.accuracy}</p>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
+                      <p className="text-sm text-gray-500 text-center py-4">최근 탐지 이벤트가 없습니다.</p>
                     </div>
                   </div>
                 )}

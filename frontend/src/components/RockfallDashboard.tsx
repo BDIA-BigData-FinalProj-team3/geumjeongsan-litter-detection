@@ -1,25 +1,56 @@
 import { Mountain, AlertTriangle, Clock, MapPin, HelpCircle } from 'lucide-react';
 import Sidebar from './Sidebar';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 interface RockfallDashboardProps {
   onNavigate?: (screen: string) => void;
 }
 
+interface Rockfall {
+  id: number;
+  cctvId: string;
+  incidentTime: string;  // 백엔드 필드명과 일치
+  status: string;
+  severity: 'high' | 'medium' | 'low';
+  magnitude: string;
+  handler: string;
+  responseTime?: string;
+  duration?: string;
+}
+
 export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps) {
   const [viewMode, setViewMode] = useState<'active' | 'completed'>('active');
   const [showTooltip, setShowTooltip] = useState(false);
+  const [activeRockfalls, setActiveRockfalls] = useState<Rockfall[]>([]);
+  const [completedRockfalls, setCompletedRockfalls] = useState<Rockfall[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [todayCount, setTodayCount] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [avgResponseTime, setAvgResponseTime] = useState(0);
+  const [riskAreas, setRiskAreas] = useState<string[]>([]);
 
-  const activeRockfalls = [
-    { id: 1, cctvId: 'CCTV-003', time: '2025-11-25 14:00', status: '대응중', severity: 'high', magnitude: '3.2', handler: '산림 관리 직원' },
-    { id: 2, cctvId: 'CCTV-007', time: '2025-11-25 13:40', status: '대기중', severity: 'medium', magnitude: '2.9', handler: '산림 관리 직원' },
-  ];
-
-  const completedRockfalls = [
-    { id: 3, cctvId: 'CCTV-002', time: '2025-11-25 13:00', responseTime: '2025-11-25 13:15', duration: '15분', status: '처리완료', severity: 'low', magnitude: '1.8', handler: '산림 관리 직원' },
-    { id: 4, cctvId: 'CCTV-004', time: '2025-11-25 11:30', responseTime: '2025-11-25 11:55', duration: '25분', status: '처리완료', severity: 'medium', magnitude: '2.1', handler: '산림 관리 직원' },
-    { id: 5, cctvId: 'CCTV-005', time: '2025-11-25 09:30', responseTime: '2025-11-25 09:50', duration: '20분', status: '처리완료', severity: 'low', magnitude: '1.5', handler: '산림 관리 직원' },
-  ];
+  useEffect(() => {
+    const fetchRockfalls = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch('http://localhost:8080/api/rockfalls/dashboard');
+        if (response.ok) {
+          const dashboardData = await response.json();
+          setActiveRockfalls(dashboardData.activeIncidents || []);
+          setCompletedRockfalls(dashboardData.resolvedIncidents || []);
+          setTodayCount(dashboardData.todayCount || 0);
+          setPendingCount(dashboardData.pendingCount || 0);
+          setAvgResponseTime(dashboardData.avgResponseTime || 0);
+          setRiskAreas(dashboardData.riskAreas || []);
+        }
+      } catch (err) {
+        console.error('낙석 데이터 조회 실패:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchRockfalls();
+  }, []);
 
   const rockfalls = viewMode === 'active' ? activeRockfalls : completedRockfalls;
 
@@ -38,7 +69,7 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
                   <span className="text-gray-600">당일 발생</span>
                   <Mountain className="w-5 h-5 text-amber-800" />
                 </div>
-                <div className="text-gray-900">3건</div>
+                <div className="text-gray-900">{todayCount}건</div>
               </div>
 
               <div className="bg-white p-6 shadow-sm border border-gray-200 rounded-lg">
@@ -46,7 +77,7 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
                   <span className="text-gray-600">대기중</span>
                   <AlertTriangle className="w-5 h-5 text-orange-500" />
                 </div>
-                <div className="text-gray-900">1건</div>
+                <div className="text-gray-900">{pendingCount}건</div>
               </div>
 
               <div className="bg-white p-6 shadow-sm border border-gray-200 rounded-lg">
@@ -54,7 +85,7 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
                   <span className="text-gray-600">평균 대응시간</span>
                   <Clock className="w-5 h-5 text-blue-500" />
                 </div>
-                <div className="text-gray-900">20분</div>
+                <div className="text-gray-900">{avgResponseTime > 0 ? `${avgResponseTime.toFixed(1)}분` : '-'}</div>
               </div>
 
               <div className="bg-white p-6 shadow-sm border border-gray-200 rounded-lg relative">
@@ -68,7 +99,7 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
                   </div>
                   {showTooltip && (
                     <div className="absolute right-0 bottom-8 bg-gray-900 text-white text-xs px-3 py-2 whitespace-nowrap shadow-lg" style={{ borderRadius: '4px' }}>
-                      당월 4건 발생 지역
+                      당월 발생 지역
                       <div className="absolute -bottom-1 right-2 w-2 h-2 bg-gray-900 transform rotate-45"></div>
                     </div>
                   )}
@@ -77,7 +108,7 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
                   <span className="text-gray-600">위험지역</span>
                   <MapPin className="w-5 h-5 text-purple-500" />
                 </div>
-                <div className="text-gray-900">등산로 3</div>
+                <div className="text-gray-900">{riskAreas.length > 0 ? riskAreas[0] : '-'}</div>
               </div>
             </div>
 
@@ -134,11 +165,11 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
                     {rockfalls.map((rockfall) => (
                       <tr key={rockfall.id} className="border-b border-gray-100 hover:bg-gray-50">
                         <td className="px-6 py-4 text-gray-900">{rockfall.cctvId}</td>
-                        <td className="px-6 py-4 text-gray-600">{rockfall.time}</td>
-                        {viewMode === 'completed' && 'responseTime' in rockfall && (
+                        <td className="px-6 py-4 text-gray-600">{rockfall.incidentTime || '-'}</td>
+                        {viewMode === 'completed' && (
                           <>
-                            <td className="px-6 py-4 text-gray-600">{rockfall.responseTime}</td>
-                            <td className="px-6 py-4 text-gray-600">{rockfall.duration}</td>
+                            <td className="px-6 py-4 text-gray-600">{rockfall.responseTime || '-'}</td>
+                            <td className="px-6 py-4 text-gray-600">{rockfall.duration || '-'}</td>
                           </>
                         )}
                         <td className="px-6 py-4 text-gray-600">{rockfall.magnitude}</td>

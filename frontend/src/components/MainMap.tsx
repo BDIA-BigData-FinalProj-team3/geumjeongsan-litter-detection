@@ -94,6 +94,73 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   ]);
 
   const [removedCCTVs, setRemovedCCTVs] = useState<Set<string>>(new Set());
+  const [mapData, setMapData] = useState<{
+    cctvMarkers: Array<{
+      id: string;
+      cctvCode: string;
+      name: string;
+      location: string;
+      status: string;
+      longitude: number | null;
+      latitude: number | null;
+      incidentCount: number;
+      incidents: { fire?: number; rockfall?: number; trash?: number; emergency?: number };
+    }>;
+    incidentMarkers: Array<{
+      id: number;
+      cctvId: string;
+      incidentType: string;
+      severity: string;
+      status: string;
+      time: string;
+      longitude: number | null;
+      latitude: number | null;
+    }>;
+    helicopterSpots: Array<{ id: number; name: string; longitude: number | null; latitude: number | null }>;
+    rockfallSensorSpots: Array<{ id: number; name: string; longitude: number | null; latitude: number | null }>;
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // 지도 범위 (PostGIS에서 확인한 실제 범위)
+  const MAP_BOUNDS = {
+    minLon: 129.0375,
+    maxLon: 129.098,
+    minLat: 35.231,
+    maxLat: 35.303,
+  };
+
+  // 경도/위도를 퍼센트 좌표로 변환
+  const longitudeToX = (lon: number | null): number => {
+    if (lon === null) return 50;
+    return ((lon - MAP_BOUNDS.minLon) / (MAP_BOUNDS.maxLon - MAP_BOUNDS.minLon)) * 100;
+  };
+
+  const latitudeToY = (lat: number | null): number => {
+    if (lat === null) return 50;
+    // 위도는 위에서 아래로 갈수록 증가하므로 반대로 계산
+    return ((MAP_BOUNDS.maxLat - lat) / (MAP_BOUNDS.maxLat - MAP_BOUNDS.minLat)) * 100;
+  };
+
+  // 지도 데이터 가져오기
+  useEffect(() => {
+    const fetchMapData = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch('http://localhost:8080/api/map/data');
+        if (response.ok) {
+          const data = await response.json();
+          setMapData(data);
+        } else {
+          console.error('지도 데이터를 불러오는데 실패했습니다.');
+        }
+      } catch (err) {
+        console.error('API 호출 실패:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchMapData();
+  }, []);
 
   const [dragging, setDragging] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
@@ -131,49 +198,31 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     setDragging(popupType);
   };
 
-  const cctvMarkers: CCTVMarker[] = [
-    { id: 'CCTV-001', x: 25, y: 25, location: '등산로 1', status: '정상', incidents: { fire: 2 } },
-    { id: 'CCTV-007', x: 65, y: 35, location: '등산로 2', status: '정상', incidents: { fire: 1 } },
-    { id: 'CCTV-013', x: 40, y: 55, location: '공원중앙', status: '정상', incidents: { fire: 1 } },
-    { id: 'CCTV-002', x: 30, y: 40, location: '등산로 1', status: '정상', incidents: { rockfall: 1 } },
-    { id: 'CCTV-008', x: 20, y: 50, location: '등산로 3', status: '정상', incidents: { rockfall: 2 } },
-    { id: 'CCTV-014', x: 75, y: 47, location: '등산로 2', status: '정상', incidents: { rockfall: 1 } },
-    { id: 'CCTV-016', x: 50, y: 62, location: '공원중앙', status: '정상', incidents: { rockfall: 1 } },
-    { id: 'CCTV-018', x: 55, y: 20, location: '등산로 2', status: '정상', incidents: { rockfall: 3 } },
-    { id: 'CCTV-003', x: 15, y: 32, location: '등산로 3', status: '정상', incidents: { trash: 1 } },
-    { id: 'CCTV-009', x: 35, y: 15, location: '등산로 1', status: '점검필요', incidents: { trash: 1 } },
-    { id: 'CCTV-015', x: 70, y: 22, location: '등산로 2', status: '정상', incidents: { trash: 1 } },
-    { id: 'CCTV-004', x: 42, y: 30, location: '공원중앙', status: '정상', incidents: { trash: 1 } },
-    { id: 'CCTV-005', x: 45, y: 42, location: '공원중앙', status: '정상', incidents: { trash: 1 } },
-    { id: 'CCTV-006', x: 60, y: 28, location: '등산로 2', status: '정상', incidents: { trash: 1 } },
-    { id: 'CCTV-010', x: 55, y: 50, location: '공원중앙', status: '정상', incidents: { trash: 1 } },
-    { id: 'CCTV-011', x: 85, y: 40, location: '등산로 2', status: '정상', incidents: { trash: 1 } },
-    { id: 'CCTV-012', x: 25, y: 60, location: '등산로 3', status: '정상', incidents: { trash: 1 } },
-    { id: 'CCTV-017', x: 70, y: 55, location: '등산로 2', status: '정상', incidents: { trash: 1 } },
-    { id: 'CCTV-019', x: 32, y: 68, location: '등산로 3', status: '점검필요', incidents: { trash: 1 } },
-    { id: 'CCTV-020', x: 78, y: 65, location: '등산로 2', status: '정상', incidents: { trash: 1 } },
-  ];
+  // API 데이터를 UI 형식으로 변환
+  const cctvMarkers: CCTVMarker[] = mapData?.cctvMarkers.map(cctv => ({
+    id: cctv.id,
+    x: longitudeToX(cctv.longitude),
+    y: latitudeToY(cctv.latitude),
+    location: cctv.location,
+    status: cctv.status === '정상' ? '정상' as const : '점검필요' as const,
+    incidents: {
+      fire: cctv.incidents.fire || undefined,
+      rockfall: cctv.incidents.rockfall || undefined,
+      trash: cctv.incidents.trash || undefined,
+    },
+  })) || [];
 
-  const helicopterLocations = [
-    { id: 'H-001', x: 18, y: 22 },
-    { id: 'H-002', x: 48, y: 18 },
-    { id: 'H-003', x: 82, y: 25 },
-    { id: 'H-004', x: 38, y: 72 },
-    { id: 'H-005', x: 68, y: 75 },
-  ];
+  const helicopterLocations = mapData?.helicopterSpots.map(heli => ({
+    id: `H-${heli.id.toString().padStart(3, '0')}`,
+    x: longitudeToX(heli.longitude),
+    y: latitudeToY(heli.latitude),
+  })) || [];
 
-  const rockfallSensors = [
-    { id: 'RS-001', x: 22, y: 28 },
-    { id: 'RS-002', x: 28, y: 35 },
-    { id: 'RS-003', x: 18, y: 45 },
-    { id: 'RS-004', x: 58, y: 32 },
-    { id: 'RS-005', x: 68, y: 42 },
-    { id: 'RS-006', x: 73, y: 52 },
-    { id: 'RS-007', x: 52, y: 58 },
-    { id: 'RS-008', x: 28, y: 65 },
-    { id: 'RS-009', x: 75, y: 68 },
-    { id: 'RS-010', x: 85, y: 58 },
-  ];
+  const rockfallSensors = mapData?.rockfallSensorSpots.map(sensor => ({
+    id: `RS-${sensor.id.toString().padStart(3, '0')}`,
+    x: longitudeToX(sensor.longitude),
+    y: latitudeToY(sensor.latitude),
+  })) || [];
 
   const getPriorityIncident = (incidents: CCTVMarker['incidents']) => {
     if (incidents.fire) return { type: 'fire' as const, count: incidents.fire };
@@ -183,8 +232,8 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   };
 
   const getFilteredMarkers = () => {
-    if (!showAllDetections) return [];
-    if (selectedFilter === 'all') return cctvMarkers;
+    if (!showAllDetections || !mapData) return [];
+    if (selectedFilter === 'all') return cctvMarkers.filter(m => m.incidents.fire || m.incidents.rockfall || m.incidents.trash);
     return cctvMarkers.filter(marker => {
       if (selectedFilter === 'fire') return marker.incidents.fire;
       if (selectedFilter === 'rockfall') return marker.incidents.rockfall;

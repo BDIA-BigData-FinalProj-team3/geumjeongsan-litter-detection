@@ -1,26 +1,56 @@
 import { Trash2, AlertTriangle, Clock, MapPin, HelpCircle } from 'lucide-react';
 import Sidebar from './Sidebar';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 interface TrashDashboardProps {
   onNavigate?: (screen: string) => void;
 }
 
+interface TrashIncident {
+  id: number;
+  cctvId: string;
+  incidentTime: string;  // 백엔드 필드명과 일치
+  status: string;
+  severity: 'high' | 'medium' | 'low';
+  type?: string;  // 백엔드에 없을 수 있음
+  handler: string;
+  responseTime?: string;
+  duration?: string;
+}
+
 export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
   const [viewMode, setViewMode] = useState<'active' | 'completed'>('active');
   const [showTooltip, setShowTooltip] = useState(false);
+  const [activeTrashIncidents, setActiveTrashIncidents] = useState<TrashIncident[]>([]);
+  const [completedTrashIncidents, setCompletedTrashIncidents] = useState<TrashIncident[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [todayCount, setTodayCount] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [avgResponseTime, setAvgResponseTime] = useState(0);
+  const [riskAreas, setRiskAreas] = useState<string[]>([]);
 
-  const activeTrashIncidents = [
-    { id: 1, cctvId: 'CCTV-005', time: '2025-11-25 14:25', status: '대기중', severity: 'high', type: '대형쓰레기', handler: '환경 관리 직원' },
-    { id: 2, cctvId: 'CCTV-001', time: '2025-11-25 14:10', status: '대응중', severity: 'medium', type: '일반쓰레기', handler: '환경 관리 직원' },
-    { id: 3, cctvId: 'CCTV-007', time: '2025-11-25 13:55', status: '대기중', severity: 'medium', type: '플라스틱', handler: '환경 관리 직원' },
-  ];
-
-  const completedTrashIncidents = [
-    { id: 4, cctvId: 'CCTV-002', time: '2025-11-25 13:00', responseTime: '2025-11-25 13:28', duration: '28분', status: '처리완료', severity: 'low', type: '음식물', handler: '환경 관리 직원' },
-    { id: 5, cctvId: 'CCTV-004', time: '2025-11-25 12:00', responseTime: '2025-11-25 12:35', duration: '35분', status: '처리완료', severity: 'medium', type: '플라��틱', handler: '환경 관리 직원' },
-    { id: 6, cctvId: 'CCTV-003', time: '2025-11-25 11:00', responseTime: '2025-11-25 11:30', duration: '30분', status: '처리완료', severity: 'low', type: '일반쓰레기', handler: '환경 관리 직원' },
-  ];
+  useEffect(() => {
+    const fetchTrashIncidents = async () => {
+      setLoading(true);
+      try {
+        const response = await fetch('http://localhost:8080/api/trash/dashboard');
+        if (response.ok) {
+          const dashboardData = await response.json();
+          setActiveTrashIncidents(dashboardData.activeIncidents || []);
+          setCompletedTrashIncidents(dashboardData.resolvedIncidents || []);
+          setTodayCount(dashboardData.todayCount || 0);
+          setPendingCount(dashboardData.pendingCount || 0);
+          setAvgResponseTime(dashboardData.avgResponseTime || 0);
+          setRiskAreas(dashboardData.riskAreas || []);
+        }
+      } catch (err) {
+        console.error('쓰레기 투기 데이터 조회 실패:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchTrashIncidents();
+  }, []);
 
   const trashIncidents = viewMode === 'active' ? activeTrashIncidents : completedTrashIncidents;
 
@@ -39,7 +69,7 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
                   <span className="text-gray-600">당일 발생</span>
                   <Trash2 className="w-5 h-5 text-green-600" />
                 </div>
-                <div className="text-gray-900">12건</div>
+                <div className="text-gray-900">{todayCount}건</div>
               </div>
 
               <div className="bg-white p-6 shadow-sm border border-gray-200 rounded-lg">
@@ -47,7 +77,7 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
                   <span className="text-gray-600">대기중</span>
                   <AlertTriangle className="w-5 h-5 text-orange-500" />
                 </div>
-                <div className="text-gray-900">2건</div>
+                <div className="text-gray-900">{pendingCount}건</div>
               </div>
 
               <div className="bg-white p-6 shadow-sm border border-gray-200 rounded-lg">
@@ -55,7 +85,7 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
                   <span className="text-gray-600">평균 대응시간</span>
                   <Clock className="w-5 h-5 text-blue-500" />
                 </div>
-                <div className="text-gray-900">32분</div>
+                <div className="text-gray-900">{avgResponseTime > 0 ? `${avgResponseTime.toFixed(1)}분` : '-'}</div>
               </div>
 
               <div className="bg-white p-6 shadow-sm border border-gray-200 rounded-lg relative">
@@ -69,7 +99,7 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
                   </div>
                   {showTooltip && (
                     <div className="absolute right-0 bottom-8 bg-gray-900 text-white text-xs px-3 py-2 whitespace-nowrap shadow-lg" style={{ borderRadius: '4px' }}>
-                      당월 8건 발생 지역
+                      당월 발생 지역
                       <div className="absolute -bottom-1 right-2 w-2 h-2 bg-gray-900 transform rotate-45"></div>
                     </div>
                   )}
@@ -78,7 +108,7 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
                   <span className="text-gray-600">위험지역</span>
                   <MapPin className="w-5 h-5 text-purple-500" />
                 </div>
-                <div className="text-gray-900">공원중앙</div>
+                <div className="text-gray-900">{riskAreas.length > 0 ? riskAreas[0] : '-'}</div>
               </div>
             </div>
 
@@ -134,11 +164,11 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
                     {trashIncidents.map((incident) => (
                       <tr key={incident.id} className="border-b border-gray-100 hover:bg-gray-50">
                         <td className="px-6 py-4 text-gray-900">{incident.cctvId}</td>
-                        <td className="px-6 py-4 text-gray-600">{incident.time}</td>
-                        {viewMode === 'completed' && 'responseTime' in incident && (
+                        <td className="px-6 py-4 text-gray-600">{incident.incidentTime || '-'}</td>
+                        {viewMode === 'completed' && (
                           <>
-                            <td className="px-6 py-4 text-gray-600">{incident.responseTime}</td>
-                            <td className="px-6 py-4 text-gray-600">{incident.duration}</td>
+                            <td className="px-6 py-4 text-gray-600">{incident.responseTime || '-'}</td>
+                            <td className="px-6 py-4 text-gray-600">{incident.duration || '-'}</td>
                           </>
                         )}
                         <td className="px-6 py-4">

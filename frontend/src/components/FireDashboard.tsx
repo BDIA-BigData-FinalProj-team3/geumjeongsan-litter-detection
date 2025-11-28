@@ -1,24 +1,65 @@
-import { Flame, AlertTriangle, Clock, Wind, MapPin, HelpCircle } from 'lucide-react';
+import { Flame, AlertTriangle, Clock, Wind, MapPin, HelpCircle, X } from 'lucide-react';
 import Sidebar from './Sidebar';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 
 interface FireDashboardProps {
   onNavigate?: (screen: string) => void;
 }
 
+interface Fire {
+  id: number;
+  cctvId: string;
+  incidentTime: string;  // 백엔드 필드명과 일치
+  status: string;
+  severity: 'high' | 'medium' | 'low';
+  windSpeed: string;
+  handler: string;
+  responseTime?: string;
+  duration?: string;
+}
+
 export default function FireDashboard({ onNavigate }: FireDashboardProps) {
   const [viewMode, setViewMode] = useState<'active' | 'completed'>('active');
   const [showTooltip, setShowTooltip] = useState(false);
+  const [activeFires, setActiveFires] = useState<Fire[]>([]);
+  const [completedFires, setCompletedFires] = useState<Fire[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [todayCount, setTodayCount] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [avgResponseTime, setAvgResponseTime] = useState(0);
+  const [currentWindSpeed, setCurrentWindSpeed] = useState('N/A');
+  const [riskAreas, setRiskAreas] = useState<string[]>([]);
 
-  const activeFires = [
-    { id: 1, cctvId: 'CCTV-001', time: '2025-11-25 14:15', status: '진화중', severity: 'high', windSpeed: '15km/h', handler: '119' },
-    { id: 2, cctvId: 'CCTV-003', time: '2025-11-25 13:50', status: '대기중', severity: 'medium', windSpeed: '12km/h', handler: '119' },
-  ];
+  const fetchFires = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // 화재 대시보드 데이터 조회 (발생/처리완료 모두 포함)
+      const response = await fetch('http://localhost:8080/api/fires/dashboard');
+      if (response.ok) {
+        const dashboardData = await response.json();
+        setActiveFires(dashboardData.activeIncidents || []);
+        setCompletedFires(dashboardData.resolvedIncidents || []);
+        setTodayCount(dashboardData.todayCount || 0);
+        setPendingCount(dashboardData.pendingCount || 0);
+        setAvgResponseTime(dashboardData.avgResponseTime || 0);
+        setCurrentWindSpeed(dashboardData.currentWindSpeed || 'N/A');
+        setRiskAreas(dashboardData.riskAreas || []);
+      } else {
+        setError('화재 데이터를 불러오는데 실패했습니다.');
+      }
+    } catch (err) {
+      setError('서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해주세요.');
+      console.error('API 호출 실패:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const completedFires = [
-    { id: 3, cctvId: 'CCTV-007', time: '2025-11-25 12:00', responseTime: '2025-11-25 12:45', duration: '45분', status: '진화완료', severity: 'low', windSpeed: '8km/h', handler: '산불 관리 직원' },
-    { id: 4, cctvId: 'CCTV-005', time: '2025-11-25 09:00', responseTime: '2025-11-25 10:10', duration: '70분', status: '진화완료', severity: 'medium', windSpeed: '10km/h', handler: '119' },
-  ];
+  useEffect(() => {
+    fetchFires();
+  }, []);
 
   const fires = viewMode === 'active' ? activeFires : completedFires;
 
@@ -30,6 +71,23 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
           <div className="max-w-7xl mx-auto">
             <h1 className="text-gray-900 mb-8">화재 상황 현황</h1>
 
+            {/* 에러 메시지 */}
+            {error && (
+              <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-700 flex items-center justify-between" style={{ borderRadius: '0px' }}>
+                <span>{error}</span>
+                <button onClick={() => setError(null)} className="text-red-500 hover:text-red-700">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {/* 로딩 표시 */}
+            {loading && (
+              <div className="mb-6 p-4 bg-blue-50 border border-blue-200 text-blue-700 text-center" style={{ borderRadius: '0px' }}>
+                처리 중...
+              </div>
+            )}
+
             {/* KPI Cards */}
             <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
               <div className="bg-white p-6 shadow-sm border border-gray-200 rounded-lg">
@@ -37,7 +95,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                   <span className="text-gray-600">오늘 발생</span>
                   <Flame className="w-5 h-5 text-red-500" />
                 </div>
-                <div className="text-gray-900">2건</div>
+                <div className="text-gray-900">{todayCount}건</div>
               </div>
 
               <div className="bg-white p-6 shadow-sm border border-gray-200 rounded-lg">
@@ -45,7 +103,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                   <span className="text-gray-600">대기중</span>
                   <AlertTriangle className="w-5 h-5 text-orange-500" />
                 </div>
-                <div className="text-gray-900">1건</div>
+                <div className="text-gray-900">{pendingCount}건</div>
               </div>
 
               <div className="bg-white p-6 shadow-sm border border-gray-200 rounded-lg">
@@ -53,7 +111,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                   <span className="text-gray-600">평균 대응시간</span>
                   <Clock className="w-5 h-5 text-blue-500" />
                 </div>
-                <div className="text-gray-900">45분</div>
+                <div className="text-gray-900">{avgResponseTime > 0 ? `${avgResponseTime.toFixed(1)}분` : '-'}</div>
               </div>
 
               <div className="bg-white p-6 shadow-sm border border-gray-200 rounded-lg">
@@ -61,7 +119,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                   <span className="text-gray-600">현재 풍속</span>
                   <Wind className="w-5 h-5 text-gray-500" />
                 </div>
-                <div className="text-gray-900">12km/h</div>
+                <div className="text-gray-900">{currentWindSpeed}</div>
               </div>
 
               <div className="bg-white p-6 shadow-sm border border-gray-200 rounded-lg relative">
@@ -75,7 +133,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                   </div>
                   {showTooltip && (
                     <div className="absolute right-0 bottom-8 bg-gray-900 text-white text-xs px-3 py-2 whitespace-nowrap shadow-lg" style={{ borderRadius: '4px' }}>
-                      당월 5건 발생 지역
+                      당월 발생 지역
                       <div className="absolute -bottom-1 right-2 w-2 h-2 bg-gray-900 transform rotate-45"></div>
                     </div>
                   )}
@@ -84,7 +142,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                   <span className="text-gray-600">위험지역</span>
                   <MapPin className="w-5 h-5 text-purple-500" />
                 </div>
-                <div className="text-gray-900">등산로 3</div>
+                <div className="text-gray-900">{riskAreas.length > 0 ? riskAreas[0] : '-'}</div>
               </div>
             </div>
 
@@ -141,11 +199,11 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                     {fires.map((fire) => (
                       <tr key={fire.id} className="border-b border-gray-100 hover:bg-gray-50">
                         <td className="px-6 py-4 text-gray-900">{fire.cctvId}</td>
-                        <td className="px-6 py-4 text-gray-600">{fire.time}</td>
-                        {viewMode === 'completed' && 'responseTime' in fire && (
+                        <td className="px-6 py-4 text-gray-600">{fire.incidentTime || '-'}</td>
+                        {viewMode === 'completed' && (
                           <>
-                            <td className="px-6 py-4 text-gray-600">{fire.responseTime}</td>
-                            <td className="px-6 py-4 text-gray-600">{fire.duration}</td>
+                            <td className="px-6 py-4 text-gray-600">{fire.responseTime || '-'}</td>
+                            <td className="px-6 py-4 text-gray-600">{fire.duration || '-'}</td>
                           </>
                         )}
                         <td className="px-6 py-4">
