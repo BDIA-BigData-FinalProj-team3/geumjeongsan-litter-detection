@@ -76,20 +76,12 @@ jobs:
       - name: Deploy on EC2 via SSM
         run: |
           INSTANCE_ID="${{ secrets.BACKEND_EC2_INSTANCE_ID }}"
-          
-          # 환경 변수 값 저장
-          DB_URL="${{ secrets.DATABASE_URL }}"
-          DB_USER="${{ secrets.DATABASE_USERNAME }}"
-          DB_PASS="${{ secrets.DATABASE_PASSWORD }}"
-          
-          # JSON 파라미터 생성 (각 명령을 배열 요소로)
-          PARAMS=$(printf '{"commands":["export DATABASE_URL=\"%s\"","export DATABASE_USERNAME=\"%s\"","export DATABASE_PASSWORD=\"%s\"","/home/ubuntu/backend/deploy_backend.sh"]}' "$DB_URL" "$DB_USER" "$DB_PASS")
-          
+
           COMMAND_ID=$(aws ssm send-command \
             --document-name "AWS-RunShellScript" \
             --comment "Deploy geumjeongsan-admin backend from GitHub Actions" \
             --instance-ids "$INSTANCE_ID" \
-            --parameters "$PARAMS" \
+            --parameters '{"commands":["export DATABASE_URL=\"'"'"'${{ secrets.DATABASE_URL }}'"'"'\"","export DATABASE_USERNAME=\"'"'"'${{ secrets.DATABASE_USERNAME }}'"'"'\"","export DATABASE_PASSWORD=\"'"'"'${{ secrets.DATABASE_PASSWORD }}'"'"'\"","/home/ubuntu/backend/deploy_backend.sh"]}' \
             --query "Command.CommandId" \
             --output text)
 
