@@ -38,4 +38,4 @@ management:
     health:
       show-details: always
 
-# Trigger deployment
+# Trigger deployment - fix JSON parameter issue
