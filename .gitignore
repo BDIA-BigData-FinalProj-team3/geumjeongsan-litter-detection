@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# IDE
+.vscode/
+
+# Environment variables
+.env
+
+# OS files
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Optional: Editor directories
+.idea/
+*.swp
+*.swo
+*~
+
+# Optional: Testing
+coverage/
+
+# Optional: Production
+build/
+
