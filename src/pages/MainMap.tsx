@@ -481,7 +481,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             <button 
               onClick={() => setNotificationTab('fire')} 
               className="flex-shrink-0 transition-opacity hover:opacity-80"
-              style={{ backgroundColor: notificationTab === 'fire' ? '#2B3990' : '#F4F4F4', border: '1px solid #B2B2B2', borderRadius: '8px' }} 
+              style={{ backgroundColor: 'transparent', border: 'none' }} 
             >
               <svg width="62.667px" height="36px" viewBox="-259.049 -94.946 62.667 36">
                 <path fill="#FF5A5A" d="M-259.049-67.946c0,4.971,4.029,9,9,9h44.667c4.971,0,9-4.029,9-9v-18c0-4.971-4.029-9-9-9h-44.667c-4.971,0-9,4.029-9,9V-67.946z"/>
@@ -493,37 +493,22 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             <button 
               onClick={() => setNotificationTab('emergency')} 
               className="flex-shrink-0 transition-opacity hover:opacity-80"
-              style={{ backgroundColor: notificationTab === 'emergency' ? '#2B3990' : '#F4F4F4', border: '1px solid #B2B2B2', borderRadius: '8px' }} 
+              style={{ backgroundColor: 'transparent', border: 'none' }} 
             >
-              <svg width="62.667px" height="36px" viewBox="95 0 66 72" style={{ width: '62.667px', height: '36px' }}>
+              <svg width="62.667px" height="36px" viewBox="0 0 62.667 36">
                 <g>
-                  <g>
-                    <g>
-                      <path 
-                        fillRule="evenodd" 
-                        clipRule="evenodd" 
-                        fill="#FFFFFF" 
-                        d="M161.375,10.389c0,18.358-33.241,61.788-33.241,61.788
-                          s-33.241-43.43-33.241-61.788s14.883-33.241,33.241-33.241S161.375-7.97,161.375,10.389z"
-                      />
-                    </g>
-                  </g>
-                  <circle fill="#99332E" cx="128.134" cy="10.124" r="27.72"/>
-                  <polygon 
-                    fillRule="evenodd" 
-                    clipRule="evenodd" 
-                    fill="#FFFFFF" 
-                    points="142.863,5.29 132.968,5.29 132.968,-4.604 
-                      123.301,-4.604 123.301,5.29 113.406,5.29 113.406,14.956 123.301,14.956 123.301,24.853 132.968,24.853 132.968,14.956 
-                      142.863,14.956"
-                  />
+                  <path fill="#99332E" d="M0,27c0,4.971,4.029,9,9,9h44.667c4.971,0,9-4.029,9-9V9c0-4.971-4.029-9-9-9H9C4.029,0,0,4.029,0,9V27z"/>
+                </g>
+                <g>
+                  <text transform="matrix(1 0 0 1 7.9351 22.2417)" fill="#FFFFFF" fontFamily="'NanumSquareB'" fontSize="15">응급</text>
+                  <polygon fillRule="evenodd" clipRule="evenodd" fill="#FFFFFF" points="54.731,15.586 49.792,15.586 49.792,10.646 44.966,10.646 44.966,15.586 40.024,15.586 40.024,20.413 44.966,20.413 44.966,25.354 49.792,25.354 49.792,20.413 54.731,20.413"/>
                 </g>
               </svg>
             </button>
             <button 
               onClick={() => setNotificationTab('trash')} 
               className="flex-shrink-0 transition-opacity hover:opacity-80"
-              style={{ backgroundColor: notificationTab === 'trash' ? '#2B3990' : '#F4F4F4', border: '1px solid #B2B2B2', borderRadius: '8px' }} 
+              style={{ backgroundColor: 'transparent', border: 'none' }} 
             >
               <svg width="62.667px" height="36px" viewBox="-240.217 -78.613 62.667 36">
                 <path fill="#576F93" d="M-240.217-51.613c0,4.971,4.029,9,9,9h44.667c4.971,0,9-4.029,9-9v-18c0-4.971-4.029-9-9-9h-44.667c-4.971,0-9,4.029-9,9V-51.613z"/>
@@ -539,7 +524,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                 setNotificationTab('all');
               }} 
               className="flex-shrink-0 transition-opacity hover:opacity-80"
-              style={{ backgroundColor: notificationTab === 'all' ? '#2B3990' : '#F4F4F4', border: '1px solid #B2B2B2', borderRadius: '8px' }} 
+              style={{ backgroundColor: 'transparent', border: 'none' }} 
             >
               <svg width="35.5px" height="36px" viewBox="-205.051 -56.946 35.5 36">
                 <path fill="#FFFFFF" d="M-205.051-29.946c0,4.971,4.029,9,9,9h17.5c4.971,0,9-4.029,9-9v-18c0-4.971-4.029-9-9-9h-17.5c-4.971,0-9,4.029-9,9V-29.946z"/>
@@ -1368,89 +1353,32 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               </div>
             </div>
 
-            {/* 탐지된 영상 리스트 */}
-            <div className="mb-4">
-              <p className="text-sm text-gray-700 font-semibold mb-3">
-                탐지된 영상 리스트 ({videoClips.length}개)
-              </p>
-              {videoClips.length > 0 ? (
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {videoClips.map((clip) => (
-                    <div 
-                      key={clip.id}
-                      className="border border-gray-200 p-3 hover:bg-gray-50 transition-colors"
-                      style={{ borderRadius: '0px' }}
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <span className={`px-2 py-0.5 text-xs ${
-                              clip.type === 'fire' ? 'bg-red-100 text-red-700' : 
-                              clip.type === 'emergency' ? 'bg-purple-100 text-purple-700' : 
-                              'bg-green-100 text-green-700'
-                            }`} style={{ borderRadius: '0px' }}>
-                              {clip.type === 'fire' ? '화재' : clip.type === 'emergency' ? '응급' : '쓰레기'}
-                            </span>
-                            <span className="text-xs text-gray-600">
-                              {clip.duration}초 | {clip.fileSize}
-                            </span>
-                          </div>
-                          <p className="text-xs text-gray-700">{clip.timestamp}</p>
-                          <p className="text-xs text-emerald-600">신뢰도: {clip.confidence}</p>
-                        </div>
-                      </div>
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => {
-                            setSelectedVideoClip(clip);
-                            alert(`${clip.timestamp} 영상을 재생합니다.`);
-                          }}
-                          className="flex-1 px-3 py-1.5 text-xs text-white transition-colors flex items-center justify-center gap-1"
-                          style={{
-                            borderRadius: '0px',
-                            backgroundColor: '#3B82F6',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.backgroundColor = '#2563EB';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = '#3B82F6';
-                          }}
-                        >
-                          <Eye className="w-3 h-3" />
-                          재생하기
-                        </button>
-                        <button
-                          onClick={() => {
-                            // TODO: 백엔드 API 연동
-                            // fetch(`/api/cctv/video/download?videoId=${clip.id}`)
-                            alert(`${clip.timestamp} 영상을 다운로드합니다.`);
-                          }}
-                          className="flex-1 px-3 py-1.5 text-xs text-white transition-colors flex items-center justify-center gap-1"
-                          style={{
-                            borderRadius: '0px',
-                            backgroundColor: '#10B981',
-                          }}
-                          onMouseEnter={(e) => {
-                            e.currentTarget.style.backgroundColor = '#059669';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.currentTarget.style.backgroundColor = '#10B981';
-                          }}
-                        >
-                          <Download className="w-3 h-3" />
-                          다운로드
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="text-center py-8 text-gray-500 text-sm border border-gray-200" style={{ borderRadius: '0px' }}>
-                  탐지된 영상이 없습니다
-                </div>
-              )}
-            </div>
+            {/* 상세보기 버튼 */}
+            <button 
+              onClick={() => {
+                if (videoDetailPopup.type === 'fire') {
+                  navigate('/fire-dashboard');
+                } else if (videoDetailPopup.type === 'emergency') {
+                  navigate('/emergency-dashboard');
+                } else {
+                  navigate('/trash-dashboard');
+                }
+              }}
+              className="w-full px-4 py-3 mb-3 text-white transition-colors flex items-center justify-center gap-2" 
+              style={{ 
+                borderRadius: '0px',
+                backgroundColor: '#6B7280',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#4B5563';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = '#6B7280';
+              }}
+            >
+              <Eye className="w-5 h-5" />
+              상세보기
+            </button>
 
             {/* 버튼 영역 */}
             {videoDetailPopup.type === 'trash' ? (

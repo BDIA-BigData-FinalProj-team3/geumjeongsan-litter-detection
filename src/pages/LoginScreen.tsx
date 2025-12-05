@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Shield, Eye, EyeOff } from 'lucide-react';
+import { Shield, Eye, EyeOff, X, Mail, User, Phone } from 'lucide-react';
 import backgroundImage from 'figma:asset/ef94d1cbb3ccf439236036d868dca7a7dc644d8d.png';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
 
@@ -13,6 +13,22 @@ export default function LoginScreen({ onNavigate }: LoginScreenProps) {
   const [showPassword, setShowPassword] = useState(false);
   const { resetCompletedIncidents } = useIncidentCount();
 
+  // 모달 상태
+  const [showFindIdModal, setShowFindIdModal] = useState(false);
+  const [showFindPasswordModal, setShowFindPasswordModal] = useState(false);
+
+  // 아이디 찾기 입력값
+  const [findIdName, setFindIdName] = useState('');
+  const [findIdEmail, setFindIdEmail] = useState('');
+  const [findIdPhone, setFindIdPhone] = useState('');
+  const [findIdResult, setFindIdResult] = useState('');
+
+  // 비밀번호 찾기 입력값
+  const [findPwId, setFindPwId] = useState('');
+  const [findPwEmail, setFindPwEmail] = useState('');
+  const [findPwPhone, setFindPwPhone] = useState('');
+  const [findPwResult, setFindPwResult] = useState('');
+
   const handleLogin = () => {
     // 로그인 시 모든 데이터 초기화
     resetCompletedIncidents();
@@ -22,11 +38,53 @@ export default function LoginScreen({ onNavigate }: LoginScreenProps) {
   };
 
   const handleFindId = () => {
-    alert('아이디 찾기 기능은 관리자에게 문의하세요.');
+    setShowFindIdModal(true);
+    setFindIdResult('');
   };
 
   const handleFindPassword = () => {
-    alert('비밀번호 찾기 기능은 관리자에게 문의하세요.');
+    setShowFindPasswordModal(true);
+    setFindPwResult('');
+  };
+
+  const submitFindId = () => {
+    // 실제로는 백엔드 API를 호출해야 함
+    if (!findIdName || !findIdEmail || !findIdPhone) {
+      alert('모든 필드를 입력해주세요.');
+      return;
+    }
+    
+    // Mock: 아이디 찾기 성공
+    setFindIdResult('admin123');
+    // 실패 시: setFindIdResult('일치하는 정보가 없습니다.');
+  };
+
+  const submitFindPassword = () => {
+    // 실제로는 백엔드 API를 호출해야 함
+    if (!findPwId || !findPwEmail || !findPwPhone) {
+      alert('모든 필드를 입력해주세요.');
+      return;
+    }
+    
+    // Mock: 임시 비밀번호 발급 성공
+    setFindPwResult('입력하신 이메일로 임시 비밀번호가 발송되었습니다.');
+    // 실패 시: setFindPwResult('일치하는 정보가 없습니다.');
+  };
+
+  const closeFindIdModal = () => {
+    setShowFindIdModal(false);
+    setFindIdName('');
+    setFindIdEmail('');
+    setFindIdPhone('');
+    setFindIdResult('');
+  };
+
+  const closeFindPasswordModal = () => {
+    setShowFindPasswordModal(false);
+    setFindPwId('');
+    setFindPwEmail('');
+    setFindPwPhone('');
+    setFindPwResult('');
   };
 
   return (
@@ -50,8 +108,10 @@ export default function LoginScreen({ onNavigate }: LoginScreenProps) {
               <Shield className="w-8 h-8 text-white" />
             </div>
             <div className="text-center">
-              <h1 className="text-gray-900">EcoGuard</h1>
-              <p className="text-gray-600 text-sm">쓰레기 투기 모니터링 시스템</p>
+              <h1 className="text-gray-900 leading-tight">
+                Geumjeong<br />Sentinel
+              </h1>
+              <p className="text-gray-600 text-sm">금정산 국립공원 탐지현황 관리자 대시보드</p>
             </div>
           </div>
 
@@ -128,6 +188,259 @@ export default function LoginScreen({ onNavigate }: LoginScreenProps) {
           </p>
         </div>
       </div>
+
+      {/* 아이디 찾기 모달 */}
+      {showFindIdModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white w-full max-w-md shadow-xl" style={{ borderRadius: '0px' }}>
+            {/* 모달 헤더 */}
+            <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <User className="w-5 h-5 text-white" />
+                <h2 className="text-white font-semibold">아이디 찾기</h2>
+              </div>
+              <button
+                onClick={closeFindIdModal}
+                className="text-white hover:text-gray-200 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* 모달 내용 */}
+            <div className="p-6">
+              {!findIdResult ? (
+                <>
+                  <p className="text-gray-600 text-sm mb-6">
+                    등록된 정보를 입력하시면 아이디를 찾아드립니다.
+                  </p>
+
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-gray-700 mb-2 text-sm">이름</label>
+                      <div className="relative">
+                        <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder="이름을 입력하세요"
+                          value={findIdName}
+                          onChange={(e) => setFindIdName(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                          style={{ borderRadius: '0px' }}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-gray-700 mb-2 text-sm">이메일</label>
+                      <div className="relative">
+                        <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input
+                          type="email"
+                          placeholder="이메일을 입력하세요"
+                          value={findIdEmail}
+                          onChange={(e) => setFindIdEmail(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                          style={{ borderRadius: '0px' }}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-gray-700 mb-2 text-sm">전화번호</label>
+                      <div className="relative">
+                        <Phone className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input
+                          type="tel"
+                          placeholder="전화번호를 입력하세요 (- 제외)"
+                          value={findIdPhone}
+                          onChange={(e) => setFindIdPhone(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                          style={{ borderRadius: '0px' }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 mt-6">
+                    <button
+                      onClick={closeFindIdModal}
+                      className="flex-1 px-4 py-2.5 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors"
+                      style={{ borderRadius: '0px' }}
+                    >
+                      취소
+                    </button>
+                    <button
+                      onClick={submitFindId}
+                      className="flex-1 px-4 py-2.5 bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                      style={{ borderRadius: '0px' }}
+                    >
+                      확인
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {findIdResult === '일치하는 정보가 없습니다.' ? (
+                    <div className="text-center py-6">
+                      <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <X className="w-8 h-8 text-red-500" />
+                      </div>
+                      <p className="text-gray-700 mb-2">일치하는 정보가 없습니다.</p>
+                      <p className="text-gray-500 text-sm">입력하신 정보를 다시 확인해주세요.</p>
+                    </div>
+                  ) : (
+                    <div className="text-center py-6">
+                      <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <User className="w-8 h-8 text-emerald-600" />
+                      </div>
+                      <p className="text-gray-700 mb-2">회원님의 아이디는</p>
+                      <p className="text-2xl font-bold text-emerald-600 mb-4">{findIdResult}</p>
+                      <p className="text-gray-500 text-sm">입니다.</p>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={closeFindIdModal}
+                    className="w-full px-4 py-2.5 bg-emerald-600 text-white hover:bg-emerald-700 transition-colors mt-4"
+                    style={{ borderRadius: '0px' }}
+                  >
+                    확인
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 비밀번호 찾기 모달 */}
+      {showFindPasswordModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white w-full max-w-md shadow-xl" style={{ borderRadius: '0px' }}>
+            {/* 모달 헤더 */}
+            <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Shield className="w-5 h-5 text-white" />
+                <h2 className="text-white font-semibold">비밀번호 찾기</h2>
+              </div>
+              <button
+                onClick={closeFindPasswordModal}
+                className="text-white hover:text-gray-200 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* 모달 내용 */}
+            <div className="p-6">
+              {!findPwResult ? (
+                <>
+                  <p className="text-gray-600 text-sm mb-6">
+                    등록된 정보를 입력하시면 임시 비밀번호를 이메일로 발송해드립니다.
+                  </p>
+
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-gray-700 mb-2 text-sm">아이디</label>
+                      <div className="relative">
+                        <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder="아이디를 입력하세요"
+                          value={findPwId}
+                          onChange={(e) => setFindPwId(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                          style={{ borderRadius: '0px' }}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-gray-700 mb-2 text-sm">이메일</label>
+                      <div className="relative">
+                        <Mail className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input
+                          type="email"
+                          placeholder="이메일을 입력하세요"
+                          value={findPwEmail}
+                          onChange={(e) => setFindPwEmail(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                          style={{ borderRadius: '0px' }}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-gray-700 mb-2 text-sm">전화번호</label>
+                      <div className="relative">
+                        <Phone className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input
+                          type="tel"
+                          placeholder="전화번호를 입력하세요 (- 제외)"
+                          value={findPwPhone}
+                          onChange={(e) => setFindPwPhone(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                          style={{ borderRadius: '0px' }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2 mt-6">
+                    <button
+                      onClick={closeFindPasswordModal}
+                      className="flex-1 px-4 py-2.5 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors"
+                      style={{ borderRadius: '0px' }}
+                    >
+                      취소
+                    </button>
+                    <button
+                      onClick={submitFindPassword}
+                      className="flex-1 px-4 py-2.5 bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                      style={{ borderRadius: '0px' }}
+                    >
+                      확인
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {findPwResult === '일치하는 정보가 없습니다.' ? (
+                    <div className="text-center py-6">
+                      <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <X className="w-8 h-8 text-red-500" />
+                      </div>
+                      <p className="text-gray-700 mb-2">일치하는 정보가 없습니다.</p>
+                      <p className="text-gray-500 text-sm">입력하신 정보를 다시 확인해주세요.</p>
+                    </div>
+                  ) : (
+                    <div className="text-center py-6">
+                      <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <Mail className="w-8 h-8 text-emerald-600" />
+                      </div>
+                      <p className="text-gray-700 mb-2 font-semibold">임시 비밀번호 발송 완료</p>
+                      <p className="text-gray-600 text-sm leading-relaxed">
+                        입력하신 이메일로<br />
+                        임시 비밀번호가 발송되었습니다.<br />
+                        로그인 후 비밀번호를 변경해주세요.
+                      </p>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={closeFindPasswordModal}
+                    className="w-full px-4 py-2.5 bg-emerald-600 text-white hover:bg-emerald-700 transition-colors mt-4"
+                    style={{ borderRadius: '0px' }}
+                  >
+                    확인
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

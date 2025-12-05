@@ -1,4 +1,4 @@
-import { Flame, AlertTriangle, Clock, Wind, MapPin, HelpCircle, User, LogOut, X, Video, Image as ImageIcon, Map, Edit2, Save, Search, ChevronDown } from 'lucide-react';
+import { Flame, AlertTriangle, Clock, Wind, MapPin, HelpCircle, User, LogOut, X, Video, Image as ImageIcon, Map, Edit2, Save, Search, ChevronDown, Plus } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import { useState, useEffect } from 'react';
@@ -41,6 +41,20 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
   const [highlightedCode, setHighlightedCode] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState<number | null>(null);
+  
+  // 신규 기록 등록 모달
+  const [showNewRecordModal, setShowNewRecordModal] = useState(false);
+  const [newRecord, setNewRecord] = useState({
+    cctvId: '',
+    time: '',
+    type: '',
+    location: '',
+    severity: 'medium',
+    windSpeed: '',
+    handler: '',
+    detectionBasis: '',
+    transferHospital: ''
+  });
   
   // 데이터 상태 관리
   const [activeFires, setActiveFires] = useState<any[]>([]);
@@ -178,6 +192,47 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
       }
     }
   }, [location.search, activeFires, completedFires]);
+
+  const handleNewRecordSubmit = () => {
+    // 필수 입력 체크
+    if (!newRecord.cctvId || !newRecord.time || !newRecord.type) {
+      alert('CCTV ID, 발생시간, 사고 종류는 필수 입력 항목입니다.');
+      return;
+    }
+
+    // 새 기록 생성 (실제로는 백엔드 API 호출)
+    const newFire = {
+      id: Date.now(),
+      accidentCode: `${newRecord.type.toUpperCase()}-${String(Date.now()).slice(-4)}`,
+      cctvId: newRecord.cctvId,
+      time: newRecord.time,
+      status: '대기중',
+      severity: newRecord.severity,
+      windSpeed: newRecord.windSpeed || '-',
+      handler: newRecord.handler || '미배정',
+      location: newRecord.location,
+      detectionBasis: newRecord.detectionBasis,
+      transferHospital: newRecord.transferHospital
+    };
+
+    setActiveFires([newFire, ...activeFires]);
+    
+    // 모달 닫고 폼 초기화
+    setShowNewRecordModal(false);
+    setNewRecord({
+      cctvId: '',
+      time: '',
+      type: '',
+      location: '',
+      severity: 'medium',
+      windSpeed: '',
+      handler: '',
+      detectionBasis: '',
+      transferHospital: ''
+    });
+
+    alert('신규 기록이 등록되었습니다.');
+  };
 
   const handleSearch = (code: string) => {
     setSearchError(null);
@@ -322,6 +377,16 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                 
                 {/* Search and Toggle Buttons */}
                 <div className="flex items-center gap-2">
+                  {/* 신규 기록 등록 버튼 */}
+                  <button
+                    onClick={() => setShowNewRecordModal(true)}
+                    className="px-3 py-1.5 bg-emerald-600 text-white text-sm hover:bg-emerald-700 transition-colors flex items-center gap-1.5"
+                    style={{ borderRadius: '0px' }}
+                  >
+                    <Plus className="w-4 h-4" />
+                    신규 기록 등록
+                  </button>
+
                   <div className="relative">
                     <input
                       type="text"
@@ -790,6 +855,209 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                     </>
                   )}
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 신규 기록 등록 모달 */}
+      {showNewRecordModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white w-full max-w-2xl shadow-xl" style={{ borderRadius: '0px', maxHeight: '90vh', overflow: 'auto' }}>
+            {/* 모달 헤더 */}
+            <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between sticky top-0">
+              <div className="flex items-center gap-2">
+                <Plus className="w-5 h-5 text-white" />
+                <h2 className="text-white font-semibold">신규 기록 등록</h2>
+              </div>
+              <button
+                onClick={() => {
+                  setShowNewRecordModal(false);
+                  setNewRecord({
+                    cctvId: '',
+                    time: '',
+                    type: '',
+                    location: '',
+                    severity: 'medium',
+                    windSpeed: '',
+                    handler: '',
+                    detectionBasis: '',
+                    transferHospital: ''
+                  });
+                }}
+                className="text-white hover:text-gray-200 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* 모달 내용 */}
+            <div className="p-6">
+              <p className="text-sm text-gray-600 mb-6">
+                <span className="text-red-500">*</span> 표시는 필수 입력 항목입니다.
+              </p>
+
+              <div className="space-y-5">
+                {/* 필수 입력 항목 */}
+                <div className="bg-gray-50 p-4 space-y-4">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-3">필수 입력 항목</h3>
+                  
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-2">
+                      <span className="text-red-500">*</span> CCTV ID
+                    </label>
+                    <input
+                      type="text"
+                      value={newRecord.cctvId}
+                      onChange={(e) => setNewRecord({...newRecord, cctvId: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      style={{ borderRadius: '0px' }}
+                      placeholder="CCTV ID를 입력하세요"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-2">
+                      <span className="text-red-500">*</span> 발생시간
+                    </label>
+                    <input
+                      type="datetime-local"
+                      value={newRecord.time}
+                      onChange={(e) => setNewRecord({...newRecord, time: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      style={{ borderRadius: '0px' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-2">
+                      <span className="text-red-500">*</span> 사고 종류
+                    </label>
+                    <select
+                      value={newRecord.type}
+                      onChange={(e) => setNewRecord({...newRecord, type: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      style={{ borderRadius: '0px' }}
+                    >
+                      <option value="">선택하세요</option>
+                      <option value="응급">응급</option>
+                      <option value="화재">화재</option>
+                      <option value="쓰레기">쓰레기</option>
+                      <option value="기타">기타</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* 선택 입력 항목 */}
+                <div className="space-y-4">
+                  <h3 className="text-sm font-semibold text-gray-700">선택 입력 항목</h3>
+                  
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-2">위치</label>
+                    <input
+                      type="text"
+                      value={newRecord.location}
+                      onChange={(e) => setNewRecord({...newRecord, location: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      style={{ borderRadius: '0px' }}
+                      placeholder="위치를 입력하세요"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-2">심각도</label>
+                    <select
+                      value={newRecord.severity}
+                      onChange={(e) => setNewRecord({...newRecord, severity: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      style={{ borderRadius: '0px' }}
+                    >
+                      <option value="low">하</option>
+                      <option value="medium">중</option>
+                      <option value="high">상</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-2">풍속</label>
+                    <input
+                      type="text"
+                      value={newRecord.windSpeed}
+                      onChange={(e) => setNewRecord({...newRecord, windSpeed: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      style={{ borderRadius: '0px' }}
+                      placeholder="풍속을 입력하세요 (예: 2.3m/s)"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-2">처리자</label>
+                    <input
+                      type="text"
+                      value={newRecord.handler}
+                      onChange={(e) => setNewRecord({...newRecord, handler: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      style={{ borderRadius: '0px' }}
+                      placeholder="처리자를 입력하세요"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-2">탐지 근거</label>
+                    <textarea
+                      value={newRecord.detectionBasis}
+                      onChange={(e) => setNewRecord({...newRecord, detectionBasis: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      style={{ borderRadius: '0px' }}
+                      rows={3}
+                      placeholder="탐지 근거를 입력하세요"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm text-gray-700 mb-2">이송병원 및 처리 기관</label>
+                    <input
+                      type="text"
+                      value={newRecord.transferHospital}
+                      onChange={(e) => setNewRecord({...newRecord, transferHospital: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                      style={{ borderRadius: '0px' }}
+                      placeholder="이송병원 및 처리 기관을 입력하세요"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 버튼 */}
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => {
+                    setShowNewRecordModal(false);
+                    setNewRecord({
+                      cctvId: '',
+                      time: '',
+                      type: '',
+                      location: '',
+                      severity: 'medium',
+                      windSpeed: '',
+                      handler: '',
+                      detectionBasis: '',
+                      transferHospital: ''
+                    });
+                  }}
+                  className="flex-1 px-4 py-2.5 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors"
+                  style={{ borderRadius: '0px' }}
+                >
+                  취소
+                </button>
+                <button
+                  onClick={handleNewRecordSubmit}
+                  className="flex-1 px-4 py-2.5 bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                  style={{ borderRadius: '0px' }}
+                >
+                  등록
+                </button>
               </div>
             </div>
           </div>
