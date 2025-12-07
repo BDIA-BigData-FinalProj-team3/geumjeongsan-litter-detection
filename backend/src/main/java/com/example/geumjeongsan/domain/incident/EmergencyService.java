@@ -2,10 +2,17 @@ package com.example.geumjeongsan.domain.incident;
 
 import com.example.geumjeongsan.api.dto.EmergencyDashboardResponse;
 import com.example.geumjeongsan.api.dto.EmergencyIncidentItem;
+import com.example.geumjeongsan.api.dto.EmergencyIncidentListDto;
 import com.example.geumjeongsan.api.dto.EmergencyRequest;
 import com.example.geumjeongsan.api.dto.EmergencyResponse;
+import com.example.geumjeongsan.api.dto.EmergencyStatsDto;
+import com.example.geumjeongsan.api.dto.HotspotDto;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,15 +28,113 @@ public class EmergencyService {
 
     private final IncidentRepository incidentRepository;
     private final EmergencyDetailRepository emergencyDetailRepository;
+    private final IncidentSummaryRepository incidentSummaryRepository;
+    private final EmergencyHotspotCctvRepository emergencyHotspotCctvRepository;
     private final EntityManager entityManager;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     public EmergencyService(IncidentRepository incidentRepository,
                            EmergencyDetailRepository emergencyDetailRepository,
+                           IncidentSummaryRepository incidentSummaryRepository,
+                           EmergencyHotspotCctvRepository emergencyHotspotCctvRepository,
                            EntityManager entityManager) {
         this.incidentRepository = incidentRepository;
         this.emergencyDetailRepository = emergencyDetailRepository;
+        this.incidentSummaryRepository = incidentSummaryRepository;
+        this.emergencyHotspotCctvRepository = emergencyHotspotCctvRepository;
         this.entityManager = entityManager;
+    }
+    
+    /**
+     * 응급 대시보드 상단 통계 (VIEW 기반)
+     */
+    public EmergencyStatsDto getEmergencyStats() {
+        LocalDate today = LocalDate.now();
+        int currentYear = today.getYear();
+        int currentMonth = today.getMonthValue();
+        
+        // 당일 발생건수
+        long todayCount = incidentSummaryRepository.countTodayByType(today, "EMERGENCY");
+        
+        // 대기중 건수
+        long pendingCount = incidentSummaryRepository.countPendingByType("EMERGENCY");
+        
+        // 월평균 처리시간 (분)
+        Double avgResponseTime = incidentSummaryRepository.getAvgResponseMinutes(
+                currentYear, currentMonth, "EMERGENCY"
+        );
+        
+        // 포맷팅 (예: 5분 30초)
+        String avgResponseTimeFormatted = formatResponseTime(avgResponseTime);
+        
+        return EmergencyStatsDto.builder()
+                .todayCount(todayCount)
+                .pendingCount(pendingCount)
+                .avgResponseTime(avgResponseTime != null ? avgResponseTime : 0.0)
+                .avgResponseTimeFormatted(avgResponseTimeFormatted)
+                .build();
+    }
+    
+    private String formatResponseTime(Double minutes) {
+        if (minutes == null || minutes == 0) {
+            return "-";
+        }
+        int totalSeconds = (int) (minutes * 60);
+        int mins = totalSeconds / 60;
+        int secs = totalSeconds % 60;
+        
+        if (mins > 0) {
+            return mins + "분 " + secs + "초";
+        } else {
+            return secs + "초";
+        }
+    }
+    
+    /**
+     * 응급 사고다발구간 조회 (VIEW 기반)
+     * @param period 기간 (this_month, 30d, 7d, all)
+     * @param minCount 최소 건수 (기본값: 3)
+     * @return List<HotspotDto>
+     */
+    public List<HotspotDto> getEmergencyHotspots(String period, Long minCount) {
+        if (minCount == null || minCount < 1) {
+            minCount = 3L;  // 기본값: 3건 이상
+        }
+        
+        List<EmergencyHotspotCctv> hotspots;
+        
+        switch (period.toLowerCase()) {
+            case "this_month":
+                hotspots = emergencyHotspotCctvRepository.findHotspotsByThisMonth(minCount);
+                return hotspots.stream()
+                        .map(HotspotDto::fromEntityThisMonth)
+                        .collect(Collectors.toList());
+            
+            case "30d":
+                hotspots = emergencyHotspotCctvRepository.findHotspotsByLast30Days(minCount);
+                return hotspots.stream()
+                        .map(HotspotDto::fromEntity30Days)
+                        .collect(Collectors.toList());
+            
+            case "7d":
+                hotspots = emergencyHotspotCctvRepository.findHotspotsByLast7Days(minCount);
+                return hotspots.stream()
+                        .map(HotspotDto::fromEntity7Days)
+                        .collect(Collectors.toList());
+            
+            case "all":
+                hotspots = emergencyHotspotCctvRepository.findHotspotsByTotal(minCount);
+                return hotspots.stream()
+                        .map(HotspotDto::fromEntityThisMonth)  // 전체 기간이므로 total 사용
+                        .collect(Collectors.toList());
+            
+            default:
+                // 기본값: 이번 달
+                hotspots = emergencyHotspotCctvRepository.findHotspotsByThisMonth(minCount);
+                return hotspots.stream()
+                        .map(HotspotDto::fromEntityThisMonth)
+                        .collect(Collectors.toList());
+        }
     }
 
     // 응급 현황 + 목록 조회
@@ -404,6 +509,17 @@ public class EmergencyService {
                 .responseTeam(responseTeam != null ? responseTeam : "")
                 .notes(notes)
                 .build();
+    }
+    
+    /**
+     * 응급 사고 목록 조회 (페이지네이션)
+     */
+    public Page<EmergencyIncidentListDto> getEmergencyIncidents(int page, int size) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by("detectedAt").descending());
+        Page<IncidentSummary> incidents = incidentSummaryRepository
+                .findByIncidentTypeOrderByDetectedAtDesc("EMERGENCY", pageable);
+        
+        return incidents.map(EmergencyIncidentListDto::fromEntity);
     }
 }
 

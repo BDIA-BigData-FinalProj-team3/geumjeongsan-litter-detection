@@ -2,12 +2,15 @@ package com.example.geumjeongsan.domain.incident;
 
 import com.example.geumjeongsan.api.dto.TrashDashboardResponse;
 import com.example.geumjeongsan.api.dto.TrashIncidentItem;
+import com.example.geumjeongsan.api.dto.TrashStatsDto;
+import com.example.geumjeongsan.api.dto.HotspotDto;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -17,14 +20,20 @@ public class TrashService {
 
     private final IncidentRepository incidentRepository;
     private final TrashDetailRepository trashDetailRepository;
+    private final IncidentSummaryRepository incidentSummaryRepository;
+    private final TrashHotspotCctvRepository trashHotspotCctvRepository;
     private final EntityManager entityManager;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     public TrashService(IncidentRepository incidentRepository,
                        TrashDetailRepository trashDetailRepository,
+                       IncidentSummaryRepository incidentSummaryRepository,
+                       TrashHotspotCctvRepository trashHotspotCctvRepository,
                        EntityManager entityManager) {
         this.incidentRepository = incidentRepository;
         this.trashDetailRepository = trashDetailRepository;
+        this.incidentSummaryRepository = incidentSummaryRepository;
+        this.trashHotspotCctvRepository = trashHotspotCctvRepository;
         this.entityManager = entityManager;
     }
 
@@ -187,6 +196,87 @@ public class TrashService {
         }
         
         incidentRepository.save(incident);
+    }
+
+    // ===== 신규 메서드: Dashboard KPI용 =====
+    
+    public TrashStatsDto getTrashStats() {
+        LocalDate today = LocalDate.now();
+        YearMonth currentMonth = YearMonth.now();
+
+        long todayCount = incidentSummaryRepository.countTodayByType(today, "TRASH");
+        long pendingCount = incidentSummaryRepository.countPendingByType("TRASH");
+        Double avgResponseMinutes = incidentSummaryRepository.getAvgResponseMinutes(
+                currentMonth.getYear(),
+                currentMonth.getMonthValue(),
+                "TRASH"
+        );
+
+        String formattedTime = "-";
+        if (avgResponseMinutes != null && avgResponseMinutes > 0) {
+            long minutes = Math.round(avgResponseMinutes);
+            formattedTime = minutes + "분";
+        }
+
+        return TrashStatsDto.builder()
+                .todayCount(todayCount)
+                .pendingCount(pendingCount)
+                .avgResponseTime(avgResponseMinutes != null ? avgResponseMinutes : 0.0)
+                .avgResponseTimeFormatted(formattedTime)
+                .build();
+    }
+
+    public List<HotspotDto> getTrashHotspots(String period, Long minCount) {
+        if (minCount == null || minCount < 1) {
+            minCount = 3L;
+        }
+        
+        List<TrashHotspotCctv> hotspots;
+        
+        switch (period.toLowerCase()) {
+            case "this_month":
+                hotspots = trashHotspotCctvRepository.findHotspotsByThisMonth(minCount);
+                break;
+            case "30d":
+                hotspots = trashHotspotCctvRepository.findHotspotsByLast30Days(minCount);
+                break;
+            case "7d":
+                hotspots = trashHotspotCctvRepository.findHotspotsByLast7Days(minCount);
+                break;
+            case "all":
+                hotspots = trashHotspotCctvRepository.findHotspotsByTotal(minCount);
+                break;
+            default:
+                hotspots = trashHotspotCctvRepository.findHotspotsByThisMonth(minCount);
+        }
+
+        return hotspots.stream()
+                .map(h -> fromTrashHotspot(h, period))
+                .collect(Collectors.toList());
+    }
+
+    private HotspotDto fromTrashHotspot(TrashHotspotCctv entity, String period) {
+        Long count = switch (period) {
+            case "this_month" -> entity.getTrashCountThisMonth();
+            case "30d" -> entity.getTrashCount30d();
+            case "7d" -> entity.getTrashCount7d();
+            default -> entity.getTotalTrashCount();
+        };
+
+        return HotspotDto.builder()
+                .cctvId(entity.getCctvId())
+                .cctvCode(entity.getCctvCode())
+                .address(entity.getCctvAddress())
+                .addressDescription(entity.getCctvAddressDescription())
+                .incidentCount(count)
+                .avgSeverityScore(entity.getAvgSeverityScore())
+                .maxSeverityScore(entity.getMaxSeverityScore())
+                .firstIncidentAt(entity.getFirstTrashAt() != null ? entity.getFirstTrashAt().toString() : null)
+                .lastIncidentAt(entity.getLastTrashAt() != null ? entity.getLastTrashAt().toString() : null)
+                .latitude(entity.getLatitude())
+                .longitude(entity.getLongitude())
+                .geomWkt(entity.getGeomWkt())
+                .build();
     }
 }
 

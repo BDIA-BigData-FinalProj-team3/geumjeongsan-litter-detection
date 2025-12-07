@@ -17,6 +17,12 @@ public class StaffUser {
     @Column(name = "user_id")
     private Long id;
 
+    @Column(name = "login_id", unique = true, length = 50)
+    private String loginId;
+
+    @Column(name = "password", length = 200)
+    private String password;
+
     @Column(name = "name", nullable = false, length = 50)
     private String name;
 

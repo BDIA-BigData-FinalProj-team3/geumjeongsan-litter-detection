@@ -2,12 +2,15 @@ package com.example.geumjeongsan.domain.incident;
 
 import com.example.geumjeongsan.api.dto.FireDashboardResponse;
 import com.example.geumjeongsan.api.dto.FireIncidentItem;
+import com.example.geumjeongsan.api.dto.FireStatsDto;
+import com.example.geumjeongsan.api.dto.HotspotDto;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -17,14 +20,20 @@ public class FireService {
 
     private final IncidentRepository incidentRepository;
     private final FireDetailRepository fireDetailRepository;
+    private final IncidentSummaryRepository incidentSummaryRepository;
+    private final FireHotspotCctvRepository fireHotspotCctvRepository;
     private final EntityManager entityManager;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     public FireService(IncidentRepository incidentRepository,
                       FireDetailRepository fireDetailRepository,
+                      IncidentSummaryRepository incidentSummaryRepository,
+                      FireHotspotCctvRepository fireHotspotCctvRepository,
                       EntityManager entityManager) {
         this.incidentRepository = incidentRepository;
         this.fireDetailRepository = fireDetailRepository;
+        this.incidentSummaryRepository = incidentSummaryRepository;
+        this.fireHotspotCctvRepository = fireHotspotCctvRepository;
         this.entityManager = entityManager;
     }
 
@@ -210,6 +219,87 @@ public class FireService {
         }
         // 임시
         return "12.5km/h";
+    }
+
+    // ===== 신규 메서드: Dashboard KPI용 =====
+    
+    public FireStatsDto getFireStats() {
+        LocalDate today = LocalDate.now();
+        YearMonth currentMonth = YearMonth.now();
+
+        long todayCount = incidentSummaryRepository.countTodayByType(today, "FIRE");
+        long pendingCount = incidentSummaryRepository.countPendingByType("FIRE");
+        Double avgResponseMinutes = incidentSummaryRepository.getAvgResponseMinutes(
+                currentMonth.getYear(),
+                currentMonth.getMonthValue(),
+                "FIRE"
+        );
+
+        String formattedTime = "-";
+        if (avgResponseMinutes != null && avgResponseMinutes > 0) {
+            long minutes = Math.round(avgResponseMinutes);
+            formattedTime = minutes + "분";
+        }
+
+        return FireStatsDto.builder()
+                .todayCount(todayCount)
+                .pendingCount(pendingCount)
+                .avgResponseTime(avgResponseMinutes != null ? avgResponseMinutes : 0.0)
+                .avgResponseTimeFormatted(formattedTime)
+                .build();
+    }
+
+    public List<HotspotDto> getFireHotspots(String period, Long minCount) {
+        if (minCount == null || minCount < 1) {
+            minCount = 3L;
+        }
+        
+        List<FireHotspotCctv> hotspots;
+        
+        switch (period.toLowerCase()) {
+            case "this_month":
+                hotspots = fireHotspotCctvRepository.findHotspotsByThisMonth(minCount);
+                break;
+            case "30d":
+                hotspots = fireHotspotCctvRepository.findHotspotsByLast30Days(minCount);
+                break;
+            case "7d":
+                hotspots = fireHotspotCctvRepository.findHotspotsByLast7Days(minCount);
+                break;
+            case "all":
+                hotspots = fireHotspotCctvRepository.findHotspotsByTotal(minCount);
+                break;
+            default:
+                hotspots = fireHotspotCctvRepository.findHotspotsByThisMonth(minCount);
+        }
+
+        return hotspots.stream()
+                .map(h -> fromFireHotspot(h, period))
+                .collect(Collectors.toList());
+    }
+
+    private HotspotDto fromFireHotspot(FireHotspotCctv entity, String period) {
+        Long count = switch (period) {
+            case "this_month" -> entity.getFireCountThisMonth();
+            case "30d" -> entity.getFireCount30d();
+            case "7d" -> entity.getFireCount7d();
+            default -> entity.getTotalFireCount();
+        };
+
+        return HotspotDto.builder()
+                .cctvId(entity.getCctvId())
+                .cctvCode(entity.getCctvCode())
+                .address(entity.getCctvAddress())
+                .addressDescription(entity.getCctvAddressDescription())
+                .incidentCount(count)
+                .avgSeverityScore(entity.getAvgSeverityScore())
+                .maxSeverityScore(entity.getMaxSeverityScore())
+                .firstIncidentAt(entity.getFirstFireAt() != null ? entity.getFirstFireAt().toString() : null)
+                .lastIncidentAt(entity.getLastFireAt() != null ? entity.getLastFireAt().toString() : null)
+                .latitude(entity.getLatitude())
+                .longitude(entity.getLongitude())
+                .geomWkt(entity.getGeomWkt())
+                .build();
     }
     
 }
