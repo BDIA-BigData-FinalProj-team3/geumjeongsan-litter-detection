@@ -1,0 +1,1499 @@
+import React, { useState, useEffect } from 'react';
+import { HeartPulse, Activity, Clock, MapPin, HelpCircle, User, LogOut, AlertTriangle, X, Video, Image as ImageIcon, Map, Edit2, Save, Search, ChevronDown, Plus, ChevronLeft, ChevronRight } from 'lucide-react';
+import Sidebar from '../components/Sidebar';
+import HamburgerMenuButton from '../components/HamburgerMenuButton';
+import IncidentDetailModal from '../components/IncidentDetailModal';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { useIncidentCount } from '../contexts/IncidentCountContext';
+import { getActiveEmergencies, getCompletedEmergencies, getEmergencyStats, getEmergencyHotspots, getEmergencyIncidents, type EmergencyStatsResponse, type HotspotResponse, type IncidentListItem, type PageResponse } from '../services/api';
+
+interface EmergencyDashboardProps {
+  onNavigate?: (screen: string) => void;
+}
+
+interface EmergencyDetail {
+  id: number;
+  accidentCode: string;
+  type: string;
+  cctvId: string;
+  time: string;
+  status: string;
+  severity: string;
+  handler: string;
+  location?: string;
+  detectionBasis?: string;
+  responseTime?: string;
+  duration?: string;
+  patientName?: string;
+  gender?: string;
+  transferHospital?: string;
+}
+
+export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardProps) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { setEmergencyCount, addCompletedIncident, completedIncidents } = useIncidentCount();
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [viewMode, setViewMode] = useState<'active' | 'completed'>('active');
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [selectedDetail, setSelectedDetail] = useState<EmergencyDetail | null>(null);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedDetail, setEditedDetail] = useState<EmergencyDetail | null>(null);
+  const [searchCode, setSearchCode] = useState('');
+  const [highlightedCode, setHighlightedCode] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState<number | null>(null);
+  const [dropdownPosition, setDropdownPosition] = useState<{top: number, left: number} | null>(null);
+  
+  // 신규 응급 사건 등록 모달
+  const [showNewRecordModal, setShowNewRecordModal] = useState(false);
+  const [showPatientInfo, setShowPatientInfo] = useState(false);
+  const [showRescueInfo, setShowRescueInfo] = useState(false);
+  const [canSendAlert, setCanSendAlert] = useState(false);
+  const [newRecord, setNewRecord] = useState({
+    time: '',
+    location: '',
+    severity: 'medium',
+    memo: '',
+    patientName: '',
+    patientAge: '',
+    patientGender: '',
+    rescueTeam: '',
+    transferHospital: ''
+  });
+  
+  // 데이터 상태 관리 (목 데이터)
+  const [activeEmergencies, setActiveEmergencies] = useState<any[]>([
+    { id: 1, incidentId: 1, accidentCode: 'EMG-001', type: '쓰러진 사람', cctvId: 'CCTV-005', detectedAt: '2025-12-07 10:05', status: '대응중', severity: '중', location: '등산로 입구 1', detectionBasis: 'AI 자동 탐지: 쓰러진 사람 감지' },
+    { id: 2, incidentId: 2, accidentCode: 'EMG-002', type: '부상자', cctvId: 'CCTV-008', detectedAt: '2025-12-07 09:30', status: '대기중', severity: '상', location: '휴게소 1', detectionBasis: 'AI 자동 탐지: 부상자 감지' },
+    { id: 3, incidentId: 3, accidentCode: 'EMG-003', type: '쓰러진 사람', cctvId: '', detectedAt: '2025-12-07 11:20', status: '대기중', severity: '하', location: '휴게소 2', detectionBasis: '수동 등록' },
+  ]);
+  const [completedEmergencies, setCompletedEmergencies] = useState<any[]>([
+    { id: 4, incidentId: 4, accidentCode: 'EMG-004', type: '부상자', cctvId: 'CCTV-002', detectedAt: '2025-12-07 13:30', status: '처리완료', severity: '중', location: '등산로 2', detectionBasis: 'AI 자동 탐지: 부상자 감지', responseTime: '2025-12-07 13:42', duration: '12분' },
+    { id: 5, incidentId: 5, accidentCode: 'EMG-005', type: '쓰러진 사람', cctvId: '', detectedAt: '2025-12-07 08:00', status: '처리완료', severity: '하', location: '등산로 입구 3', detectionBasis: '수동 등록', responseTime: '2025-12-07 08:20', duration: '20분' },
+  ]);
+  const [stats, setStats] = useState<EmergencyStatsResponse>({
+    todayCount: 8,
+    pendingCount: 2,
+    avgResponseTime: 16,
+    avgResponseTimeFormatted: '16분'
+  });
+  const [hotspots, setHotspots] = useState<HotspotResponse[]>([
+    { location: '휴게소 1', count: 5 }
+  ]);
+  
+  // 페이지네이션 상태 관리
+  const [incidents, setIncidents] = useState<IncidentListItem[]>([]);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [totalElements, setTotalElements] = useState(0);
+  const pageSize = 10;
+  
+  // viewMode 변경 시 페이지 리셋
+  useEffect(() => {
+    setCurrentPage(0);
+  }, [viewMode]);
+
+  // API에서 데이터 로드
+  // API 연결 끊음 - 목 데이터 사용
+  // useEffect(() => {
+  //   const loadEmergencyData = async () => {
+  //     const [active, completed, statsData, hotspotsData] = await Promise.all([
+  //       getActiveEmergencies(),
+  //       getCompletedEmergencies(),
+  //       getEmergencyStats(),
+  //       getEmergencyHotspots('this_month', 1),
+  //     ]);
+  //     const filteredActive = active.filter(e => !completedIncidents.has(e.cctvId));
+  //     setActiveEmergencies(filteredActive);
+  //     setCompletedEmergencies(completed);
+  //     setStats(statsData);
+  //     setHotspots(hotspotsData);
+  //   };
+  //   
+  //   loadEmergencyData();
+  // }, [completedIncidents]);
+  
+  // 페이지네이션 데이터 로드 - 목 데이터 사용
+  useEffect(() => {
+    const mockIncidents = [...activeEmergencies, ...completedEmergencies];
+    setIncidents(mockIncidents);
+    setTotalPages(1);
+    setTotalElements(mockIncidents.length);
+  }, [currentPage, activeEmergencies, completedEmergencies]);
+
+  // 초기 카운트 설정 및 activeEmergencies 변경 시 카운트 업데이트
+  useEffect(() => {
+    setEmergencyCount(activeEmergencies.length);
+  }, [activeEmergencies, setEmergencyCount]);
+
+  // 검색 코드가 있으면 필터링, 없으면 전체 표시 (백엔드 페이지네이션 데이터 사용)
+  // viewMode에 따라 상태별로 필터링
+  const filteredByStatus = incidents.filter(e => {
+    if (viewMode === 'active') {
+      // 진행중 탭: 대기중 또는 대응중만 표시
+      return e.status === '대기중' || e.status === '대응중';
+    } else {
+      // 처리완료 탭: 처리완료만 표시
+      return e.status === '처리완료';
+    }
+  });
+  
+  const filteredEmergencies = highlightedCode 
+    ? filteredByStatus.filter(e => 
+        e.accidentCode.toUpperCase() === highlightedCode.toUpperCase()
+      )
+    : filteredByStatus;
+  
+  const emergencies = filteredEmergencies;
+
+  const updateStatus = (id: number, newStatus: string) => {
+    setActiveEmergencies(prev => prev.map(item => 
+      item.id === id 
+        ? { ...item, status: newStatus }
+        : item
+    ));
+    setStatusDropdownOpen(null);
+  };
+
+  const toggleSelection = (id: number) => {
+    setSelectedIds(prev => 
+      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === activeEmergencies.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(activeEmergencies.map(e => e.id));
+    }
+  };
+
+  const handleBatchComplete = () => {
+    const now = new Date();
+    const responseTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    
+    const itemsToComplete = activeEmergencies.filter(e => selectedIds.includes(e.id)).map(e => ({
+      ...e,
+      status: '처리완료',
+      responseTime,
+      duration: '10분'
+    }));
+    
+    // 처리완료된 사건의 CCTV ID를 전역 상태에 추가
+    itemsToComplete.forEach(item => {
+      addCompletedIncident(item.cctvId);
+    });
+    
+    const newActiveEmergencies = activeEmergencies.filter(e => !selectedIds.includes(e.id));
+    setCompletedEmergencies(prev => [...itemsToComplete, ...prev]);
+    setActiveEmergencies(newActiveEmergencies);
+    setEmergencyCount(newActiveEmergencies.length);
+    setSelectedIds([]);
+  };
+
+  const handleEditClick = () => {
+    setIsEditing(true);
+    setEditedDetail({ ...selectedDetail! });
+  };
+
+  const handleSave = () => {
+    if (!editedDetail) return;
+    
+    // activeEmergencies 또는 completedEmergencies 업데이트
+    if (viewMode === 'active') {
+      setActiveEmergencies(prev => prev.map(e => 
+        e.id === editedDetail.id ? editedDetail : e
+      ));
+    } else {
+      setCompletedEmergencies(prev => prev.map(e => 
+        e.id === editedDetail.id ? editedDetail : e
+      ));
+    }
+    
+    setSelectedDetail(editedDetail);
+    setIsEditing(false);
+    setEditedDetail(null);
+  };
+
+  const handleCancel = () => {
+    setIsEditing(false);
+    setEditedDetail(null);
+  };
+
+  const handleFieldChange = (field: keyof EmergencyDetail, value: string) => {
+    if (editedDetail) {
+      setEditedDetail({ ...editedDetail, [field]: value });
+    }
+  };
+
+  // URL 파라미터에서 검색 코드 확인
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const code = params.get('code');
+    if (code) {
+      setSearchCode(code);
+      const upperCode = code.toUpperCase();
+      setHighlightedCode(upperCode);
+      // 해당 코드가 있는지 확인
+      const allEmergencies = [...activeEmergencies, ...completedEmergencies];
+      const found = allEmergencies.find(e => e.accidentCode.toUpperCase() === upperCode);
+      if (found) {
+        // 해당 사고가 완료된 것인지 확인하여 viewMode 설정
+        if (completedEmergencies.find(e => e.id === found.id)) {
+          setViewMode('completed');
+        } else {
+          setViewMode('active');
+        }
+        // 상세정보는 열지 않고 행만 하이라이트
+      }
+    }
+  }, [location.search, activeEmergencies, completedEmergencies]);
+
+  const handleNewRecordSubmit = () => {
+    // 필수 입력 체크
+    if (!newRecord.time || !newRecord.location || !newRecord.severity) {
+      alert('발생시간, 발생 위치, 심각도는 필수 입력 항목입니다.');
+      return;
+    }
+
+    // 새 응급 사건 생성 (실제로는 백엔드 API 호출)
+    const newEmergency = {
+      id: Date.now(),
+      incidentId: Date.now(),
+      accidentCode: `EMG-${String(Date.now()).slice(-4)}`,
+      type: '쓰러진 사람',
+      cctvId: '',
+      detectedAt: newRecord.time,
+      status: '대기중',
+      severity: newRecord.severity === 'high' ? '상' : newRecord.severity === 'medium' ? '중' : '하',
+      location: newRecord.location,
+      detectionBasis: '수동 등록',
+      patientName: newRecord.patientName,
+      patientAge: newRecord.patientAge,
+      patientGender: newRecord.patientGender,
+      rescueTeam: newRecord.rescueTeam,
+      transferHospital: newRecord.transferHospital,
+      memo: newRecord.memo
+    };
+
+    setActiveEmergencies([newEmergency, ...activeEmergencies]);
+    
+    // 문자 신고 버튼 활성화
+    setCanSendAlert(true);
+    
+    alert('신규 응급 사건이 등록되었습니다. 문자 신고 버튼이 활성화되었습니다.');
+  };
+
+  const handleSearch = (code: string) => {
+    setSearchError(null);
+    const trimmedCode = code.trim();
+    if (!trimmedCode) {
+      setHighlightedCode(null);
+      setSelectedDetail(null);
+      return;
+    }
+
+    const upperCode = trimmedCode.toUpperCase();
+    
+    // 현재 탭에서 검색
+    const allEmergencies = [...activeEmergencies, ...completedEmergencies];
+    const found = allEmergencies.find(e => e.accidentCode.toUpperCase() === upperCode);
+    
+    if (found) {
+      setHighlightedCode(upperCode);
+      // 상세정보는 열지 않고 행만 하이라이트
+      if (completedEmergencies.find(e => e.id === found.id)) {
+        setViewMode('completed');
+      } else {
+        setViewMode('active');
+      }
+    } else {
+      // 다른 탭으로 이동
+      if (upperCode.startsWith('FIRE-')) {
+        navigate(`/fire?code=${upperCode}`);
+      } else if (upperCode.startsWith('TRASH-')) {
+        navigate(`/trash?code=${upperCode}`);
+      } else if (upperCode.startsWith('EMG-')) {
+        navigate(`/emergency?code=${upperCode}`);
+      } else {
+        // 검색 결과 없음
+        setHighlightedCode(null);
+        setSelectedDetail(null);
+        setSearchError('검색 결과가 없습니다.');
+        setTimeout(() => setSearchError(null), 3000);
+      }
+    }
+  };
+
+  return (
+    <div className="flex h-screen">
+      {/* Sidebar with smooth slide animation */}
+      <div 
+        className="fixed top-0 left-0 z-50 h-screen transition-transform duration-300 ease-in-out"
+        style={{ 
+          width: '317.56px', 
+          backgroundColor: '#2B2847',
+          transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)'
+        }}
+      >
+        <Sidebar onNavigate={onNavigate || (() => {})} currentPath="emergency-dashboard" />
+      </div>
+      <div className="flex-1 flex flex-col relative bg-white" style={{ marginLeft: sidebarOpen ? '317.56px' : '0px', transition: 'margin-left 0.3s' }}>
+        {/* 상단바 */}
+        <div className="shadow-md px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
+          <div className="flex items-center gap-3">
+            <HamburgerMenuButton onClick={() => setSidebarOpen(!sidebarOpen)} />
+            <HeartPulse className="w-6 h-6 text-gray-200" />
+            <h1 className="text-gray-100">응급 상황 현황</h1>
+          </div>
+        </div>
+
+        <div className="flex-1">
+        <div className="p-6 bg-gray-50 min-h-screen">
+          <div className="max-w-7xl mx-auto">
+            {/* KPI Cards - 높이 줄임 */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
+              <div className="bg-white p-4 shadow-sm border border-gray-200 rounded-lg">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-gray-600">당일 발생</span>
+                  <AlertTriangle className="w-4 h-4 text-red-500" />
+                </div>
+                <div className="text-gray-900 text-xl font-semibold">{stats.todayCount}건</div>
+              </div>
+
+              <div className="bg-white p-4 shadow-sm border border-gray-200 rounded-lg">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-gray-600">대기중</span>
+                  <Activity className="w-4 h-4 text-orange-500" />
+                </div>
+                <div className="text-gray-900 text-xl font-semibold">{stats.pendingCount}건</div>
+              </div>
+
+              <div className="bg-white p-4 shadow-sm border border-gray-200 rounded-lg">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-gray-600">월 평균 처리 시간</span>
+                  <Clock className="w-4 h-4 text-blue-500" />
+                </div>
+                <div className="text-gray-900 text-xl font-semibold">{stats.avgResponseTimeFormatted}</div>
+              </div>
+
+              <div className="bg-white p-4 shadow-sm border border-gray-200 rounded-lg relative">
+                <div 
+                  className="absolute top-2 right-2"
+                  onMouseEnter={() => setShowTooltip(true)}
+                  onMouseLeave={() => setShowTooltip(false)}
+                >
+                  <div className="w-5 h-5 rounded-full bg-gray-300 flex items-center justify-center cursor-help">
+                    <HelpCircle className="w-3.5 h-3.5 text-white" strokeWidth={2.5} />
+                  </div>
+                  {showTooltip && hotspots.length > 0 && (
+                    <div className="absolute right-0 bottom-8 bg-gray-900 text-white text-xs px-3 py-2 shadow-lg max-w-xs" style={{ borderRadius: '4px' }}>
+                      <div className="whitespace-nowrap">
+                        당월 {hotspots[0].incidentCount}건 발생 지역
+                      </div>
+                      <div className="absolute -bottom-1 right-2 w-2 h-2 bg-gray-900 transform rotate-45"></div>
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-sm text-gray-600">다발구간</span>
+                  <MapPin className="w-4 h-4 text-purple-500" />
+                </div>
+                <div className="text-gray-900 text-xl font-semibold">
+                  {hotspots.length > 0 ? (hotspots[0].address || hotspots[0].cctvCode) : '-'}
+                </div>
+              </div>
+            </div>
+
+            {/* Emergency List */}
+            <div className="bg-white shadow-sm border border-gray-200" style={{ borderRadius: '0px' }}>
+              <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <h2 className="text-gray-900">응급 사건 목록</h2>
+                  <span className="text-sm text-gray-600">총 {totalElements}건</span>
+                  {viewMode === 'active' && selectedIds.length > 0 && (
+                    <button
+                      onClick={handleBatchComplete}
+                      className="px-4 py-1.5 text-sm bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                      style={{ borderRadius: '0px' }}
+                    >
+                      일괄처리 ({selectedIds.length})
+                    </button>
+                  )}
+                </div>
+                
+                {/* Search and Toggle Buttons */}
+                <div className="flex items-center gap-2">
+                  {/* 신규 기록 등록 버튼 */}
+                  <button
+                    onClick={() => setShowNewRecordModal(true)}
+                    className="px-3 py-1.5 bg-emerald-600 text-white text-sm hover:bg-emerald-700 transition-colors flex items-center gap-1.5"
+                    style={{ borderRadius: '0px' }}
+                  >
+                    <Plus className="w-4 h-4" />
+                    신규 응급 사건 등록
+                  </button>
+
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={searchCode}
+                      onChange={(e) => {
+                        setSearchCode(e.target.value);
+                        setSearchError(null);
+                      }}
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter') {
+                          handleSearch(searchCode);
+                        }
+                      }}
+                      placeholder="사고 코드 검색"
+                      className={`px-3 py-1.5 pr-8 text-sm border focus:outline-none focus:ring-2 ${
+                        searchError ? 'border-red-300 focus:ring-red-500' : 'border-gray-300 focus:ring-emerald-500'
+                      }`}
+                      style={{ borderRadius: '9999px', width: '180px' }}
+                    />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleSearch(searchCode);
+                      }}
+                      className="absolute right-1 top-1/2 transform -translate-y-1/2 p-1 hover:bg-gray-100 rounded-full"
+                      style={{ borderRadius: '9999px' }}
+                    >
+                      <Search className="w-4 h-4 text-gray-500" />
+                    </button>
+                    {searchError && (
+                      <div className="absolute top-full left-0 mt-1 text-xs text-red-600 whitespace-nowrap">
+                        {searchError}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => { setViewMode('active'); setSelectedIds([]); }}
+                    className={`px-4 py-1.5 text-sm transition-colors ${
+                      viewMode === 'active'
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                    style={{ borderRadius: '9999px' }}
+                  >
+                    진행 중
+                  </button>
+                  <button
+                    onClick={() => { setViewMode('completed'); setSelectedIds([]); }}
+                    className={`px-4 py-1.5 text-sm transition-colors ${
+                      viewMode === 'completed'
+                        ? 'bg-emerald-600 text-white'
+                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                    }`}
+                    style={{ borderRadius: '9999px' }}
+                  >
+                    처리완료
+                  </button>
+                </div>
+              </div>
+              <div className="overflow-x-auto overflow-y-visible">
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      {viewMode === 'active' && (
+                        <th className="px-6 py-3 text-center text-gray-600 text-sm w-16">
+                          <input 
+                            type="checkbox" 
+                            checked={selectedIds.length === activeEmergencies.length && activeEmergencies.length > 0}
+                            onChange={toggleSelectAll}
+                            className="w-4 h-4 cursor-pointer"
+                          />
+                        </th>
+                      )}
+                      <th className="px-6 py-3 text-left text-gray-600 text-sm">사고 코드</th>
+                      <th className="px-6 py-3 text-left text-gray-600 text-sm" style={{ minWidth: '130px', width: '130px' }}>탐지근거</th>
+                      <th className="px-6 py-3 text-left text-gray-600 text-sm">유형</th>
+                      <th className="px-6 py-3 text-left text-gray-600 text-sm">CCTV ID</th>
+                      <th className="px-6 py-3 text-left text-gray-600 text-sm">발생시간</th>
+                      {viewMode === 'completed' && (
+                        <>
+                          <th className="px-6 py-3 text-left text-gray-600 text-sm">처리완료시각</th>
+                          <th className="px-6 py-3 text-left text-gray-600 text-sm">소요시간</th>
+                        </>
+                      )}
+                      <th className="px-6 py-3 text-left text-gray-600 text-sm">심각도</th>
+                      {viewMode === 'active' && (
+                        <th className="px-6 py-3 text-left text-gray-600 text-sm">상태</th>
+                      )}
+                      <th className="px-6 py-3 text-left text-gray-600 text-sm">처리자</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-200">
+                    {emergencies.map((emergency) => {
+                      const isHighlighted = highlightedCode && emergency.accidentCode.toUpperCase() === highlightedCode.toUpperCase();
+                      return (
+                      <tr 
+                        key={emergency.incidentId} 
+                        className={`hover:bg-gray-50 cursor-pointer ${isHighlighted ? 'bg-yellow-100' : ''}`} 
+                        onClick={() => { setSelectedDetail(emergency as any); setIsEditing(false); setEditedDetail(null); }}
+                      >
+                        {viewMode === 'active' && (
+                          <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                            <input 
+                              type="checkbox" 
+                              checked={selectedIds.includes(emergency.incidentId)}
+                              onChange={() => toggleSelection(emergency.incidentId)}
+                              className="w-4 h-4 cursor-pointer"
+                            />
+                          </td>
+                        )}
+                        <td className="px-6 py-4 text-gray-900">{emergency.accidentCode}</td>
+                        <td className="px-6 py-4" style={{ minWidth: '130px', width: '130px' }}>
+                          <span className={`inline-flex items-center px-2 py-1 text-xs font-medium whitespace-nowrap ${
+                            emergency.detectionBasis?.includes('AI') || emergency.detectionBasis?.includes('자동')
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-gray-100 text-gray-700'
+                          }`} style={{ borderRadius: '0px' }}>
+                            {emergency.detectionBasis?.includes('AI') || emergency.detectionBasis?.includes('자동') ? 'AI 자동 탐지' : '수동 등록'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-gray-900">{emergency.type}</td>
+                        <td className="px-6 py-4 text-gray-600">{emergency.cctvId}</td>
+                        <td className="px-6 py-4 text-gray-600 text-sm">{emergency.detectedAt}</td>
+                        {viewMode === 'completed' && (
+                          <>
+                            <td className="px-6 py-4 text-gray-600 text-sm">-</td>
+                            <td className="px-6 py-4 text-gray-600">-</td>
+                          </>
+                        )}
+                        <td className="px-6 py-4">
+                          <span className={`px-2 py-1 text-xs ${
+                            emergency.severity === '상' 
+                              ? 'bg-red-100 text-red-700' 
+                              : emergency.severity === '중'
+                              ? 'bg-yellow-100 text-yellow-700'
+                              : 'bg-blue-100 text-blue-700'
+                          }`} style={{ borderRadius: '0px' }}>
+                            {emergency.severity}
+                          </span>
+                        </td>
+                        {viewMode === 'active' && (
+                          <td className="px-6 py-4 overflow-visible" onClick={(e) => e.stopPropagation()}>
+                            <div className="relative inline-block">
+                              <button 
+                                onClick={(e) => {
+                                  if (statusDropdownOpen === emergency.incidentId) {
+                                    setStatusDropdownOpen(null);
+                                    setDropdownPosition(null);
+                                  } else {
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    setDropdownPosition({
+                                      top: rect.bottom + window.scrollY,
+                                      left: rect.left + window.scrollX
+                                    });
+                                    setStatusDropdownOpen(emergency.incidentId);
+                                  }
+                                }}
+                                className={`px-3 py-1.5 text-xs cursor-pointer hover:opacity-80 transition-opacity flex items-center gap-2 ${
+                                  emergency.status === '대기중' 
+                                    ? 'bg-orange-100 text-orange-700' 
+                                    : emergency.status === '대응중'
+                                    ? 'bg-green-100 text-green-700'
+                                    : 'bg-gray-100 text-gray-700'
+                                }`} 
+                                style={{ borderRadius: '0px', minWidth: '90px' }}
+                              >
+                                <span>{emergency.status}</span>
+                                <ChevronDown className="w-3.5 h-3.5 ml-auto" />
+                              </button>
+                              {statusDropdownOpen === emergency.incidentId && dropdownPosition && (
+                                <div 
+                                  className="fixed bg-white shadow-lg border border-gray-200 min-w-[100px]" 
+                                  style={{ 
+                                    borderRadius: '0px',
+                                    top: `${dropdownPosition.top + 4}px`,
+                                    left: `${dropdownPosition.left}px`,
+                                    zIndex: 9999
+                                  }}
+                                >
+                                  <button
+                                    onClick={() => updateStatus(emergency.incidentId, '대기중')}
+                                    className="w-full px-3 py-2 text-left text-sm hover:bg-orange-50 text-gray-700"
+                                  >
+                                    대기중
+                                  </button>
+                                  <button
+                                    onClick={() => updateStatus(emergency.incidentId, '대응중')}
+                                    className="w-full px-3 py-2 text-left text-sm hover:bg-green-50 text-gray-700"
+                                  >
+                                    대응중
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        )}
+                        <td className="px-6 py-4 text-gray-600">{emergency.location || '-'}</td>
+                      </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              
+              {/* 페이지네이션 UI - 2페이지 이상일 때만 표시 */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-end gap-4 px-6 py-4 border-t border-gray-200">
+                  <div className="text-sm text-gray-600">
+                    {currentPage + 1} / {totalPages} 페이지
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setCurrentPage(0)}
+                      disabled={currentPage === 0}
+                      className={`px-3 py-1 text-sm border ${
+                        currentPage === 0
+                          ? 'border-gray-200 text-gray-400 cursor-not-allowed'
+                          : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                      }`}
+                      style={{ borderRadius: '0px' }}
+                    >
+                      처음
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.max(0, prev - 1))}
+                      disabled={currentPage === 0}
+                      className={`px-3 py-1 text-sm border ${
+                        currentPage === 0
+                          ? 'border-gray-200 text-gray-400 cursor-not-allowed'
+                          : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                      }`}
+                      style={{ borderRadius: '0px' }}
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    
+                    {/* 페이지 번호 버튼 */}
+                    {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                      const startPage = Math.max(0, Math.min(currentPage - 2, totalPages - 5));
+                      const pageNum = startPage + i;
+                      return (
+                        <button
+                          key={pageNum}
+                          onClick={() => setCurrentPage(pageNum)}
+                          className={`px-3 py-1 text-sm border ${
+                            currentPage === pageNum
+                              ? 'bg-emerald-600 text-white border-emerald-600'
+                              : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                          }`}
+                          style={{ borderRadius: '0px' }}
+                        >
+                          {pageNum + 1}
+                        </button>
+                      );
+                    })}
+                    
+                    <button
+                      onClick={() => setCurrentPage(prev => Math.min(totalPages - 1, prev + 1))}
+                      disabled={currentPage === totalPages - 1}
+                      className={`px-3 py-1 text-sm border ${
+                        currentPage === totalPages - 1
+                          ? 'border-gray-200 text-gray-400 cursor-not-allowed'
+                          : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                      }`}
+                      style={{ borderRadius: '0px' }}
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(totalPages - 1)}
+                      disabled={currentPage === totalPages - 1}
+                      className={`px-3 py-1 text-sm border ${
+                        currentPage === totalPages - 1
+                          ? 'border-gray-200 text-gray-400 cursor-not-allowed'
+                          : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                      }`}
+                      style={{ borderRadius: '0px' }}
+                    >
+                      마지막
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        </div>
+      </div>
+
+      {/* 상세정보 모달 */}
+      {selectedDetail && (
+        <>
+          {/* AI 자동 탐지 vs 수동 등록 */}
+          {(selectedDetail as any).detectionBasis?.includes('AI') || (selectedDetail as any).detectionBasis?.includes('자동') ? (
+            /* AI 자동 탐지 - 새 컴포넌트 사용 */
+            <IncidentDetailModal
+              type="emergency"
+              detail={selectedDetail as any}
+              isEditing={isEditing}
+              editedDetail={editedDetail as any}
+              onClose={() => { setSelectedDetail(null); setIsEditing(false); }}
+              onEditClick={handleEditClick}
+              onSave={handleSave}
+              onCancel={handleCancel}
+              onFieldChange={handleFieldChange}
+            />
+          ) : (
+            /* 수동 등록 - 간단한 모달 */
+            <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={() => setSelectedDetail(null)}>
+              <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+                {/* 모달 헤더 */}
+                <div className="flex items-center justify-between p-6 border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
+                  <h2 className="text-xl font-semibold text-gray-100">상세정보</h2>
+                  <button onClick={() => { setSelectedDetail(null); setIsEditing(false); }} className="text-gray-100 hover:text-white transition-colors">
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+                {/* 수동 등록 모달 내용 */}
+                <div className="flex p-6 gap-6">
+                    {/* 왼쪽 패널 - 이미지/영상 16:9 세로 배치 */}
+                    <div className="flex-1 space-y-4">
+                      <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
+                        <div className="text-center text-gray-500">
+                          <ImageIcon className="w-10 h-10 mx-auto mb-2" />
+                          <p className="text-sm">이미지</p>
+                        </div>
+                      </div>
+                      <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
+                        <div className="text-center text-gray-500">
+                          <Video className="w-10 h-10 mx-auto mb-2" />
+                          <p className="text-sm">영상</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 우측 패널 - 상세정보 */}
+                    <div className="flex-1 flex flex-col">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
+                      <div className="space-y-4 flex-1">
+                        <div>
+                          <label className="text-sm text-gray-600">사고 코드</label>
+                          <p className="text-gray-900 mt-1">{selectedDetail.accidentCode}</p>
+                        </div>
+
+                        <div>
+                          <label className="text-sm text-gray-600">발생시간</label>
+                          {isEditing && editedDetail ? (
+                            <input
+                              type="text"
+                              value={(editedDetail as any).detectedAt || editedDetail.time}
+                              onChange={(e) => handleFieldChange('time', e.target.value)}
+                              className="w-full mt-1 px-3 py-2 border border-gray-300"
+                              style={{ borderRadius: '0px' }}
+                            />
+                          ) : (
+                            <p className="text-gray-900 mt-1">{(selectedDetail as any).detectedAt || selectedDetail.time}</p>
+                          )}
+                        </div>
+                  <div>
+                    <label className="text-sm text-gray-600">유형</label>
+                    {isEditing && editedDetail ? (
+                      <input
+                        type="text"
+                        value={editedDetail.type}
+                        onChange={(e) => handleFieldChange('type', e.target.value)}
+                        className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                        style={{ borderRadius: '0px' }}
+                      />
+                    ) : (
+                      <p className="text-gray-900 mt-1">{selectedDetail.type}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">발생시간</label>
+                    {isEditing && editedDetail ? (
+                      <input
+                        type="text"
+                        value={editedDetail.time}
+                        onChange={(e) => handleFieldChange('time', e.target.value)}
+                        className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                        style={{ borderRadius: '0px' }}
+                      />
+                    ) : (
+                      <p className="text-gray-900 mt-1">{selectedDetail.time}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">심각도</label>
+                    {isEditing && editedDetail ? (
+                      <select
+                        value={editedDetail.severity}
+                        onChange={(e) => handleFieldChange('severity', e.target.value)}
+                        className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                        style={{ borderRadius: '0px' }}
+                      >
+                        <option value="high">상</option>
+                        <option value="medium">중</option>
+                        <option value="low">하</option>
+                      </select>
+                    ) : (
+                      <p className="mt-1">
+                        <span className={`px-2 py-1 text-xs ${
+                          selectedDetail.severity === 'high' 
+                            ? 'bg-red-100 text-red-700' 
+                            : selectedDetail.severity === 'medium'
+                            ? 'bg-yellow-100 text-yellow-700'
+                            : 'bg-blue-100 text-blue-700'
+                        }`} style={{ borderRadius: '0px' }}>
+                          {selectedDetail.severity === 'high' ? '상' : selectedDetail.severity === 'medium' ? '중' : '하'}
+                        </span>
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">상태</label>
+                    {isEditing && editedDetail ? (
+                      <select
+                        value={editedDetail.status}
+                        onChange={(e) => handleFieldChange('status', e.target.value)}
+                        className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                        style={{ borderRadius: '0px' }}
+                      >
+                        <option value="대기중">대기중</option>
+                        <option value="대응중">대응중</option>
+                        <option value="처리완료">처리완료</option>
+                      </select>
+                    ) : (
+                      <p className="mt-1">
+                        <span className={`px-2 py-1 text-xs ${
+                          selectedDetail.status === '대응중' || selectedDetail.status === '처리완료'
+                            ? 'bg-green-100 text-green-700' 
+                            : selectedDetail.status === '대기중'
+                            ? 'bg-orange-100 text-orange-700'
+                            : 'bg-gray-100 text-gray-700'
+                        }`} style={{ borderRadius: '0px' }}>
+                          {selectedDetail.status}
+                        </span>
+                      </p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">처리자</label>
+                    {isEditing && editedDetail ? (
+                      <input
+                        type="text"
+                        value={editedDetail.handler}
+                        onChange={(e) => handleFieldChange('handler', e.target.value)}
+                        className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                        style={{ borderRadius: '0px' }}
+                      />
+                    ) : (
+                      <p className="text-gray-900 mt-1">{selectedDetail.handler}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">탐지근거</label>
+                    {isEditing && editedDetail ? (
+                      <input
+                        type="text"
+                        value={editedDetail.detectionBasis || ''}
+                        onChange={(e) => handleFieldChange('detectionBasis', e.target.value)}
+                        className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                        style={{ borderRadius: '0px' }}
+                      />
+                    ) : (
+                      <p className="text-gray-900 mt-1">{selectedDetail.detectionBasis || 'AI 자동 탐지'}</p>
+                    )}
+                  </div>
+                  {selectedDetail.location && (
+                    <div>
+                      <label className="text-sm text-gray-600">위치</label>
+                      {isEditing && editedDetail ? (
+                        <input
+                          type="text"
+                          value={editedDetail.location || ''}
+                          onChange={(e) => handleFieldChange('location', e.target.value)}
+                          className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                          style={{ borderRadius: '0px' }}
+                        />
+                      ) : (
+                        <p className="text-gray-900 mt-1">{selectedDetail.location}</p>
+                      )}
+                    </div>
+                  )}
+                  {selectedDetail.responseTime && (
+                    <div>
+                      <label className="text-sm text-gray-600">처리완료시각</label>
+                      {isEditing && editedDetail ? (
+                        <input
+                          type="text"
+                          value={editedDetail.responseTime || ''}
+                          onChange={(e) => handleFieldChange('responseTime', e.target.value)}
+                          className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                          style={{ borderRadius: '0px' }}
+                        />
+                      ) : (
+                        <p className="text-gray-900 mt-1">{selectedDetail.responseTime}</p>
+                      )}
+                    </div>
+                  )}
+                  {selectedDetail.duration && (
+                    <div>
+                      <label className="text-sm text-gray-600">소요시간</label>
+                      {isEditing && editedDetail ? (
+                        <input
+                          type="text"
+                          value={editedDetail.duration || ''}
+                          onChange={(e) => handleFieldChange('duration', e.target.value)}
+                          className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                          style={{ borderRadius: '0px' }}
+                        />
+                      ) : (
+                        <p className="text-gray-900 mt-1">{selectedDetail.duration}</p>
+                      )}
+                    </div>
+                  )}
+                  {/* 환자명 및 성별 - 맨 밑에 추가 */}
+                  <div>
+                    <label className="text-sm text-gray-600">환자명</label>
+                    {isEditing && editedDetail ? (
+                      <input
+                        type="text"
+                        value={editedDetail.patientName ?? ''}
+                        onChange={(e) => handleFieldChange('patientName', e.target.value)}
+                        className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                        style={{ borderRadius: '0px' }}
+                        placeholder="미상"
+                      />
+                    ) : (
+                      <p className="text-gray-900 mt-1">{selectedDetail.patientName || '미상'}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">성별</label>
+                    {isEditing && editedDetail ? (
+                      <select
+                        value={editedDetail.gender || '미상'}
+                        onChange={(e) => handleFieldChange('gender', e.target.value)}
+                        className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                        style={{ borderRadius: '0px' }}
+                      >
+                        <option value="미상">미상</option>
+                        <option value="남성">남성</option>
+                        <option value="여성">여성</option>
+                      </select>
+                    ) : (
+                      <p className="text-gray-900 mt-1">{selectedDetail.gender || '미상'}</p>
+                    )}
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">이송병원 및 처리 기관</label>
+                    {isEditing && editedDetail ? (
+                      <input
+                        type="text"
+                        value={editedDetail.transferHospital ?? ''}
+                        onChange={(e) => handleFieldChange('transferHospital', e.target.value)}
+                        className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                        style={{ borderRadius: '0px' }}
+                        placeholder="이송병원 및 처리 기관을 입력하세요"
+                      />
+                    ) : (
+                      <p className="text-gray-900 mt-1">{selectedDetail.transferHospital || '-'}</p>
+                    )}
+                  </div>
+                </div>
+
+                {/* 하단 버튼 */}
+                <div className="flex gap-3 mt-6">
+                  {isEditing ? (
+                    <>
+                      <button 
+                        onClick={handleSave}
+                        className="flex-1 px-4 py-2 bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2" 
+                        style={{ borderRadius: '0px' }}
+                      >
+                        <Save className="w-4 h-4" />
+                        저장
+                      </button>
+                      <button 
+                        onClick={handleCancel}
+                        className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors" 
+                        style={{ borderRadius: '0px' }}
+                      >
+                        취소
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button 
+                        onClick={handleEditClick}
+                        className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center gap-2" 
+                        style={{ borderRadius: '0px' }}
+                      >
+                        <Edit2 className="w-4 h-4" />
+                        수정
+                      </button>
+                      <button className="flex-1 px-4 py-2 bg-red-500 text-white hover:bg-red-600 transition-colors" style={{ borderRadius: '0px' }}>
+                        오탐처리
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+            ) : (
+              /* 수동 등록 - 새로운 모달 (왼쪽: 이미지+영상 16:9, 오른쪽: 필드) */
+              <div className="flex p-6 gap-6">
+                {/* 왼쪽 패널 - 이미지/영상 16:9 세로 배치 */}
+                <div className="flex-1 space-y-4">
+                  <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
+                    <div className="text-center text-gray-500">
+                      <ImageIcon className="w-10 h-10 mx-auto mb-2" />
+                      <p className="text-sm">이미지</p>
+                    </div>
+                  </div>
+                  <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
+                    <div className="text-center text-gray-500">
+                      <Video className="w-10 h-10 mx-auto mb-2" />
+                      <p className="text-sm">영상</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 우측 패널 - 상세정보 */}
+                <div className="flex-1 flex flex-col">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
+                  <div className="space-y-4 flex-1">
+                    <div>
+                      <label className="text-sm text-gray-600">사고 코드</label>
+                      <p className="text-gray-900 mt-1">{selectedDetail.accidentCode}</p>
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">발생시간</label>
+                      {isEditing && editedDetail ? (
+                        <input
+                          type="text"
+                          value={(editedDetail as any).detectedAt || editedDetail.time}
+                          onChange={(e) => handleFieldChange('time', e.target.value)}
+                          className="w-full mt-1 px-3 py-2 border border-gray-300"
+                          style={{ borderRadius: '0px' }}
+                        />
+                      ) : (
+                        <p className="text-gray-900 mt-1">{(selectedDetail as any).detectedAt || selectedDetail.time}</p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">발생 위치</label>
+                      {isEditing && editedDetail ? (
+                        <input
+                          type="text"
+                          value={editedDetail.location || ''}
+                          onChange={(e) => handleFieldChange('location', e.target.value)}
+                          className="w-full mt-1 px-3 py-2 border border-gray-300"
+                          style={{ borderRadius: '0px' }}
+                        />
+                      ) : (
+                        <p className="text-gray-900 mt-1">{selectedDetail.location || '-'}</p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">심각도</label>
+                      {isEditing && editedDetail ? (
+                        <select
+                          value={editedDetail.severity}
+                          onChange={(e) => handleFieldChange('severity', e.target.value)}
+                          className="w-full mt-1 px-3 py-2 border border-gray-300"
+                          style={{ borderRadius: '0px' }}
+                        >
+                          <option value="상">상</option>
+                          <option value="중">중</option>
+                          <option value="하">하</option>
+                        </select>
+                      ) : (
+                        <p className="mt-1">
+                          <span className={`px-2 py-1 text-xs ${
+                            selectedDetail.severity === '상' ? 'bg-red-100 text-red-700' : 
+                            selectedDetail.severity === '중' ? 'bg-yellow-100 text-yellow-700' : 
+                            'bg-blue-100 text-blue-700'
+                          }`} style={{ borderRadius: '0px' }}>
+                            {selectedDetail.severity}
+                          </span>
+                        </p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">메모</label>
+                      {isEditing && editedDetail ? (
+                        <textarea
+                          value={(editedDetail as any).memo || ''}
+                          onChange={(e) => handleFieldChange('memo', e.target.value)}
+                          className="w-full mt-1 px-3 py-2 border border-gray-300"
+                          style={{ borderRadius: '0px' }}
+                          rows={3}
+                        />
+                      ) : (
+                        <p className="text-gray-900 mt-1">{(selectedDetail as any).memo || '-'}</p>
+                      )}
+                    </div>
+
+                    {/* 응급 전용 필드 */}
+                    <div>
+                      <label className="text-sm text-gray-600">환자 이름</label>
+                      {isEditing && editedDetail ? (
+                        <input
+                          type="text"
+                          value={(editedDetail as any).patientName || ''}
+                          onChange={(e) => handleFieldChange('patientName', e.target.value)}
+                          className="w-full mt-1 px-3 py-2 border border-gray-300"
+                          style={{ borderRadius: '0px' }}
+                        />
+                      ) : (
+                        <p className="text-gray-900 mt-1">{(selectedDetail as any).patientName || '-'}</p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">환자 나이</label>
+                      {isEditing && editedDetail ? (
+                        <input
+                          type="text"
+                          value={(editedDetail as any).patientAge || ''}
+                          onChange={(e) => handleFieldChange('patientAge', e.target.value)}
+                          className="w-full mt-1 px-3 py-2 border border-gray-300"
+                          style={{ borderRadius: '0px' }}
+                        />
+                      ) : (
+                        <p className="text-gray-900 mt-1">{(selectedDetail as any).patientAge || '-'}</p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">환자 성별</label>
+                      {isEditing && editedDetail ? (
+                        <select
+                          value={(editedDetail as any).patientGender || ''}
+                          onChange={(e) => handleFieldChange('patientGender', e.target.value)}
+                          className="w-full mt-1 px-3 py-2 border border-gray-300"
+                          style={{ borderRadius: '0px' }}
+                        >
+                          <option value="">선택</option>
+                          <option value="남성">남성</option>
+                          <option value="여성">여성</option>
+                          <option value="미상">미상</option>
+                        </select>
+                      ) : (
+                        <p className="text-gray-900 mt-1">{(selectedDetail as any).patientGender || '-'}</p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">투입 구조팀</label>
+                      {isEditing && editedDetail ? (
+                        <input
+                          type="text"
+                          value={(editedDetail as any).rescueTeam || ''}
+                          onChange={(e) => handleFieldChange('rescueTeam', e.target.value)}
+                          className="w-full mt-1 px-3 py-2 border border-gray-300"
+                          style={{ borderRadius: '0px' }}
+                        />
+                      ) : (
+                        <p className="text-gray-900 mt-1">{(selectedDetail as any).rescueTeam || '-'}</p>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="text-sm text-gray-600">이송 병원 또는 인계 기관</label>
+                      {isEditing && editedDetail ? (
+                        <input
+                          type="text"
+                          value={(editedDetail as any).transferHospital || ''}
+                          onChange={(e) => handleFieldChange('transferHospital', e.target.value)}
+                          className="w-full mt-1 px-3 py-2 border border-gray-300"
+                          style={{ borderRadius: '0px' }}
+                        />
+                      ) : (
+                        <p className="text-gray-900 mt-1">{(selectedDetail as any).transferHospital || '-'}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 하단 버튼 - 수정만 */}
+                  <div className="flex gap-3 mt-6">
+                    {isEditing ? (
+                      <>
+                        <button 
+                          onClick={handleSave}
+                          className="flex-1 px-4 py-2 bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2" 
+                          style={{ borderRadius: '0px' }}
+                        >
+                          <Save className="w-4 h-4" />
+                          저장
+                        </button>
+                        <button 
+                          onClick={handleCancel}
+                          className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors" 
+                          style={{ borderRadius: '0px' }}
+                        >
+                          취소
+                        </button>
+                      </>
+                    ) : (
+                      <button 
+                        onClick={handleEditClick}
+                        className="w-full px-4 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center gap-2" 
+                        style={{ borderRadius: '0px' }}
+                      >
+                        <Edit2 className="w-4 h-4" />
+                        수정
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        </>
+      )}
+
+      {/* 신규 응급 사건 등록 모달 */}
+      {showNewRecordModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white w-full max-w-2xl shadow-xl" style={{ borderRadius: '0px', maxHeight: '90vh', overflow: 'auto' }}>
+            {/* 모달 헤더 */}
+            <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between sticky top-0">
+              <div className="flex items-center gap-2">
+                <Plus className="w-5 h-5 text-white" />
+                <h2 className="text-white font-semibold">신규 응급 사건 등록</h2>
+              </div>
+              <button
+                onClick={() => {
+                  setShowNewRecordModal(false);
+                  setShowPatientInfo(false);
+                  setShowRescueInfo(false);
+                  setCanSendAlert(false);
+                  setNewRecord({
+                    time: '',
+                    location: '',
+                    severity: 'medium',
+                    memo: '',
+                    patientName: '',
+                    patientAge: '',
+                    patientGender: '',
+                    rescueTeam: '',
+                    transferHospital: ''
+                  });
+                }}
+                className="text-white hover:text-gray-200 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* 모달 내용 */}
+            <div className="p-6">
+              <p className="text-sm text-gray-600 mb-6">
+                <span className="text-red-500">*</span> 표시는 필수 입력 항목입니다.
+              </p>
+
+              <div className="space-y-5">
+                {/* 필수 입력 항목 */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 발생시간
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={newRecord.time}
+                    onChange={(e) => setNewRecord({...newRecord, time: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">발생 시간을 모르면 현재 시간을 선택하세요</p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 발생 위치
+                  </label>
+                  <input
+                    type="text"
+                    value={newRecord.location}
+                    onChange={(e) => setNewRecord({...newRecord, location: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    placeholder="발생 위치를 입력하세요"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 심각도
+                  </label>
+                  <select
+                    value={newRecord.severity}
+                    onChange={(e) => setNewRecord({...newRecord, severity: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                  >
+                    <option value="low">하</option>
+                    <option value="medium">중</option>
+                    <option value="high">상</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">메모</label>
+                  <textarea
+                    value={newRecord.memo}
+                    onChange={(e) => setNewRecord({...newRecord, memo: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    rows={3}
+                    placeholder="메모를 입력하세요 (선택사항)"
+                  />
+                </div>
+
+                {/* 환자 정보 (접기 가능) */}
+                <div className="border border-gray-200">
+                  <button
+                    type="button"
+                    onClick={() => setShowPatientInfo(!showPatientInfo)}
+                    className="w-full px-4 py-3 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors"
+                  >
+                    <span className="text-sm font-medium text-gray-700">환자 정보</span>
+                    <ChevronDown className={`w-4 h-4 transition-transform ${showPatientInfo ? 'rotate-180' : ''}`} />
+                  </button>
+                  {showPatientInfo && (
+                    <div className="p-4 space-y-4 bg-gray-50">
+                      <div>
+                        <label className="block text-sm text-gray-700 mb-2">환자 이름</label>
+                        <input
+                          type="text"
+                          value={newRecord.patientName}
+                          onChange={(e) => setNewRecord({...newRecord, patientName: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          style={{ borderRadius: '0px' }}
+                          placeholder="환자 이름"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-700 mb-2">환자 나이</label>
+                        <input
+                          type="number"
+                          value={newRecord.patientAge}
+                          onChange={(e) => setNewRecord({...newRecord, patientAge: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          style={{ borderRadius: '0px' }}
+                          placeholder="환자 나이"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-700 mb-2">환자 성별</label>
+                        <select
+                          value={newRecord.patientGender}
+                          onChange={(e) => setNewRecord({...newRecord, patientGender: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          style={{ borderRadius: '0px' }}
+                        >
+                          <option value="">선택하세요</option>
+                          <option value="남성">남성</option>
+                          <option value="여성">여성</option>
+                          <option value="미상">미상</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 투입 구조팀 및 이송 병원 (접기 가능) */}
+                <div className="border border-gray-200">
+                  <button
+                    type="button"
+                    onClick={() => setShowRescueInfo(!showRescueInfo)}
+                    className="w-full px-4 py-3 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors"
+                  >
+                    <span className="text-sm font-medium text-gray-700">투입 구조팀 및 이송 병원</span>
+                    <ChevronDown className={`w-4 h-4 transition-transform ${showRescueInfo ? 'rotate-180' : ''}`} />
+                  </button>
+                  {showRescueInfo && (
+                    <div className="p-4 space-y-4 bg-gray-50">
+                      <div>
+                        <label className="block text-sm text-gray-700 mb-2">투입 구조팀</label>
+                        <input
+                          type="text"
+                          value={newRecord.rescueTeam}
+                          onChange={(e) => setNewRecord({...newRecord, rescueTeam: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          style={{ borderRadius: '0px' }}
+                          placeholder="투입 구조팀"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-700 mb-2">이송 병원 또는 인계 기관</label>
+                        <input
+                          type="text"
+                          value={newRecord.transferHospital}
+                          onChange={(e) => setNewRecord({...newRecord, transferHospital: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          style={{ borderRadius: '0px' }}
+                          placeholder="이송 병원 또는 인계 기관"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 버튼 - 크게 */}
+              <div className="grid grid-cols-2 gap-4 mt-6">
+                <button
+                  onClick={handleNewRecordSubmit}
+                  className="px-6 py-4 bg-emerald-600 text-white text-lg font-semibold hover:bg-emerald-700 transition-colors"
+                  style={{ borderRadius: '0px' }}
+                >
+                  등록
+                </button>
+                <button
+                  onClick={() => {
+                    if (canSendAlert) {
+                      alert('119 및 담당 직원에게 문자 신고가 발송되었습니다.');
+                      setShowNewRecordModal(false);
+                      setShowPatientInfo(false);
+                      setShowRescueInfo(false);
+                      setCanSendAlert(false);
+                      setNewRecord({
+                        time: '',
+                        location: '',
+                        severity: 'medium',
+                        memo: '',
+                        patientName: '',
+                        patientAge: '',
+                        patientGender: '',
+                        rescueTeam: '',
+                        transferHospital: ''
+                      });
+                    }
+                  }}
+                  disabled={!canSendAlert}
+                  className={`px-6 py-4 text-white text-lg font-semibold transition-colors ${
+                    canSendAlert 
+                      ? 'bg-red-600 hover:bg-red-700 cursor-pointer' 
+                      : 'bg-gray-400 cursor-not-allowed'
+                  }`}
+                  style={{ borderRadius: '0px' }}
+                >
+                  문자 신고
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
