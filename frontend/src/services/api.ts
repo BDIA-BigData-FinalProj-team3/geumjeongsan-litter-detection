@@ -56,6 +56,10 @@ import {
   type HotspotLocation,
 } from './common';
 
+// API Base URL - 환경변수에서 가져오거나 기본값 사용
+// GitHub Actions에서 VITE_BACKEND_URL로 주입됨
+const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080/api';
+
 // ==================== CCTV API ====================
 /**
  * Get all CCTV list from backend
@@ -712,8 +716,7 @@ export const generateCCTVStatusData = (allNotifications: NotificationItem[]) => 
 // ============================================
 // 백엔드 API 연동 (VIEW 기반)
 // ============================================
-
-const API_BASE_URL = 'http://localhost:8080/api';
+// API_BASE_URL은 파일 상단에서 환경변수로 정의됨
 
 /**
  * 응급 대시보드 상단 통계 조회 (실제 백엔드 API)
