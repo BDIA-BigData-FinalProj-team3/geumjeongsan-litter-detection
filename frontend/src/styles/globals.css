@@ -1,7 +1,21 @@
 @custom-variant dark (&:is(.dark *));
 
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap');
+@import url('https://hangeul.pstatic.net/hangeul_static/css/nanum-square.css');
+
+@font-face {
+  font-family: 'NanumSquareBold';
+  src: url('https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquare/NanumSquareEB.eot');
+  src: url('https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquare/NanumSquareEB.eot?#iefix') format('embedded-opentype'),
+       url('https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquare/NanumSquareEB.woff') format('woff'),
+       url('https://hangeul.pstatic.net/hangeul_static/webfont/NanumSquare/NanumSquareEB.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  --font-size: 16px;
+  --font-size: 14px; /* 1280x720에 최적화 */
   --background: #ffffff;
   --foreground: oklch(0.145 0 0);
   --card: #ffffff;
@@ -122,10 +136,26 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    font-family: 'NanumSquareBold', 'NanumSquare', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
   body {
     @apply bg-background text-foreground;
+    font-family: 'NanumSquareBold', 'NanumSquare', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    font-weight: 700;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  html {
+    font-family: 'NanumSquareBold', 'NanumSquare', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 }
 
@@ -172,18 +202,70 @@
 
     button {
       font-size: var(--text-base);
-      font-weight: var(--font-weight-medium);
+      font-weight: 700;
+      font-family: 'NanumSquareBold', 'NanumSquare', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
       line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
 
     input {
       font-size: var(--text-base);
-      font-weight: var(--font-weight-normal);
+      font-weight: 700;
+      font-family: 'NanumSquareBold', 'NanumSquare', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
       line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    textarea, select {
+      font-family: 'NanumSquareBold', 'NanumSquare', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      font-weight: 700;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
     }
   }
 }
 
 html {
   font-size: var(--font-size);
+}
+
+/* Leaflet 마커 애니메이션 */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: .8;
+  }
+}
+
+@keyframes ping {
+  75%, 100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+.custom-cctv-marker,
+.custom-incident-marker {
+  background: transparent !important;
+  border: none !important;
+  pointer-events: auto !important;
+  cursor: pointer !important;
+}
+
+.custom-cctv-marker:hover,
+.custom-incident-marker:hover {
+  transform: scale(1.1);
+  transition: transform 0.2s;
+}
+
+.custom-incident-marker [style*="animation: pulse"] {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.custom-incident-marker [style*="animation: ping"] {
+  animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
 }

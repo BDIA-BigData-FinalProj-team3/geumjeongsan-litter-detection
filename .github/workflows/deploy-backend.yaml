@@ -1,0 +1,140 @@
+name: Deploy Backend to EC2
+
+on:
+  push:
+    branches: [ "test" ]
+    paths:
+      - "backend/**"
+
+env:
+  DOCKERHUB_REPO: ${{ secrets.BACKEND_DOCKERHUB_REPO }}
+
+jobs:
+  deploy-backend:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1) 코드 체크아웃
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2) JDK 21 설정
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+
+      # 3) Gradle 캐시
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # 4) 백엔드 빌드
+      - name: Build backend with Gradle
+        run: |
+          cd backend
+          chmod +x ./gradlew || true
+          ./gradlew clean build -x test
+
+      # 5) Docker Hub 로그인
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.BACKEND_DOCKERHUB_USERNAME }}
+          password: ${{ secrets.BACKEND_DOCKERHUB_TOKEN }}
+
+      # 6) Docker 이미지 빌드 & 푸시
+      - name: Build and push Docker image
+        run: |
+          cd backend
+          IMAGE_TAG=${{ github.sha }}
+
+          docker build \
+            -t $DOCKERHUB_REPO:$IMAGE_TAG \
+            -t $DOCKERHUB_REPO:latest \
+            .
+
+          docker push $DOCKERHUB_REPO:$IMAGE_TAG
+          docker push $DOCKERHUB_REPO:latest
+
+      # 7) AWS 자격 증명 설정
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.BACKEND_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.BACKEND_AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      - name: Deploy on EC2 via SSM
+        env:
+          DB_URL: ${{ secrets.DATABASE_URL }}
+          DB_USER: ${{ secrets.DATABASE_USERNAME }}
+          DB_PASS: ${{ secrets.DATABASE_PASSWORD }}
+        run: |
+          INSTANCE_ID="${{ secrets.BACKEND_EC2_INSTANCE_ID }}"
+          
+          SCRIPT_CONTENT="export DATABASE_URL='$DB_URL'
+          export DATABASE_USERNAME='$DB_USER'
+          export DATABASE_PASSWORD='$DB_PASS'
+          /home/ubuntu/backend/deploy_backend.sh"
+          
+          ENCODED_SCRIPT=$(echo "$SCRIPT_CONTENT" | base64 -w 0)
+          
+          # Base64 디코딩 후 실행하는 명령
+          # 큰따옴표 대신 작은따옴표를 사용하여 JSON 생성 시 이스케이핑 최소화
+          FINAL_CMD="echo '$ENCODED_SCRIPT' | base64 -d | bash"
+          
+          echo "Generating SSM parameters JSON..."
+          
+          # jq를 사용하여 완벽한 JSON 파일 생성
+          jq -n --arg cmd "$FINAL_CMD" '{"commands": [$cmd]}' > ssm-params.json
+          
+          cat ssm-params.json # 디버깅용 출력
+
+          COMMAND_ID=$(aws ssm send-command \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy geumjeongsan-admin backend from GitHub Actions" \
+            --instance-ids "$INSTANCE_ID" \
+            --parameters file://ssm-params.json \
+            --query "Command.CommandId" \
+            --output text)
+
+          echo "SSM Command ID: $COMMAND_ID"
+
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$INSTANCE_ID"
+
+      # 9) 헬스체크
+      - name: Health check
+        run: |
+          BACKEND_URL="${{ secrets.BACKEND_URL }}"
+          echo "Health check on: ${BACKEND_URL}/health"
+
+          for i in {1..5}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${BACKEND_URL}/health" || echo "000")
+            echo "Attempt $i: HTTP $STATUS"
+
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ Backend is healthy"
+              curl -s "${BACKEND_URL}/health" || true
+              exit 0
+            fi
+
+            echo "Retrying in 10 seconds..."
+            sleep 10
+          done
+
+          echo "❌ Health check failed after retries"
+          exit 1
+
+
+
+

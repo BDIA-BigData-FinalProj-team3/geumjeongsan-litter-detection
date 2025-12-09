@@ -1,0 +1,420 @@
+import React from 'react';
+import { X, Video, Camera, Map, Edit2, Save } from 'lucide-react';
+import { MapContainer, TileLayer, Marker } from 'react-leaflet';
+import L from 'leaflet';
+
+interface BaseDetail {
+  accidentCode: string;
+  cctvId: string;
+  location: string;
+  time: string;
+  severity: string;
+  status: string;
+  handler: string;
+  detectionBasis?: string;
+}
+
+interface EmergencyDetail extends BaseDetail {
+  type: string;
+  patientName?: string;
+  patientAge?: string;
+  patientGender?: string;
+  rescueTeam?: string;
+  transferHospital?: string;
+  note?: string;
+}
+
+interface FireDetail extends BaseDetail {
+  windSpeed?: string;
+  spreadDirection?: string;
+  surroundingRisk?: string;
+  note?: string;
+}
+
+interface TrashDetail extends BaseDetail {
+  type: string;
+  trashType?: string;
+  amount?: string;
+  note?: string;
+}
+
+type IncidentDetail = EmergencyDetail | FireDetail | TrashDetail;
+
+interface IncidentDetailModalProps {
+  type: 'emergency' | 'fire' | 'trash';
+  detail: IncidentDetail;
+  isEditing: boolean;
+  editedDetail: IncidentDetail | null;
+  onClose: () => void;
+  onEditClick: () => void;
+  onSave: () => void;
+  onCancel: () => void;
+  onFieldChange: (field: string, value: string) => void;
+}
+
+export default function IncidentDetailModal({
+  type,
+  detail,
+  isEditing,
+  editedDetail,
+  onClose,
+  onEditClick,
+  onSave,
+  onCancel,
+  onFieldChange
+}: IncidentDetailModalProps) {
+  const headerColors = {
+    emergency: '#9333EA',
+    fire: '#DC2626',
+    trash: '#576F93'
+  };
+
+  const headerTitles = {
+    emergency: '응급 상세정보',
+    fire: '화재 상세정보',
+    trash: '쓰레기 상세정보'
+  };
+
+  const markerColors = {
+    emergency: '#9333EA',
+    fire: '#FF5A5A',
+    trash: '#576F93'
+  };
+
+  const modelNames = {
+    emergency: 'EmergencyDetectionModel-v2',
+    fire: 'FireDetectionModel-v2',
+    trash: 'TrashDetectionModel-v2'
+  };
+
+  const modelVersions = {
+    emergency: '2.1.0',
+    fire: '2.0.3',
+    trash: '1.8.5'
+  };
+
+  const confidences = {
+    emergency: '88%',
+    fire: '92%',
+    trash: '85%'
+  };
+
+  const confidenceReasons = {
+    emergency: '낙상 자세 감지, 움직임 패턴 이상, 장시간 움직임 없음',
+    fire: '화염 패턴 명확, 연기 농도 높음, 온도 상승 감지',
+    trash: '투기 행위 명확, 물체 인식 정확, 위치 일치'
+  };
+
+  // AI 자동 탐지인지 확인
+  const isAIDetection = detail.detectionBasis?.includes('AI') || detail.detectionBasis?.includes('자동');
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4" style={{ zIndex: 10000 }} onClick={onClose}>
+      <div className="bg-white rounded-lg shadow-xl w-full max-h-[95vh] overflow-y-auto" style={{ maxWidth: '1100px' }} onClick={(e) => e.stopPropagation()}>
+        {/* 모달 헤더 */}
+        <div className="flex items-center justify-between p-4 border-b border-gray-200" style={{ backgroundColor: headerColors[type] }}>
+          <h2 className="text-xl font-semibold text-white">{headerTitles[type]}</h2>
+          <button onClick={onClose} className="text-white hover:text-gray-200 transition-colors">
+            <X className="w-6 h-6" />
+          </button>
+        </div>
+
+        {/* 모달 내용 */}
+        <div className="flex p-4 gap-4">
+          {/* 좌측 패널 */}
+          <div className="flex-1 flex flex-col">
+            {/* 지도 영역 */}
+            <div className="border border-gray-300 mb-3" style={{ height: '380px', borderRadius: '0px' }}>
+              <MapContainer
+                center={[35.2456, 129.0917]} 
+                zoom={15}
+                style={{ height: '100%', width: '100%' }}
+                zoomControl={false}
+              >
+                <TileLayer
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                />
+                <Marker 
+                  position={[35.2456, 129.0917]}
+                  icon={L.divIcon({
+                    className: `custom-${type}-marker`,
+                    html: `<div style="width: 40px; height: 40px;">
+                      <svg viewBox="0 0 96.72 125.04" style="filter: drop-shadow(3px 3px 3px rgba(0,0,0,0.3));">
+                        <path fill="#FFFFFF" d="M74.481,41.241c0,18.358-33.24,61.788-33.24,61.788S8,59.6,8,41.241C8,22.882,22.883,8,41.241,8S74.481,22.882,74.481,41.241z"/>
+                        <circle fill="${markerColors[type]}" cx="41.241" cy="40.43" r="27.834"/>
+                      </svg>
+                    </div>`,
+                    iconSize: [40, 40],
+                    iconAnchor: [20, 40],
+                  })}
+                />
+              </MapContainer>
+            </div>
+            
+            {/* 영상/이미지 영역 */}
+            <div className="flex gap-3">
+              <div className="flex-1 bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
+                <div className="text-center text-gray-500">
+                  <Video className="w-8 h-8 mx-auto mb-2" />
+                  <p className="text-sm">영상</p>
+                </div>
+              </div>
+              <div className="flex-1 bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
+                <div className="text-center text-gray-500">
+                  <Camera className="w-8 h-8 mx-auto mb-2" />
+                  <p className="text-sm">이미지</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 우측 패널 */}
+          <div className="flex-1 flex flex-col">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
+            <div className="grid grid-cols-2 gap-x-8 gap-y-5 flex-1">
+              {/* 공통 필드 */}
+              <div>
+                <label className="text-sm text-gray-600">사고 코드</label>
+                <p className="text-gray-900 mt-1">{detail.accidentCode}</p>
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">CCTV ID</label>
+                <p className="text-gray-900 mt-1">{detail.cctvId}</p>
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">위치</label>
+                {isEditing && editedDetail ? (
+                  <input
+                    type="text"
+                    value={editedDetail.location || ''}
+                    onChange={(e) => onFieldChange('location', e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                    style={{ borderRadius: '0px' }}
+                  />
+                ) : (
+                  <p className="text-gray-900 mt-1">{detail.location}</p>
+                )}
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">유형</label>
+                <p className="text-gray-900 mt-1">
+                  {type === 'emergency' ? '응급' : type === 'fire' ? '화재' : '쓰레기'}
+                </p>
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">발생시간</label>
+                {isEditing && editedDetail ? (
+                  <input
+                    type="text"
+                    value={editedDetail.time}
+                    onChange={(e) => onFieldChange('time', e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                    style={{ borderRadius: '0px' }}
+                  />
+                ) : (
+                  <p className="text-gray-900 mt-1">{detail.time}</p>
+                )}
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">심각도</label>
+                {isEditing && editedDetail ? (
+                  <select
+                    value={editedDetail.severity}
+                    onChange={(e) => onFieldChange('severity', e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                    style={{ borderRadius: '0px' }}
+                  >
+                    <option value="상">상</option>
+                    <option value="중">중</option>
+                    <option value="하">하</option>
+                  </select>
+                ) : (
+                  <p className="mt-1">
+                    <span className={`px-2 py-1 text-xs ${
+                      detail.severity === '상' ? 'bg-red-100 text-red-700' : 
+                      detail.severity === '중' ? 'bg-yellow-100 text-yellow-700' : 
+                      'bg-blue-100 text-blue-700'
+                    }`} style={{ borderRadius: '0px' }}>
+                      {detail.severity}
+                    </span>
+                  </p>
+                )}
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">상태</label>
+                <p className="mt-1">
+                  <span className={`px-2 py-1 text-xs ${
+                    detail.status === '처리완료' || detail.status === '진화완료'
+                      ? 'bg-green-100 text-green-700' 
+                      : detail.status === '대응중' || detail.status === '진화중'
+                      ? 'bg-orange-100 text-orange-700'
+                      : 'bg-gray-100 text-gray-700'
+                  }`} style={{ borderRadius: '0px' }}>
+                    {detail.status}
+                  </span>
+                </p>
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">처리자</label>
+                <p className="text-gray-900 mt-1">{detail.handler}</p>
+              </div>
+              <div>
+                <label className="text-sm text-gray-600">탐지근거</label>
+                <p className="text-gray-900 mt-1">{detail.detectionBasis || 'AI 자동 탐지'}</p>
+              </div>
+
+              {/* AI 자동 탐지인 경우 모델 정보 */}
+              {isAIDetection && (
+                <>
+                  <div>
+                    <label className="text-sm text-gray-600">모델명</label>
+                    <p className="text-gray-900 mt-1">{modelNames[type]}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">모델버전</label>
+                    <p className="text-gray-900 mt-1">{modelVersions[type]}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">신뢰도</label>
+                    <p className="text-emerald-600 mt-1 font-medium">{confidences[type]}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">신뢰도 근거</label>
+                    <p className="text-gray-900 mt-1 text-sm">{confidenceReasons[type]}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600 flex items-center gap-1">
+                      심각도 상세
+                      <span className="text-xs text-gray-400 cursor-help" title="심각도 점수 계산 방법">(?)</span>
+                    </label>
+                    <p className="text-gray-900 mt-1 text-sm">
+                      {type === 'emergency' && '응급 점수: 78/100 (낙상 정도: 높음, 반응: 없음, 경과시간: 2분)'}
+                      {type === 'fire' && '위험도 점수: 85/100 (화염 크기: 높음, 연기 농도: 높음, 확산 속도: 중간)'}
+                      {type === 'trash' && '위반 점수: 70/100 (투기량: 많음, 위치: 금지구역, 빈도: 높음)'}
+                    </p>
+                  </div>
+                </>
+              )}
+
+              {/* 응급 전용 필드 */}
+              {type === 'emergency' && (
+                <>
+                  <div>
+                    <label className="text-sm text-gray-600">환자명</label>
+                    <p className="text-gray-900 mt-1">{(detail as EmergencyDetail).patientName || '미상'}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">성별</label>
+                    <p className="text-gray-900 mt-1">{(detail as EmergencyDetail).patientGender || '미상'}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">이송병원 및 처리 기관</label>
+                    <p className="text-gray-900 mt-1">{(detail as EmergencyDetail).transferHospital || '-'}</p>
+                  </div>
+                </>
+              )}
+
+              {/* 화재 전용 필드 */}
+              {type === 'fire' && isAIDetection && (
+                <>
+                  <div>
+                    <label className="text-sm text-gray-600">풍향/풍속</label>
+                    <p className="text-gray-900 mt-1">남동풍 15m/s</p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">확산 방향</label>
+                    <p className="text-gray-900 mt-1">북서쪽 방향</p>
+                  </div>
+                  <div>
+                    <label className="text-sm text-gray-600">주변 위험</label>
+                    <p className="text-gray-900 mt-1">등산객 10명 예상, 목조 건물 50m 거리</p>
+                  </div>
+                </>
+              )}
+
+              {/* 쓰레기 전용 필드 */}
+              {type === 'trash' && (
+                <>
+                  {(detail as TrashDetail).trashType && (
+                    <div>
+                      <label className="text-sm text-gray-600">쓰레기 종류</label>
+                      <p className="text-gray-900 mt-1">{(detail as TrashDetail).trashType}</p>
+                    </div>
+                  )}
+                  {(detail as TrashDetail).amount && (
+                    <div>
+                      <label className="text-sm text-gray-600">양</label>
+                      <p className="text-gray-900 mt-1">{(detail as TrashDetail).amount}</p>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* 상황메모 */}
+              <div className="col-span-2">
+                <label className="text-sm text-gray-600">상황메모</label>
+                {isEditing && editedDetail ? (
+                  <textarea
+                    value={(editedDetail as any).note || ''}
+                    onChange={(e) => onFieldChange('note', e.target.value)}
+                    className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                    style={{ borderRadius: '0px' }}
+                    rows={3}
+                  />
+                ) : (
+                  <p className="text-gray-900 mt-1">
+                    {type === 'emergency' && '동산로 입구에서 낙상, 즉시 119 신고함'}
+                    {type === 'fire' && '초기 화염 발견, 소방대 출동 요청함'}
+                    {type === 'trash' && '대형 쓰레기 불법 투기, 담당 부서 연락 완료'}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* 하단 버튼 */}
+            <div className="flex gap-3 mt-6">
+              {isEditing ? (
+                <>
+                  <button 
+                    onClick={onSave}
+                    className="flex-1 px-4 py-2 bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2" 
+                    style={{ borderRadius: '0px' }}
+                  >
+                    <Save className="w-4 h-4" />
+                    저장
+                  </button>
+                  <button 
+                    onClick={onCancel}
+                    className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors" 
+                    style={{ borderRadius: '0px' }}
+                  >
+                    취소
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button 
+                    onClick={onEditClick}
+                    className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center gap-2" 
+                    style={{ borderRadius: '0px' }}
+                  >
+                    <Edit2 className="w-4 h-4" />
+                    수정
+                  </button>
+                  <button 
+                    className="flex-1 px-4 py-2 bg-red-500 text-white hover:bg-red-600 transition-colors" 
+                    style={{ borderRadius: '0px' }}
+                  >
+                    오탐처리
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+

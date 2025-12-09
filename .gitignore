@@ -61,3 +61,28 @@ Thumbs.db
 # Optional (if using testing frameworks)
 # ===========================
 coverage
+
+# ===========================
+# Java / Gradle
+# ===========================
+*.class
+*.jar
+*.war
+*.ear
+target/
+build/
+.gradle/
+.mvn/
+mvnw
+mvnw.cmd
+!.mvn/wrapper/maven-wrapper.jar
+*.pem
+geumjungsan.pem
+
+# ===========================
+# Spring Boot - 민감 정보
+# ===========================
+backend/src/main/resources/application-local.yml
+backend/src/main/resources/application-secret.yml
+backend/src/main/resources/application-prod.yml
+*.key
