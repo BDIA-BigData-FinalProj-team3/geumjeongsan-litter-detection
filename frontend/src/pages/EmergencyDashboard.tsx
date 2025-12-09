@@ -5,7 +5,7 @@ import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
-import { getActiveEmergencies, getCompletedEmergencies, getEmergencyStats, getEmergencyHotspots, getEmergencyIncidents, type EmergencyStatsResponse, type HotspotResponse, type IncidentListItem, type PageResponse } from '../services/api';
+import { getActiveEmergencies, getCompletedEmergencies, getEmergencyStats, getEmergencyHotspots, getEmergencyIncidents, createEmergency, type EmergencyStatsResponse, type HotspotResponse, type IncidentListItem, type PageResponse } from '../services/api';
 
 interface EmergencyDashboardProps {
   onNavigate?: (screen: string) => void;

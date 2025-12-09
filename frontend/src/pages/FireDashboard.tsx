@@ -5,7 +5,7 @@ import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
-import { getActiveFires, getCompletedFires, getFireStats, getFireHotspots, type FireStatsResponse, type HotspotResponse } from '../services/api';
+import { getActiveFires, getCompletedFires, getFireStats, getFireHotspots, createFire, type FireStatsResponse, type HotspotResponse } from '../services/api';
 
 interface FireDashboardProps {
   onNavigate?: (screen: string) => void;
