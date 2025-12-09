@@ -1,7 +1,7 @@
 import { createBrowserRouter, Navigate, useNavigate } from 'react-router-dom';
 import LoginScreen from './pages/LoginScreen';
 import MainMap from './pages/MainMap';
-import Dashboard from './pages/Dashboard';
+import Statistics from './pages/Statistics';
 import AllIncidentsDashboard from './pages/AllIncidentsDashboard';
 import EmergencyDashboard from './pages/EmergencyDashboard';
 import FireDashboard from './pages/FireDashboard';
@@ -52,7 +52,7 @@ const DashboardRoute = () => {
     const route = routeMap[screen] || screen;
     navigate(route);
   };
-  return <Dashboard onNavigate={handleNavigate} />;
+  return <Statistics onNavigate={handleNavigate} />;
 };
 
 const StatisticsRoute = () => {
@@ -61,7 +61,7 @@ const StatisticsRoute = () => {
     const route = routeMap[screen] || screen;
     navigate(route);
   };
-  return <Dashboard onNavigate={handleNavigate} />;
+  return <Statistics onNavigate={handleNavigate} />;
 };
 
 const AllIncidentsDashboardRoute = () => {

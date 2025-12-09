@@ -5,6 +5,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.math.BigDecimal;
+import java.time.OffsetDateTime;
 
 @Entity
 @Table(name = "fire_detail")
@@ -13,21 +14,35 @@ import java.math.BigDecimal;
 public class FireDetail {
 
     @Id
-    @Column(name = "incident_id")
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "fire_id")
+    private Long id;
+
+    @Column(name = "incident_id", unique = true)
     private Long incidentId;
 
     @OneToOne(fetch = FetchType.LAZY)
-    @MapsId
-    @JoinColumn(name = "incident_id")
+    @JoinColumn(name = "incident_id", insertable = false, updatable = false)
     private Incident incident;
 
     @Column(name = "wind_speed", precision = 5, scale = 2)
-    private BigDecimal windSpeed; // km/h
+    private BigDecimal windSpeed;
 
-    @Column(name = "wind_info", length = 100)
-    private String windInfo;  // "12.3km/h(북서풍)" 등
+    @Column(name = "wind_info", length = 50)
+    private String windInfo;
 
     @Column(name = "note", columnDefinition = "text")
     private String note;
-}
 
+    @Column(name = "spread_direction", columnDefinition = "text")
+    private String spreadDirection;
+
+    @Column(name = "nearby_risks", columnDefinition = "text")
+    private String nearbyRisks;
+
+    @Column(name = "spread_risk", length = 20)
+    private String spreadRisk;
+
+    @Column(name = "created_at")
+    private OffsetDateTime createdAt;
+}

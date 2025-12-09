@@ -63,25 +63,16 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
     transferHospital: ''
   });
   
-  // 데이터 상태 관리 (목 데이터)
-  const [activeEmergencies, setActiveEmergencies] = useState<any[]>([
-    { id: 1, incidentId: 1, accidentCode: 'EMG-001', type: '쓰러진 사람', cctvId: 'CCTV-005', detectedAt: '2025-12-07 10:05', status: '대응중', severity: '중', location: '등산로 입구 1', detectionBasis: 'AI 자동 탐지: 쓰러진 사람 감지' },
-    { id: 2, incidentId: 2, accidentCode: 'EMG-002', type: '부상자', cctvId: 'CCTV-008', detectedAt: '2025-12-07 09:30', status: '대기중', severity: '상', location: '휴게소 1', detectionBasis: 'AI 자동 탐지: 부상자 감지' },
-    { id: 3, incidentId: 3, accidentCode: 'EMG-003', type: '쓰러진 사람', cctvId: '', detectedAt: '2025-12-07 11:20', status: '대기중', severity: '하', location: '휴게소 2', detectionBasis: '수동 등록' },
-  ]);
-  const [completedEmergencies, setCompletedEmergencies] = useState<any[]>([
-    { id: 4, incidentId: 4, accidentCode: 'EMG-004', type: '부상자', cctvId: 'CCTV-002', detectedAt: '2025-12-07 13:30', status: '처리완료', severity: '중', location: '등산로 2', detectionBasis: 'AI 자동 탐지: 부상자 감지', responseTime: '2025-12-07 13:42', duration: '12분' },
-    { id: 5, incidentId: 5, accidentCode: 'EMG-005', type: '쓰러진 사람', cctvId: '', detectedAt: '2025-12-07 08:00', status: '처리완료', severity: '하', location: '등산로 입구 3', detectionBasis: '수동 등록', responseTime: '2025-12-07 08:20', duration: '20분' },
-  ]);
+  // 데이터 상태 관리
+  const [activeEmergencies, setActiveEmergencies] = useState<any[]>([]);
+  const [completedEmergencies, setCompletedEmergencies] = useState<any[]>([]);
   const [stats, setStats] = useState<EmergencyStatsResponse>({
-    todayCount: 8,
-    pendingCount: 2,
-    avgResponseTime: 16,
-    avgResponseTimeFormatted: '16분'
+    todayCount: 0,
+    pendingCount: 0,
+    avgResponseTime: 0,
+    avgResponseTimeFormatted: '-'
   });
-  const [hotspots, setHotspots] = useState<HotspotResponse[]>([
-    { location: '휴게소 1', count: 5 }
-  ]);
+  const [hotspots, setHotspots] = useState<HotspotResponse[]>([]);
   
   // 페이지네이션 상태 관리
   const [incidents, setIncidents] = useState<IncidentListItem[]>([]);
@@ -96,24 +87,28 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
   }, [viewMode]);
 
   // API에서 데이터 로드
-  // API 연결 끊음 - 목 데이터 사용
-  // useEffect(() => {
-  //   const loadEmergencyData = async () => {
-  //     const [active, completed, statsData, hotspotsData] = await Promise.all([
-  //       getActiveEmergencies(),
-  //       getCompletedEmergencies(),
-  //       getEmergencyStats(),
-  //       getEmergencyHotspots('this_month', 1),
-  //     ]);
-  //     const filteredActive = active.filter(e => !completedIncidents.has(e.cctvId));
-  //     setActiveEmergencies(filteredActive);
-  //     setCompletedEmergencies(completed);
-  //     setStats(statsData);
-  //     setHotspots(hotspotsData);
-  //   };
-  //   
-  //   loadEmergencyData();
-  // }, [completedIncidents]);
+  useEffect(() => {
+    const loadEmergencyData = async () => {
+      try {
+        const [active, completed, statsData, hotspotsData] = await Promise.all([
+          getActiveEmergencies(),
+          getCompletedEmergencies(),
+          getEmergencyStats(),
+          getEmergencyHotspots('this_month', 1),
+        ]);
+        const filteredActive = active.filter(e => !completedIncidents.has(e.cctvId));
+        setActiveEmergencies(filteredActive);
+        setCompletedEmergencies(completed);
+        setStats(statsData);
+        setHotspots(hotspotsData);
+        console.log('✅ [Emergency] All data loaded from DB');
+      } catch (error) {
+        console.error('❌ [Emergency] Failed to load data:', error);
+      }
+    };
+    
+    loadEmergencyData();
+  }, [completedIncidents]);
   
   // 페이지네이션 데이터 로드 - 목 데이터 사용
   useEffect(() => {
@@ -252,39 +247,71 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
     }
   }, [location.search, activeEmergencies, completedEmergencies]);
 
-  const handleNewRecordSubmit = () => {
+  const handleNewRecordSubmit = async () => {
     // 필수 입력 체크
     if (!newRecord.time || !newRecord.location || !newRecord.severity) {
       alert('발생시간, 발생 위치, 심각도는 필수 입력 항목입니다.');
       return;
     }
 
-    // 새 응급 사건 생성 (실제로는 백엔드 API 호출)
-    const newEmergency = {
-      id: Date.now(),
-      incidentId: Date.now(),
-      accidentCode: `EMG-${String(Date.now()).slice(-4)}`,
-      type: '쓰러진 사람',
-      cctvId: '',
-      detectedAt: newRecord.time,
-      status: '대기중',
-      severity: newRecord.severity === 'high' ? '상' : newRecord.severity === 'medium' ? '중' : '하',
-      location: newRecord.location,
-      detectionBasis: '수동 등록',
-      patientName: newRecord.patientName,
-      patientAge: newRecord.patientAge,
-      patientGender: newRecord.patientGender,
-      rescueTeam: newRecord.rescueTeam,
-      transferHospital: newRecord.transferHospital,
-      memo: newRecord.memo
-    };
-
-    setActiveEmergencies([newEmergency, ...activeEmergencies]);
-    
-    // 문자 신고 버튼 활성화
+    try {
+      // Backend API 호출
+      const result = await createEmergency({
+        detectedAt: new Date(newRecord.time).toISOString(),
+        locationDesc: newRecord.location,
+        severityLevel: newRecord.severity.toUpperCase(),
+        memo: newRecord.memo || undefined,
+        patientName: newRecord.patientName || undefined,
+        patientAge: newRecord.patientAge || undefined,
+        patientGender: newRecord.patientGender || undefined,
+        responseTeam: newRecord.rescueTeam || undefined,
+        transferDest: newRecord.transferHospital || undefined,
+      });
+      
+      // 등록 성공
+      alert(`신규 응급 사건이 등록되었습니다. (사고코드: ${result.incidentCode})`);
     setCanSendAlert(true);
     
-    alert('신규 응급 사건이 등록되었습니다. 문자 신고 버튼이 활성화되었습니다.');
+      // 모달 닫기 및 데이터 새로고침
+      setShowNewRecordModal(false);
+      setShowPatientInfo(false);
+      setShowRescueInfo(false);
+      setNewRecord({
+        time: '',
+        location: '',
+        severity: 'medium',
+        memo: '',
+        patientName: '',
+        patientAge: '',
+        patientGender: '',
+        rescueTeam: '',
+        transferHospital: ''
+      });
+      
+      // 목록 새로고침
+      const loadEmergencyData = async () => {
+        try {
+          const [active, completed, statsData, hotspotsData] = await Promise.all([
+            getActiveEmergencies(),
+            getCompletedEmergencies(),
+            getEmergencyStats(),
+            getEmergencyHotspots('this_month', 1),
+          ]);
+          const filteredActive = active.filter(e => !completedIncidents.has(e.cctvId));
+          setActiveEmergencies(filteredActive);
+          setCompletedEmergencies(completed);
+          setStats(statsData);
+          setHotspots(hotspotsData);
+        } catch (error) {
+          console.error('❌ [Emergency] Failed to load data:', error);
+        }
+      };
+      loadEmergencyData();
+      
+    } catch (error) {
+      console.error('❌ [Emergency] Failed to create:', error);
+      alert('응급 사건 등록 중 오류가 발생했습니다. 다시 시도해주세요.');
+    }
   };
 
   const handleSearch = (code: string) => {

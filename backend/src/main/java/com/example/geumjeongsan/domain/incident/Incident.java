@@ -17,54 +17,59 @@ public class Incident {
     @Column(name = "incident_id")
     private Long id;
 
-    @Column(name = "cctv_id", nullable = false)
+    @Column(name = "cctv_id")
     private Long cctvId;
 
-    @Column(name = "incident_type", nullable = false, length = 20)
-    private String incidentType; // EMERGENCY / FIRE / ROCKFALL / TRASH
+    @Column(name = "incident_type", length = 20)
+    private String incidentType; // EMERGENCY / FIRE / TRASH
 
-    @Column(name = "severity_level", nullable = false, length = 10)
-    private String severityLevel; // LOW / MEDIUM / HIGH
+    @Column(name = "incident_code", length = 50, unique = true)
+    private String incidentCode; // E-251209-001 / F-251209-001 / T-251209-001
 
-    @Column(name = "status", nullable = false, length = 20)
-    private String status; // PENDING / IN_PROGRESS / EXTINGUISHING(화재만) / RESOLVED
+    @Column(name = "source_type", length = 10)
+    private String sourceType; // AUTO / MANUAL
 
-    @Column(name = "detected_at", nullable = false)
+    @Column(name = "severity_level", length = 20)
+    private String severityLevel; // very low / LOW / MEDIUM / HIGH / very high
+
+    @Column(name = "detected_at")
     private OffsetDateTime detectedAt;
 
-    @Column(name = "acknowledged_at")
-    private OffsetDateTime acknowledgedAt;
-
-    @Column(name = "resolved_at")
-    private OffsetDateTime resolvedAt;
-
-    @Column(name = "location_desc")
+    @Column(name = "location_desc", columnDefinition = "text")
     private String locationDesc;
 
-    @Column(name = "risk_area_name")
-    private String riskAreaName;
+    @Column(name = "status", length = 20)
+    private String status; // PENDING / IN_PROGRESS / RESOLVED
 
-    @Column(name = "handler_id")
-    private Long handlerId;
-
-    @Column(name = "handler_name")
-    private String handlerName;
-
-    @Column(name = "memo")
+    @Column(name = "memo", columnDefinition = "text")
     private String memo;
 
-    // 모델 정보 (AI 모델이 실제로 생기면 사용)
-    @Column(name = "detection_model", length = 100)
-    @Getter
-    @Setter
-    private String detectionModel; 
+    @Column(name = "created_at")
+    private OffsetDateTime createdAt;
 
-    @Column(name = "detection_confidence")
-    @Getter
-    @Setter
-    private Double detectionConfidence; 
-
-    // PostGIS geometry 컬럼 (선택적 - DB에 컬럼이 있을 경우만 사용)
-    // @Column(name = "location", columnDefinition = "geometry(Point,4326)")
-    // private Point location;
+    @Column(name = "updated_at")
+    private OffsetDateTime updatedAt;
+    
+    // ===== 아래 필드들은 DB 컬럼이 없지만 기존 코드 호환을 위해 @Transient로 유지 =====
+    
+    @Transient  // DB에 없음 (incident_action 테이블에만 저장)
+    private OffsetDateTime acknowledgedAt;
+    
+    @Transient  // DB에 없음 (incident_action 테이블에만 저장)
+    private OffsetDateTime resolvedAt;
+    
+    @Transient  // DB에 없음 (incident_action 테이블에만 저장)
+    private Long handlerId;
+    
+    @Transient  // DB에 없음 (incident_action 테이블에만 저장)
+    private String handlerName;
+    
+    @Transient  // DB에 없음 (DDL에 없음)
+    private String riskAreaName;
+    
+    @Transient  // DB에 없음 (incident_auto 테이블에만 있음)
+    private String detectionModel;
+    
+    @Transient  // DB에 없음 (incident_auto 테이블에만 있음)
+    private Double detectionConfidence;
 }

@@ -13,22 +13,25 @@ import java.time.OffsetDateTime;
 public class EmergencyDetail {
 
     @Id
-    @Column(name = "incident_id")
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "emergency_id")
+    private Long id;
+
+    @Column(name = "incident_id", unique = true)
     private Long incidentId;
 
     @OneToOne(fetch = FetchType.LAZY)
-    @MapsId
-    @JoinColumn(name = "incident_id")
+    @JoinColumn(name = "incident_id", insertable = false, updatable = false)
     private Incident incident;
 
-    @Column(name = "patient_name")
+    @Column(name = "patient_name", length = 50)
     private String patientName;
 
-    @Column(name = "age")
-    private Integer age;
+    @Column(name = "patient_age", length = 50)
+    private String patientAge;
 
-    @Column(name = "gender", length = 10)
-    private String gender;
+    @Column(name = "patient_gender", length = 50)
+    private String patientGender;
 
     @Column(name = "emergency_type", length = 50)
     private String emergencyType;
@@ -36,13 +39,10 @@ public class EmergencyDetail {
     @Column(name = "symptom", columnDefinition = "text")
     private String symptom;
 
-    @Column(name = "severity_level", length = 10)
+    @Column(name = "severity_level", length = 20)
     private String severityLevel;
 
-    @Column(name = "status", length = 20)
-    private String status;
-
-    @Column(name = "response_team", length = 100)
+    @Column(name = "response_team", length = 50)
     private String responseTeam;
 
     @Column(name = "transfer_dest", length = 100)
@@ -54,7 +54,9 @@ public class EmergencyDetail {
     @Column(name = "location_desc", columnDefinition = "text")
     private String locationDesc;
 
+    @Column(name = "injured_count")
+    private Integer injuredCount;
+
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
 }
-

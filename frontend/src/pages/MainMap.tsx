@@ -17,7 +17,7 @@ import TrashMarkerIcon from '../components/TrashMarkerIcon';
 import CCTVOnMarkerIcon from '../components/CCTVOnMarkerIcon';
 import CCTVOffMarkerIcon from '../components/CCTVOffMarkerIcon';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
-import { getFireNotifications, getEmergencyNotifications, getTrashNotifications, getHelicopterLocations, getHotspots, getCCTVVideoClips, getCCTVMedia, getCCTVList, getActiveIncidents } from '../services/api';
+import { getFireNotifications, getEmergencyNotifications, getTrashNotifications, getHelicopterLocations, getHotspots, getCCTVVideoClips, getCCTVMedia, getCCTVList, getActiveIncidents, getIncidentMarkers, getCCTVStatus, getMainMapWeather } from '../services/api';
 import type { VideoClip } from '../services/mock';
 import type { CCTVMedia } from '../services/api';
 import type { CCTVMarker as BackendCCTVMarker } from '../services/common';
@@ -44,6 +44,10 @@ interface MapCCTVMarker {
   cctvCode: string;
   x: number; // Percentage for map display
   y: number; // Percentage for map display
+  geom?: { // Actual coordinates from DB
+    x: number; // longitude
+    y: number; // latitude
+  };
   location: string;
   locationDescription?: string; // 상세 위치 설명
   power: 'on' | 'off';
@@ -258,9 +262,8 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   const [videoClips, setVideoClips] = useState<VideoClip[]>([]);
   const [selectedVideoClip, setSelectedVideoClip] = useState<VideoClip | null>(null);
   
-  // 진행중 사건 마커 State
-  const [activeIncidents, setActiveIncidents] = useState<any[]>([]);
   const [cctvMediaList, setCctvMediaList] = useState<CCTVMedia[]>([]);
+  const [weather, setWeather] = useState<any>(null);
 
   // videoDetailPopup이 열릴 때 영상 클립 로드
   useEffect(() => {
@@ -484,6 +487,10 @@ export default function MainMap({ onNavigate }: MainMapProps) {
       cctvCode: backendCCTV.cctvCode,
       x: x, 
       y: y,
+      geom: { // Actual DB coordinates for Leaflet
+        x: backendCCTV.longitude,
+        y: backendCCTV.latitude
+      },
       location: backendCCTV.locationDesc,
       locationDescription: backendCCTV.locationDesc, 
       power: backendCCTV.powerStatus,
@@ -493,36 +500,61 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     };
   };
   
-  // API에서 CCTV 마커 및 헬리콥터 위치 로드
+  // API에서 CCTV 마커, 헬리콥터 위치, 날씨 로드
   useEffect(() => {
     const loadMapData = async () => {
       try {
-        console.log("🚀 [MainMap] Loading CCTV Data and Active Incidents...");
-        const [backendCCTVs, helicopters, incidents] = await Promise.all([
-          getCCTVList(),
+        console.log("🚀 [MainMap] Loading Map Data...");
+        const [incidentMarkers, helicopters, weatherData] = await Promise.all([
+          getIncidentMarkers(), // ✅ 새 API: CCTV별로 그룹화된 데이터
           getHelicopterLocations(),
-          getActiveIncidents(),
+          getMainMapWeather(), // ✅ 날씨 정보
         ]);
         
-        console.log("✅ [MainMap] Loaded backendCCTVs:", backendCCTVs);
-        console.log("✅ [MainMap] Loaded Active Incidents:", incidents);
+        console.log("✅ [MainMap] Loaded Incident Markers:", incidentMarkers);
 
-        if (!backendCCTVs || backendCCTVs.length === 0) {
-          console.warn("⚠️ [MainMap] No CCTV data received from API.");
+        if (!incidentMarkers || incidentMarkers.length === 0) {
+          console.warn("⚠️ [MainMap] No incident marker data received from API.");
           return;
         }
 
-        // Convert backend format to map format
-        const mapMarkers = backendCCTVs.map(cctv => {
-          const marker = convertToMapMarker(cctv);
-          console.log(`📍 [Marker] ${marker.cctvCode}: (${cctv.longitude}, ${cctv.latitude}) -> (${marker.x.toFixed(2)}%, ${marker.y.toFixed(2)}%)`);
-          return marker;
+        // ✅ VIEW 데이터를 맵 마커 형식으로 변환 (그룹화 불필요!)
+        const markersWithIncidents = incidentMarkers.map((marker: any) => {
+          // PostGIS geometry 파싱 (GeomDto format: { x, y })
+          const longitude = marker.geom?.x || 0;  // ✅ 직접 x 접근
+          const latitude = marker.geom?.y || 0;   // ✅ 직접 y 접근
+          
+          // 위도/경도 → 백분율 변환 (금정산 범위 기준)
+          const x = ((longitude - 129.0) / (129.1 - 129.0)) * 100;
+          const y = ((35.3 - latitude) / (35.3 - 35.2)) * 100;
+          
+          console.log(`📍 [Marker] ${marker.cctvCode}: (${longitude}, ${latitude}) -> (${x.toFixed(2)}%, ${y.toFixed(2)}%)`);
+          
+          return {
+            id: marker.cctvCode,
+            cctvId: marker.cctvId,
+            cctvCode: marker.cctvCode,
+            location: marker.cctvAddress || '위치 미상',
+            x: x,
+            y: y,
+            geom: {
+              x: longitude,
+              y: latitude,
+            },
+            power: 'on' as const,
+            healthStatus: 'NORMAL' as const,
+            incidents: {
+              fire: marker.fireCount || 0,
+              emergency: marker.emergencyCount || 0,
+              trash: marker.trashCount || 0,
+            },
+          };
         });
-
-        console.log("🗺️ [MainMap] Final Map Markers:", mapMarkers);
-        setCctvMarkers(mapMarkers);
+        
+        console.log("🗺️ [MainMap] Final Map Markers:", markersWithIncidents);
+        setCctvMarkers(markersWithIncidents);
         setHelicopterLocations(helicopters);
-        setActiveIncidents(incidents || []);
+        setWeather(weatherData);
       } catch (error) {
         console.error("❌ [MainMap] Error loading map data:", error);
       }
@@ -530,6 +562,110 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     
     loadMapData();
   }, []);
+
+  // activeView에 따라 다른 마커 데이터 로드
+  useEffect(() => {
+    const loadViewData = async () => {
+      if (activeView === 'cctv') {
+        // 실시간 CCTV 상태 로드
+        try {
+          console.log("📹 [MainMap] Loading CCTV Status...");
+          const cctvStatuses = await getCCTVStatus();
+          
+          console.log("✅ [MainMap] Loaded CCTV Status:", cctvStatuses);
+          
+          if (!cctvStatuses || cctvStatuses.length === 0) {
+            console.warn("⚠️ [MainMap] No CCTV status data received.");
+            return;
+          }
+          
+          // ✅ VIEW 데이터를 맵 마커 형식으로 변환
+          const statusMarkers = cctvStatuses.map((status: any) => {
+            const longitude = status.geom?.x || 0;
+            const latitude = status.geom?.y || 0;
+            
+            // 위도/경도 → 백분율 변환
+            const x = ((longitude - 129.0) / (129.1 - 129.0)) * 100;
+            const y = ((35.3 - latitude) / (35.3 - 35.2)) * 100;
+            
+            console.log(`📹 [CCTV] ${status.cctvCode}: ${status.displayStatus} (${longitude}, ${latitude})`);
+            
+            return {
+              id: status.cctvCode,
+              cctvId: status.cctvId,
+              cctvCode: status.cctvCode,
+              location: status.cctvAddress || '위치 미상',
+              x: x,
+              y: y,
+              geom: {
+                x: longitude,
+                y: latitude,
+              },
+              power: status.powerStatus?.toLowerCase() || 'off',
+              healthStatus: status.healthStatus || 'OFFLINE',
+              displayStatus: status.displayStatus,  // ⭐ OFF / NEED_CHECK / ON
+              lastHeartbeat: status.lastHeartbeat,
+              lastIncidentId: status.lastIncidentId,
+              lastIncidentType: status.lastIncidentType,
+              lastIncidentAt: status.lastIncidentAt,
+              incidents: {},  // 실시간 CCTV는 사건 카운트 불필요
+            };
+          });
+          
+          console.log("🗺️ [MainMap] CCTV Status Markers:", statusMarkers);
+          setCctvMarkers(statusMarkers);
+        } catch (error) {
+          console.error("❌ [MainMap] Error loading CCTV status:", error);
+        }
+      } else if (activeView === 'detections') {
+        // 전체탐지 마커 로드 (이미 초기 로드 시 로드되었지만, 탭 전환 시 재로드)
+        try {
+          console.log("🚀 [MainMap] Reloading Incident Markers...");
+          const incidentMarkers = await getIncidentMarkers();
+          
+          if (!incidentMarkers || incidentMarkers.length === 0) {
+            console.warn("⚠️ [MainMap] No incident marker data received.");
+            return;
+          }
+          
+          const markersWithIncidents = incidentMarkers.map((marker: any) => {
+            const longitude = marker.geom?.x || 0;
+            const latitude = marker.geom?.y || 0;
+            
+            const x = ((longitude - 129.0) / (129.1 - 129.0)) * 100;
+            const y = ((35.3 - latitude) / (35.3 - 35.2)) * 100;
+            
+            return {
+              id: marker.cctvCode,
+              cctvId: marker.cctvId,
+              cctvCode: marker.cctvCode,
+              location: marker.cctvAddress || '위치 미상',
+              x: x,
+              y: y,
+              geom: {
+                x: longitude,
+                y: latitude,
+              },
+              power: 'on' as const,
+              healthStatus: 'NORMAL' as const,
+              incidents: {
+                fire: marker.fireCount || 0,
+                emergency: marker.emergencyCount || 0,
+                trash: marker.trashCount || 0,
+              },
+            };
+          });
+          
+          console.log("🗺️ [MainMap] Incident Markers Reloaded:", markersWithIncidents);
+          setCctvMarkers(markersWithIncidents);
+        } catch (error) {
+          console.error("❌ [MainMap] Error reloading incident markers:", error);
+        }
+      }
+    };
+    
+    loadViewData();
+  }, [activeView]);
 
   // 사고다발구간 데이터 로드
   useEffect(() => {
@@ -613,10 +749,12 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     }
   }, [showFilterDropdown, sidebarOpen]);
 
-  const handleMarkerClick = (marker: MapCCTVMarker, event: React.MouseEvent) => {
+  const handleMarkerClick = (marker: MapCCTVMarker, event: React.MouseEvent | any) => {
     if (activeView === 'cctv') {
-      const rect = event.currentTarget.getBoundingClientRect();
-      setSelectedCCTV({ cctv: marker, x: rect.left + rect.width / 2, y: rect.top });
+      // Leaflet 마커 클릭 시 clientX/clientY 사용
+      const x = event.clientX || (event.currentTarget ? event.currentTarget.getBoundingClientRect().left + event.currentTarget.getBoundingClientRect().width / 2 : 0);
+      const y = event.clientY || (event.currentTarget ? event.currentTarget.getBoundingClientRect().top : 0);
+      setSelectedCCTV({ cctv: marker, x, y });
     } else if (activeView === 'detections') {
       const incidents: Array<{ type: 'fire' | 'emergency' | 'trash'; time: string; confidence: string; }> = [];
       if (marker.incidents.fire) {
@@ -1035,8 +1173,266 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             />
             <ZoomController zoom={zoomLevel} onZoomChange={setZoomLevel} />
+            
+            {/* 실시간 CCTV 마커 (Leaflet Marker) */}
+            {activeView === 'cctv' && cctvMarkers.map((marker) => {
+              if (removedCCTVs.has(marker.id)) return null;
+              if (!marker.geom || marker.geom.x === undefined || marker.geom.y === undefined) return null;
+              
+              const isPowerOn = marker.power === 'on';
+              const isNeedCheck = marker.healthStatus === 'NEED_CHECK';
+              
+              // 기존 아이콘 디자인 사용
+              let iconHtml = '';
+              if (!isPowerOn || marker.healthStatus === 'OFFLINE') {
+                // OFF 마커 (기존 CCTVOffMarkerIcon과 동일)
+                iconHtml = `<div style="width: 64px; height: 82px; pointer-events: auto;">
+                  <svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="103.102 -6.75 98 126" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75)); pointer-events: none !important;">
+                    <g style="pointer-events: none !important;">
+                      <g>
+                        <g>
+                          <path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" d="M178.216,34.521c0,18.357-33.241,61.787-33.241,61.787 s-33.241-43.43-33.241-61.787c0-18.359,14.883-33.242,33.241-33.242S178.216,16.161,178.216,34.521z"/>
+                        </g>
+                      </g>
+                      <circle fill="#545454" cx="144.975" cy="34.255" r="27.72"/>
+                      <text transform="matrix(1 0 0 1 126.5552 39.9102)" fill="#FFFFFF" font-family="NanumSquareB" font-size="20">OFF</text>
+                    </g>
+                  </svg>
+                </div>`;
+              } else if (isNeedCheck) {
+                // NEED_CHECK 마커 (기존 ON + 경고 아이콘)
+                iconHtml = `<div style="width: 64px; height: 82px; position: relative; pointer-events: auto;">
+                  <svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="95.975 -44.5 98 126" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75)); pointer-events: none !important;">
+                    <g style="pointer-events: none !important;">
+                      <g>
+                        <g>
+                          <path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" d="M171.339-2.979c0,18.357-33.241,61.787-33.241,61.787 s-33.241-43.43-33.241-61.787c0-18.359,14.883-33.242,33.241-33.242S171.339-21.339,171.339-2.979z"/>
+                        </g>
+                      </g>
+                      <circle fill="#5392BC" cx="138.098" cy="-3.245" r="27.72"/>
+                      <text transform="matrix(1 0 0 1 124.0278 2.4097)" fill="#FFFFFF" font-family="NanumSquareB" font-size="20">ON</text>
+                    </g>
+                  </svg>
+                  <div style="position: absolute; top: -4px; right: 8px; width: 16px; height: 16px; background: #EAB308; border-radius: 50%; border: 2px solid white; display: flex; align-items: center; justify-content: center; pointer-events: none !important;">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" style="pointer-events: none !important;">
+                      <circle cx="12" cy="12" r="10"/>
+                      <line x1="12" y1="8" x2="12" y2="12"/>
+                      <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                  </div>
+                </div>`;
+              } else {
+                // ON 마커 (기존 CCTVOnMarkerIcon과 동일)
+                iconHtml = `<div style="width: 64px; height: 82px; pointer-events: auto;">
+                  <svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="95.975 -44.5 98 126" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75)); pointer-events: none !important;">
+                    <g style="pointer-events: none !important;">
+                      <g>
+                        <g>
+                          <path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" d="M171.339-2.979c0,18.357-33.241,61.787-33.241,61.787 s-33.241-43.43-33.241-61.787c0-18.359,14.883-33.242,33.241-33.242S171.339-21.339,171.339-2.979z"/>
+                        </g>
+                      </g>
+                      <circle fill="#5392BC" cx="138.098" cy="-3.245" r="27.72"/>
+                      <text transform="matrix(1 0 0 1 124.0278 2.4097)" fill="#FFFFFF" font-family="NanumSquareB" font-size="20">ON</text>
+                    </g>
+                  </svg>
+                </div>`;
+              }
+              
+              return (
+                <Marker 
+                  key={marker.id}
+                  position={[marker.geom.y, marker.geom.x]}
+                  icon={L.divIcon({
+                    className: 'custom-cctv-marker',
+                    html: iconHtml,
+                    iconSize: [64, 82],
+                    iconAnchor: [32, 82],
+                  })}
+                  eventHandlers={{
+                    click: (e) => {
+                      console.log('🎯 CCTV Marker Clicked!', marker);
+                      e.originalEvent.stopPropagation();
+                      const mapContainer = e.target._map.getContainer();
+                      const rect = mapContainer.getBoundingClientRect();
+                      const point = e.target._map.latLngToContainerPoint(e.latlng);
+                      handleMarkerClick(marker, {
+                        clientX: rect.left + point.x,
+                        clientY: rect.top + point.y,
+                      } as any);
+                    },
+                  }}
+                />
+              );
+            })}
+            
+            {/* 전체탐지 모드 마커 (Leaflet Marker - CCTV 기반) */}
+            {activeView === 'detections' && getFilteredMarkers().map((marker) => {
+              if (removedCCTVs.has(marker.id)) return null;
+              if (!marker.geom || marker.geom.x === undefined || marker.geom.y === undefined) return null;
+              
+              // 우선순위 계산
+              const priority = getPriorityIncident(marker.incidents) || { type: 'cctv' as const, count: 0 };
+              const isHighlighted = highlightedCCTV === marker.id;
+              
+              // 우선순위에 따른 아이콘 HTML 생성
+              let iconHtml = '';
+              if (priority.type === 'fire') {
+                // 화재 마커
+                iconHtml = `<div style="width: 64px; height: 82px; position: relative;">
+                  <svg viewBox="0 0 96.72 125.04" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75));">
+                    <g>
+                      <path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" d="M74.481,41.241c0,18.358-33.24,61.788-33.24,61.788 S8,59.6,8,41.241C8,22.882,22.883,8,41.241,8S74.481,22.882,74.481,41.241z"/>
+                    </g>
+                    <g>
+                      <circle fill="#FF5A5A" cx="41.241" cy="40.43" r="27.834"/>
+                      <path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" d="M39.315,62.526c-1.129-0.265-2.201-0.461-3.24-0.768 c-3.325-0.981-6.234-2.669-8.475-5.351c-3.346-4.005-3.923-8.571-2.506-13.47c0.9-3.116,2.497-5.878,4.46-8.513 c1.253,1.481,2.71,2.619,4.431,3.455c0.192-1.104,0.336-2.173,0.57-3.221c0.486-2.171,1.583-4.062,2.759-5.922 c0.688-1.088,1.359-2.202,1.874-3.377c0.9-2.051,0.513-4.109-0.238-6.125c-0.096-0.258-0.192-0.516-0.286-0.775 c-0.005-0.014,0.018-0.037,0.061-0.123c0.323,0.133,0.664,0.25,0.983,0.41c5.765,2.889,9.475,7.502,11.36,13.621 c0.751,2.437,1.179,4.941,1.136,7.492c-0.02,1.173,1.105,1.772,1.99,1.183c0.793-0.528,1.469-1.236,2.168-1.895 c0.28-0.264,0.485-0.607,0.835-1.056c0.18,0.884,0.358,1.626,0.478,2.377c0.55,3.489,0.664,6.97-0.154,10.445 c-1.42,6.037-6.055,10.397-12.136,11.284c0.237-0.108,0.475-0.216,0.713-0.324c2.647-1.206,4.573-3.046,5.035-6.039 c0.138-0.891,0.072-1.846-0.075-2.742c-0.33-1.998-1.318-3.71-2.477-5.282c-0.792,0.606-1.55,1.186-2.468,1.888 c-0.06-2.291-1.013-4.01-2.138-5.657c-0.935-1.371-1.033-2.822-0.469-4.35c0.046-0.126,0.088-0.254,0.132-0.381 c-0.041-0.056-0.082-0.111-0.123-0.167c-0.83,0.53-1.714,0.993-2.482,1.603c-2.485,1.972-3.836,4.612-4.328,7.712 c-0.104,0.658-0.141,1.328-0.183,1.994c-0.052,0.837-0.525,1.109-1.242,0.667c-0.27-0.167-0.502-0.402-0.73-0.629 c-0.209-0.209-0.389-0.448-0.732-0.852c-0.151,1.162-0.342,2.141-0.396,3.126c-0.17,3.073,0.414,5.919,2.922,7.986 C37.194,61.451,38.253,61.901,39.315,62.526z"/>
+                    </g>
+                  </svg>
+                  ${priority.count > 1 ? `<div style="position: absolute; top: 0; right: 0; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 11px; font-weight: bold; background: #DC2626; border: 2px solid white;">${priority.count}</div>` : ''}
+                </div>`;
+              } else if (priority.type === 'emergency') {
+                // 응급 마커
+                iconHtml = `<div style="width: 64px; height: 82px; position: relative;">
+                  <svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="86.725 -31.25 97 126" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75));">
+                    <g>
+                      <g>
+                        <g>
+                          <path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" d="M161.375,10.389c0,18.358-33.241,61.788-33.241,61.788 s-33.241-43.43-33.241-61.788s14.883-33.241,33.241-33.241S161.375-7.97,161.375,10.389z"/>
+                        </g>
+                      </g>
+                      <circle fill="#99332E" cx="128.134" cy="10.124" r="27.72"/>
+                      <polygon fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" points="142.863,5.29 132.968,5.29 132.968,-4.604 123.301,-4.604 123.301,5.29 113.406,5.29 113.406,14.956 123.301,14.956 123.301,24.853 132.968,24.853 132.968,14.956 142.863,14.956"/>
+                    </g>
+                  </svg>
+                  ${priority.count > 1 ? `<div style="position: absolute; top: 0; right: 0; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 11px; font-weight: bold; background: #F97316; border: 2px solid white;">${priority.count}</div>` : ''}
+                </div>`;
+              } else {
+                // 쓰레기 마커
+                iconHtml = `<div style="width: 64px; height: 82px; position: relative;">
+                  <svg viewBox="-147.14 4.02 65 80" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75));">
+                    <g>
+                      <g>
+                        <g>
+                          <path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" d="M-105.005,29.918c0,9.396-17.014,31.623-17.014,31.623 s-17.012-22.228-17.012-31.623s7.617-17.013,17.012-17.013C-112.622,12.906-105.005,20.523-105.005,29.918z"/>
+                        </g>
+                      </g>
+                      <g>
+                        <circle fill="#576F93" cx="-122.018" cy="29.769" r="14.331"/>
+                        <g>
+                          <path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" d="M-128.28,25.551c4.188,0,8.337,0,12.515,0 c0,0.097,0.007,0.186-0.001,0.273c-0.212,2.306-0.429,4.61-0.642,6.915c-0.135,1.451-0.27,2.902-0.393,4.354 c-0.059,0.696-0.479,1.114-1.185,1.121c-0.683,0.007-1.366,0.002-2.048,0.002c-1.957,0-3.914,0-5.871,0 c-0.88-0.001-1.251-0.345-1.332-1.229c-0.219-2.407-0.438-4.813-0.66-7.219c-0.118-1.276-0.241-2.552-0.361-3.829 C-128.268,25.822-128.27,25.703-128.28,25.551z M-124.285,35.191c0-0.115,0.007-0.215-0.002-0.313 c-0.054-0.605-0.112-1.211-0.167-1.816c-0.131-1.45-0.26-2.899-0.396-4.348c-0.006-0.062-0.08-0.165-0.126-0.167 c-0.374-0.014-0.747-0.008-1.138-0.008c0.207,2.241,0.408,4.439,0.613,6.651C-125.084,35.191-124.693,35.191-124.285,35.191z M-119.386,28.551c-0.202,2.218-0.404,4.423-0.607,6.632c0.438,0,0.836,0,1.242,0c0.205-2.222,0.406-4.419,0.609-6.632 C-118.57,28.551-118.963,28.551-119.386,28.551z M-122.613,35.191c0.408,0,0.791,0,1.193,0c0-2.223,0-4.43,0-6.638 c-0.406,0-0.79,0-1.193,0C-122.613,30.77-122.613,32.97-122.613,35.191z"/>
+                          <path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" d="M-114.818,24.97c-4.818,0-9.594,0-14.387,0 c0-0.477-0.037-0.94,0.012-1.394c0.043-0.414,0.401-0.572,0.758-0.669c0.176-0.047,0.366-0.056,0.548-0.057 c1.181-0.005,2.361-0.002,3.589-0.002c0-0.267-0.004-0.521,0-0.774c0.01-0.487,0.266-0.748,0.758-0.75 c1.015-0.005,2.029-0.005,3.044,0c0.505,0.002,0.757,0.263,0.763,0.772c0.004,0.238,0,0.477,0,0.752c0.123,0,0.221,0,0.318,0 c1.097,0,2.195-0.002,3.293,0.002c0.164,0,0.332,0.016,0.494,0.049c0.568,0.118,0.811,0.421,0.811,1.001 C-114.818,24.25-114.818,24.599-114.818,24.97z M-120.289,22.838c0-0.271,0.015-0.52-0.009-0.764 c-0.008-0.071-0.128-0.187-0.197-0.188c-1.013-0.012-2.025-0.012-3.038-0.001c-0.069,0.001-0.192,0.098-0.197,0.158 c-0.021,0.261-0.009,0.525-0.009,0.794C-122.577,22.838-121.455,22.838-120.289,22.838z"/>
+                        </g>
+                      </g>
+                    </g>
+                  </svg>
+                  ${priority.count > 1 ? `<div style="position: absolute; top: 0; right: 0; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: bold; background: #10B981; border: 2px solid white;">${priority.count}</div>` : ''}
+                </div>`;
+              }
+              
+              return (
+                <Marker 
+                  key={marker.id}
+                  position={[marker.geom.y, marker.geom.x]}
+                  icon={L.divIcon({
+                    className: 'custom-incident-marker',
+                    html: iconHtml,
+                    iconSize: [64, 82],
+                    iconAnchor: [32, 82],
+                  })}
+                  eventHandlers={{
+                    click: (e) => {
+                      console.log('🎯 Detection Marker Clicked!', marker);
+                      e.originalEvent.stopPropagation();
+                      const mapContainer = e.target._map.getContainer();
+                      const rect = mapContainer.getBoundingClientRect();
+                      const point = e.target._map.latLngToContainerPoint(e.latlng);
+                      handleMarkerClick(marker, {
+                        clientX: rect.left + point.x,
+                        clientY: rect.top + point.y,
+                      } as any);
+                    },
+                  }}
+                />
+              );
+            })}
           </MapContainer>
         </div>
+
+        {/* 날씨 위젯 - 좌측 하단 */}
+        {weather && (
+          <div 
+            className="absolute bottom-6" 
+            style={{ 
+              left: '16px',
+              zIndex: 1000 
+            }}
+          >
+            <div className="bg-white rounded-lg shadow-lg p-4" style={{ minWidth: '200px' }}>
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <Wind className="w-5 h-5 text-blue-500" />
+                  <span className="font-semibold text-gray-800">금정산 날씨</span>
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                {/* 기온 */}
+                {weather.temperature && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600">기온</span>
+                    <span className="text-lg font-bold text-blue-600">{weather.temperature}°C</span>
+                  </div>
+                )}
+                
+                {/* 습도 */}
+                {weather.humidity && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600">습도</span>
+                    <span className="text-sm font-semibold text-gray-800">{weather.humidity}%</span>
+                  </div>
+                )}
+                
+                {/* 풍향/풍속 */}
+                {weather.windDirection && weather.windSpeed && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-gray-600">바람</span>
+                    <span className="text-sm font-semibold text-gray-800">
+                      {weather.windDirection} {weather.windSpeed}m/s
+                    </span>
+                  </div>
+                )}
+                
+                {/* 날씨 상태 */}
+                {weather.weatherCondition && (
+                  <div className="flex items-center justify-between pt-2 border-t">
+                    <span className="text-sm text-gray-600">상태</span>
+                    <span className="text-sm font-semibold text-gray-800">
+                      {weather.weatherCondition === 'CLEAR' && '☀️ 맑음'}
+                      {weather.weatherCondition === 'PARTLY_CLOUDY' && '⛅ 구름많음'}
+                      {weather.weatherCondition === 'CLOUDY' && '☁️ 흐림'}
+                      {weather.weatherCondition === 'RAIN' && '🌧️ 비'}
+                      {weather.weatherCondition === 'SNOW' && '❄️ 눈'}
+                    </span>
+                  </div>
+                )}
+              </div>
+              
+              {/* 업데이트 시간 */}
+              {weather.obsTime && (
+                <div className="mt-2 pt-2 border-t">
+                  <span className="text-xs text-gray-400">
+                    {new Date(weather.obsTime).toLocaleString('ko-KR', {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })} 관측
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* 지역명 라벨 - 지도 위에 오버레이 */}
         <div className="absolute" style={{ left: '10%', top: '10%', zIndex: 1000 }}>
@@ -1058,63 +1454,6 @@ export default function MainMap({ onNavigate }: MainMapProps) {
           <span className="text-sm text-gray-700 font-semibold drop-shadow-md bg-white/70 px-2 py-1 rounded">남문</span>
         </div>
 
-        {/* 전체탐지 모드 마커 */}
-        {activeView === 'detections' && getFilteredMarkers().map((marker) => {
-          if (removedCCTVs.has(marker.id)) return null;
-          // const priority = getPriorityIncident(marker.incidents);
-          // if (!priority) return null;
-          
-          // 임시 테스트: 사건 없어도 강제 표시 (우선순위 없으면 기본 'cctv' 타입으로 처리)
-          const priority = getPriorityIncident(marker.incidents) || { type: 'cctv', count: 0 };
-          const isHighlighted = highlightedCCTV === marker.id;
-          
-          return (
-            <div 
-              key={marker.id}
-              onClick={(e) => handleMarkerClick(marker, e)}
-              className={`absolute transform -translate-x-1/2 -translate-y-full cursor-pointer hover:scale-110 transition-all ${isHighlighted ? 'scale-125 animate-pulse' : ''}`}
-              style={{ left: `${marker.x}%`, top: `${marker.y}%`, zIndex: isHighlighted ? 1020 : 1010 }}
-            >
-              {priority.type === 'fire' ? (
-                <div className="relative">
-                  <FireMapMarker className="w-16 h-20" style={{ width: '56px', height: '70px' }} />
-                  {priority.count > 1 && (
-                    <div 
-                      className="absolute top-0 right-0 w-6 h-6 rounded-full flex items-center justify-center text-white text-xs bg-red-600"
-                      style={{ border: '2px solid white', fontSize: '11px', fontWeight: 'bold' }}
-                    >
-                      {priority.count}
-                    </div>
-                  )}
-                </div>
-              ) : priority.type === 'emergency' ? (
-                <div className="relative">
-                  <EmergencyMarkerIcon className="w-16 h-20" style={{ width: '56px', height: '70px' }} />
-                  {priority.count > 1 && (
-                    <div 
-                      className="absolute top-0 right-0 w-6 h-6 rounded-full flex items-center justify-center text-white text-xs bg-orange-600"
-                      style={{ border: '2px solid white', fontSize: '11px', fontWeight: 'bold' }}
-                    >
-                      {priority.count}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <div className="relative">
-                  <TrashMarkerIcon className="w-12 h-14" style={{ width: '30px', height: '35px' }} />
-                  {priority.count > 1 && (
-                    <div 
-                      className="absolute top-0 right-0 w-5 h-5 rounded-full flex items-center justify-center text-white text-xs bg-green-600"
-                      style={{ border: '2px solid white', fontSize: '10px', fontWeight: 'bold' }}
-                    >
-                      {priority.count}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
 
         {/* 사고다발구간 모드 마커 */}
         {activeView === 'accident-hotspot' && hotspotLocations
@@ -1143,92 +1482,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             </div>
           ))}
 
-        {/* 실시간 CCTV 모드 마커 */}
-        {activeView === 'cctv' && cctvMarkers.map((marker) => {
-          const isPowerOn = marker.power === 'on';
-          const isNeedCheck = marker.healthStatus === 'NEED_CHECK';
-          
-          // 상태에 따른 마커 선택
-          let markerIcon;
-          if (!isPowerOn || marker.healthStatus === 'OFFLINE') {
-            markerIcon = <CCTVOffMarkerIcon className="w-16 h-20" style={{ width: '56px', height: '70px' }} />;
-          } else if (isNeedCheck) {
-            // NEED_CHECK: 노란색/주황색 마커
-            markerIcon = (
-              <div className="relative">
-                <CCTVOnMarkerIcon className="w-16 h-20" style={{ width: '56px', height: '70px' }} />
-                <div className="absolute top-0 right-0 w-4 h-4 bg-yellow-500 rounded-full border-2 border-white flex items-center justify-center">
-                  <AlertCircle className="w-3 h-3 text-white" />
-                </div>
-              </div>
-            );
-          } else {
-            markerIcon = <CCTVOnMarkerIcon className="w-16 h-20" style={{ width: '56px', height: '70px' }} />;
-          }
-          
-          return (
-            <div 
-              key={marker.id}
-              onClick={(e) => handleMarkerClick(marker, e)}
-              className="absolute transform -translate-x-1/2 -translate-y-full cursor-pointer hover:scale-110 transition-transform"
-              style={{ left: `${marker.x}%`, top: `${marker.y}%`, zIndex: 1010 }}
-            >
-              {markerIcon}
-            </div>
-          );
-        })}
 
-        {/* 진행중 사건 마커 (Detection 모드) */}
-        {activeView === 'detections' && activeIncidents.map((incident) => {
-          if (!incident.cctvGeom) return null;
-          
-          const MAP_BOUNDS = {
-            minLon: 129.05,
-            maxLon: 129.075,
-            minLat: 35.225,
-            maxLat: 35.245
-          };
-          
-          let x = ((incident.cctvGeom.x - MAP_BOUNDS.minLon) / (MAP_BOUNDS.maxLon - MAP_BOUNDS.minLon)) * 100;
-          let y = 100 - ((incident.cctvGeom.y - MAP_BOUNDS.minLat) / (MAP_BOUNDS.maxLat - MAP_BOUNDS.minLat)) * 100;
-          x = Math.max(0, Math.min(100, x));
-          y = Math.max(0, Math.min(100, y));
-          
-          // 사건 유형별 아이콘 및 색상
-          const getIncidentMarker = () => {
-            const severityColor = 
-              incident.severityLevel === 'HIGH' ? 'bg-red-600' :
-              incident.severityLevel === 'MEDIUM' ? 'bg-orange-500' :
-              'bg-yellow-400';
-            
-            const incidentIcon = 
-              incident.incidentType === 'FIRE' ? <Flame className="w-6 h-6 text-white" /> :
-              incident.incidentType === 'EMERGENCY' ? <HeartPulse className="w-6 h-6 text-white" /> :
-              <Trash2 className="w-6 h-6 text-white" />;
-            
-            return (
-              <div className={`relative flex items-center justify-center w-12 h-12 ${severityColor} rounded-full border-4 border-white shadow-xl animate-pulse`}>
-                {incidentIcon}
-                <div className="absolute -top-1 -right-1 w-4 h-4 bg-white rounded-full border-2 border-red-500 animate-ping" />
-              </div>
-            );
-          };
-          
-          return (
-            <div 
-              key={incident.incidentId}
-              onClick={() => {
-                console.log('🚨 Clicked Incident:', incident);
-                // TODO: 사건 상세 팝업 표시
-              }}
-              className="absolute transform -translate-x-1/2 -translate-y-1/2 cursor-pointer hover:scale-125 transition-transform z-[1020]"
-              style={{ left: `${x}%`, top: `${y}%` }}
-              title={`${incident.incidentType} - ${incident.locationDesc || '위치정보없음'}`}
-            >
-              {getIncidentMarker()}
-            </div>
-          );
-        })}
 
         {showHelicopters && helicopterLocations.map((heli) => (
           <div 

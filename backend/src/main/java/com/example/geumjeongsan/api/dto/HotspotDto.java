@@ -1,85 +1,92 @@
 package com.example.geumjeongsan.api.dto;
 
 import com.example.geumjeongsan.domain.incident.EmergencyHotspotCctv;
+import com.example.geumjeongsan.domain.incident.FireHotspotCctv;
+import com.example.geumjeongsan.domain.incident.TrashHotspotCctv;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
-import org.locationtech.jts.geom.Geometry;
-import org.locationtech.jts.io.WKTWriter;
 
-@Data
+/**
+ * 사고 다발구간 DTO (복잡한 형식 - 기존)
+ * CCTV 상세 정보 포함
+ */
+@Getter
 @Builder
 @NoArgsConstructor
 @AllArgsConstructor
 public class HotspotDto {
-    
     private Long cctvId;
     private String cctvCode;
     private String address;
     private String addressDescription;
-    private Long incidentCount;  // 기간에 따라 다름 (30d, this_month 등)
+    private Long incidentCount;
     private Double avgSeverityScore;
-    private Integer maxSeverityScore;
+    private Double maxSeverityScore;
     private String firstIncidentAt;
     private String lastIncidentAt;
-    
-    // 지도 표시용
-    private Double latitude;   // 위도
-    private Double longitude;  // 경도
-    private String geomWkt;    // WKT 형식 (필요시)
+    private Double latitude;
+    private Double longitude;
+    private String geomWkt;
     
     /**
-     * Entity -> DTO 변환 (이번 달 기준)
+     * 응급 Hotspot Entity에서 변환 (this_month)
      */
     public static HotspotDto fromEntityThisMonth(EmergencyHotspotCctv entity) {
-        return buildDto(entity, entity.getEmergencyCountThisMonth());
-    }
-    
-    /**
-     * Entity -> DTO 변환 (최근 30일 기준)
-     */
-    public static HotspotDto fromEntity30Days(EmergencyHotspotCctv entity) {
-        return buildDto(entity, entity.getEmergencyCount30d());
-    }
-    
-    /**
-     * Entity -> DTO 변환 (최근 7일 기준)
-     */
-    public static HotspotDto fromEntity7Days(EmergencyHotspotCctv entity) {
-        return buildDto(entity, entity.getEmergencyCount7d());
-    }
-    
-    private static HotspotDto buildDto(EmergencyHotspotCctv entity, Long count) {
-        HotspotDtoBuilder builder = HotspotDto.builder()
+        return HotspotDto.builder()
                 .cctvId(entity.getCctvId())
                 .cctvCode(entity.getCctvCode())
                 .address(entity.getCctvAddress())
                 .addressDescription(entity.getCctvAddressDescription())
-                .incidentCount(count != null ? count : 0L)
+                .incidentCount(entity.getEmergencyCountThisMonth())
                 .avgSeverityScore(entity.getAvgSeverityScore())
-                .maxSeverityScore(entity.getMaxSeverityScore())
-                .firstIncidentAt(entity.getFirstEmergencyAt() != null ? 
-                    entity.getFirstEmergencyAt().toString() : null)
-                .lastIncidentAt(entity.getLastEmergencyAt() != null ? 
-                    entity.getLastEmergencyAt().toString() : null);
-        
-        // Geometry 처리 (위도/경도 추출)
-        if (entity.getGeom() != null) {
-            Geometry geom = entity.getGeom();
-            builder.longitude(geom.getCoordinate().getX())  // 경도
-                   .latitude(geom.getCoordinate().getY());   // 위도
-            
-            // WKT 변환 (필요시)
-            try {
-                WKTWriter writer = new WKTWriter();
-                builder.geomWkt(writer.write(geom));
-            } catch (Exception e) {
-                // WKT 변환 실패 시 무시
-            }
-        }
-        
-        return builder.build();
+                .maxSeverityScore(entity.getMaxSeverityScore() != null ? entity.getMaxSeverityScore().doubleValue() : null)
+                .firstIncidentAt(entity.getFirstEmergencyAt() != null ? entity.getFirstEmergencyAt().toString() : null)
+                .lastIncidentAt(entity.getLastEmergencyAt() != null ? entity.getLastEmergencyAt().toString() : null)
+                .latitude(null) // EmergencyHotspotCctv에는 latitude 없음
+                .longitude(null)
+                .geomWkt(entity.getGeom() != null ? entity.getGeom().toText() : null)
+                .build();
+    }
+    
+    /**
+     * 응급 Hotspot Entity에서 변환 (30 days)
+     */
+    public static HotspotDto fromEntity30Days(EmergencyHotspotCctv entity) {
+        return HotspotDto.builder()
+                .cctvId(entity.getCctvId())
+                .cctvCode(entity.getCctvCode())
+                .address(entity.getCctvAddress())
+                .addressDescription(entity.getCctvAddressDescription())
+                .incidentCount(entity.getEmergencyCount30d())
+                .avgSeverityScore(entity.getAvgSeverityScore())
+                .maxSeverityScore(entity.getMaxSeverityScore() != null ? entity.getMaxSeverityScore().doubleValue() : null)
+                .firstIncidentAt(entity.getFirstEmergencyAt() != null ? entity.getFirstEmergencyAt().toString() : null)
+                .lastIncidentAt(entity.getLastEmergencyAt() != null ? entity.getLastEmergencyAt().toString() : null)
+                .latitude(null)
+                .longitude(null)
+                .geomWkt(entity.getGeom() != null ? entity.getGeom().toText() : null)
+                .build();
+    }
+    
+    /**
+     * 응급 Hotspot Entity에서 변환 (7 days)
+     */
+    public static HotspotDto fromEntity7Days(EmergencyHotspotCctv entity) {
+        return HotspotDto.builder()
+                .cctvId(entity.getCctvId())
+                .cctvCode(entity.getCctvCode())
+                .address(entity.getCctvAddress())
+                .addressDescription(entity.getCctvAddressDescription())
+                .incidentCount(entity.getEmergencyCount7d())
+                .avgSeverityScore(entity.getAvgSeverityScore())
+                .maxSeverityScore(entity.getMaxSeverityScore() != null ? entity.getMaxSeverityScore().doubleValue() : null)
+                .firstIncidentAt(entity.getFirstEmergencyAt() != null ? entity.getFirstEmergencyAt().toString() : null)
+                .lastIncidentAt(entity.getLastEmergencyAt() != null ? entity.getLastEmergencyAt().toString() : null)
+                .latitude(null)
+                .longitude(null)
+                .geomWkt(entity.getGeom() != null ? entity.getGeom().toText() : null)
+                .build();
     }
 }
-

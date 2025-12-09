@@ -230,3 +230,42 @@
 html {
   font-size: var(--font-size);
 }
+
+/* Leaflet 마커 애니메이션 */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: .8;
+  }
+}
+
+@keyframes ping {
+  75%, 100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+.custom-cctv-marker,
+.custom-incident-marker {
+  background: transparent !important;
+  border: none !important;
+  pointer-events: auto !important;
+  cursor: pointer !important;
+}
+
+.custom-cctv-marker:hover,
+.custom-incident-marker:hover {
+  transform: scale(1.1);
+  transition: transform 0.2s;
+}
+
+.custom-incident-marker [style*="animation: pulse"] {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.custom-incident-marker [style*="animation: ping"] {
+  animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
+}

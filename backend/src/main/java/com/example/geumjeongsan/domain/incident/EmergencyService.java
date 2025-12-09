@@ -1,5 +1,6 @@
 package com.example.geumjeongsan.domain.incident;
 
+import com.example.geumjeongsan.api.dto.EmergencyCreateRequest;
 import com.example.geumjeongsan.api.dto.EmergencyDashboardResponse;
 import com.example.geumjeongsan.api.dto.EmergencyIncidentItem;
 import com.example.geumjeongsan.api.dto.EmergencyIncidentListDto;
@@ -7,6 +8,7 @@ import com.example.geumjeongsan.api.dto.EmergencyRequest;
 import com.example.geumjeongsan.api.dto.EmergencyResponse;
 import com.example.geumjeongsan.api.dto.EmergencyStatsDto;
 import com.example.geumjeongsan.api.dto.HotspotDto;
+import com.example.geumjeongsan.api.dto.IncidentCreateResponse;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import org.springframework.data.domain.Page;
@@ -30,6 +32,8 @@ public class EmergencyService {
     private final EmergencyDetailRepository emergencyDetailRepository;
     private final IncidentSummaryRepository incidentSummaryRepository;
     private final EmergencyHotspotCctvRepository emergencyHotspotCctvRepository;
+    private final IncidentActionRepository incidentActionRepository;
+    private final IncidentManualRepository incidentManualRepository;
     private final EntityManager entityManager;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
@@ -37,11 +41,15 @@ public class EmergencyService {
                            EmergencyDetailRepository emergencyDetailRepository,
                            IncidentSummaryRepository incidentSummaryRepository,
                            EmergencyHotspotCctvRepository emergencyHotspotCctvRepository,
+                           IncidentActionRepository incidentActionRepository,
+                           IncidentManualRepository incidentManualRepository,
                            EntityManager entityManager) {
         this.incidentRepository = incidentRepository;
         this.emergencyDetailRepository = emergencyDetailRepository;
         this.incidentSummaryRepository = incidentSummaryRepository;
         this.emergencyHotspotCctvRepository = emergencyHotspotCctvRepository;
+        this.incidentActionRepository = incidentActionRepository;
+        this.incidentManualRepository = incidentManualRepository;
         this.entityManager = entityManager;
     }
     
@@ -321,16 +329,8 @@ public class EmergencyService {
         LocalDateTime localDateTime = LocalDateTime.parse(incidentTimeStr, DATE_FORMATTER);
         incident.setDetectedAt(localDateTime.atOffset(java.time.ZoneOffset.of("+09:00")));
         
-        if ("대응중".equals(request.getStatus())) {
-            incident.setAcknowledgedAt(OffsetDateTime.now());
-        }
-        
-        if ("처리완료".equals(request.getStatus())) {
-            incident.setResolvedAt(OffsetDateTime.now());
-        }
-        
         incident.setLocationDesc(request.getLocation());
-        incident.setHandlerName(request.getResponseTeam());
+        // acknowledged_at, resolved_at, handler_name은 incident_action에만 저장 ✅
         
         Incident saved = incidentRepository.save(incident);
         // ID를 확보하기 위해 flush (트랜잭션 내에서 ID 생성 보장)
@@ -343,22 +343,43 @@ public class EmergencyService {
         
         // EmergencyDetail 저장 (@MapsId를 사용하므로 incident만 설정하면 incidentId가 자동 설정됨)
         EmergencyDetail detail = new EmergencyDetail();
-        // @MapsId를 사용할 때는 incident를 설정하면 자동으로 incidentId가 설정됨
-        // 명시적으로 setIncidentId()를 호출하면 @MapsId와 충돌할 수 있으므로 호출하지 않음
-        detail.setIncident(saved);
+        // incidentId 설정
+        detail.setIncidentId(saved.getId());
         detail.setPatientName(request.getPatientName());
-        detail.setAge(request.getAge());
-        detail.setGender(request.getGender());
+        detail.setPatientAge(request.getAge() != null ? String.valueOf(request.getAge()) : null);
+        detail.setPatientGender(request.getGender());
         detail.setEmergencyType(request.getSymptoms()); // 증상을 유형으로 사용
         detail.setSymptom(request.getSymptoms());
         detail.setSeverityLevel(severityLevel);
-        detail.setStatus(status);
+        // detail.setStatus(status); // DB에 status 컬럼 없음
         detail.setResponseTeam(request.getResponseTeam());
         detail.setLocationDesc(request.getLocation());
         detail.setOccurredAt(saved.getDetectedAt());
         detail.setCreatedAt(OffsetDateTime.now());
         
         emergencyDetailRepository.save(detail);
+        
+        // IncidentAction 로그 저장 (CREATED)
+        IncidentAction action = new IncidentAction();
+        action.setIncidentId(saved.getId());
+        action.setActionType("CREATED");
+        action.setPrevStatus(null);
+        action.setNextStatus(status);
+        action.setActorId(null); // TODO: 실제 사용자 ID 연동
+        action.setMemo("신규 응급 사건 등록");
+        action.setCreatedAt(OffsetDateTime.now());
+        incidentActionRepository.save(action);
+        
+        // 수동 등록인 경우 IncidentManual 저장
+        if ("MANUAL".equals(saved.getSourceType())) {
+            IncidentManual manual = new IncidentManual();
+            manual.setIncidentId(saved.getId());
+            manual.setManualDescription(request.getSymptoms() != null ? request.getSymptoms() : "");
+            manual.setManualLocation(request.getLocation());
+            manual.setCreatedById(null); // TODO: 실제 사용자 ID 연동
+            manual.setCreatedAt(OffsetDateTime.now());
+            incidentManualRepository.save(manual);
+        }
         
         return toEmergencyResponse(saved);
     }
@@ -372,6 +393,9 @@ public class EmergencyService {
         if (!"EMERGENCY".equals(incident.getIncidentType())) {
             throw new RuntimeException("응급 기록이 아닙니다: " + id);
         }
+        
+        // 이전 상태 저장 (incident_action 로그용)
+        String prevStatus = incident.getStatus();
         
         // 상태 변환
         String status = switch (request.getStatus()) {
@@ -390,42 +414,52 @@ public class EmergencyService {
         };
         incident.setSeverityLevel(severityLevel);
         
-        if ("대응중".equals(request.getStatus()) && incident.getAcknowledgedAt() == null) {
-            incident.setAcknowledgedAt(OffsetDateTime.now());
-        }
-        
-        if ("처리완료".equals(request.getStatus()) && incident.getResolvedAt() == null) {
-            incident.setResolvedAt(OffsetDateTime.now());
-        }
-        
         incident.setLocationDesc(request.getLocation());
-        incident.setHandlerName(request.getResponseTeam());
+        // acknowledged_at, resolved_at, handler_name은 incident_action에만 저장 ✅
         
         Incident saved = incidentRepository.save(incident);
         
         // EmergencyDetail 업데이트
         EmergencyDetail detail = emergencyDetailRepository.findById(id).orElse(new EmergencyDetail());
-        // 새로 생성하는 경우 @MapsId를 위해 incident를 먼저 설정
+        // incidentId 설정
         if (detail.getIncidentId() == null) {
-            detail.setIncident(saved);
-            if (saved.getId() != null) {
-                detail.setIncidentId(saved.getId());
-            }
-        } else {
-            // 기존 레코드 업데이트
-            detail.setIncident(saved);
+            detail.setIncidentId(saved.getId());
         }
         detail.setPatientName(request.getPatientName());
-        detail.setAge(request.getAge());
-        detail.setGender(request.getGender());
+        detail.setPatientAge(request.getAge() != null ? String.valueOf(request.getAge()) : null);
+        detail.setPatientGender(request.getGender());
         detail.setEmergencyType(request.getSymptoms());
         detail.setSymptom(request.getSymptoms());
         detail.setSeverityLevel(severityLevel);
-        detail.setStatus(status);
+        // detail.setStatus(status); // DB에 status 컬럼 없음
         detail.setResponseTeam(request.getResponseTeam());
         detail.setLocationDesc(request.getLocation());
         
         emergencyDetailRepository.save(detail);
+        
+        // IncidentAction 로그 저장 (상태 변경)
+        if (!prevStatus.equals(status)) {
+            IncidentAction action = new IncidentAction();
+            action.setIncidentId(saved.getId());
+            
+            // 상태에 따라 action_type 결정
+            if ("IN_PROGRESS".equals(status) && "PENDING".equals(prevStatus)) {
+                action.setActionType("ACK");
+                action.setAcknowledgedAt(OffsetDateTime.now());  // ✅ 확인 시각
+            } else if ("RESOLVED".equals(status)) {
+                action.setActionType("RESOLVED");
+                action.setResolvedAt(OffsetDateTime.now());  // ✅ 해결 시각
+            } else {
+                action.setActionType("STATUS_CHANGED");
+            }
+            
+            action.setPrevStatus(prevStatus);
+            action.setNextStatus(status);
+            action.setActorId(null); // TODO: 실제 사용자 ID 연동
+            action.setMemo("상태 변경: " + prevStatus + " → " + status);
+            action.setCreatedAt(OffsetDateTime.now());
+            incidentActionRepository.save(action);
+        }
         
         return toEmergencyResponse(saved);
     }
@@ -454,11 +488,11 @@ public class EmergencyService {
         EmergencyDetail detail = emergencyDetailRepository.findById(incident.getId()).orElse(null);
 
         String patientName = (detail != null) ? detail.getPatientName() : "";
-        Integer age = (detail != null) ? detail.getAge() : null;
+        String patientAge = (detail != null) ? detail.getPatientAge() : null;
         // 성별 변환 (M/F -> 남/여)
         String gender = "";
-        if (detail != null && detail.getGender() != null) {
-            String genderValue = detail.getGender();
+        if (detail != null && detail.getPatientGender() != null) {
+            String genderValue = detail.getPatientGender();
             gender = switch (genderValue) {
                 case "M", "남", "남성" -> "남";
                 case "F", "여", "여성" -> "여";
@@ -498,7 +532,7 @@ public class EmergencyService {
         return EmergencyResponse.builder()
                 .id(incident.getId())
                 .patientName(patientName)
-                .age(age)
+                .age(patientAge != null ? Integer.parseInt(patientAge.replaceAll("[^0-9]", "0")) : null)
                 .gender(gender)
                 .location(location != null ? location : "")
                 .cctvId(String.format("CCTV-%03d", incident.getCctvId()))
@@ -520,6 +554,86 @@ public class EmergencyService {
                 .findByIncidentTypeOrderByDetectedAtDesc("EMERGENCY", pageable);
         
         return incidents.map(EmergencyIncidentListDto::fromEntity);
+    }
+    
+    /**
+     * 신규 응급 사건 등록 (수동 등록)
+     */
+    @Transactional
+    public IncidentCreateResponse createEmergency(EmergencyCreateRequest request) {
+        // 필수 필드 검증
+        if (request.getDetectedAt() == null) {
+            throw new IllegalArgumentException("발생시간은 필수입니다.");
+        }
+        if (request.getLocationDesc() == null || request.getLocationDesc().trim().isEmpty()) {
+            throw new IllegalArgumentException("발생 위치는 필수입니다.");
+        }
+        if (request.getSeverityLevel() == null || request.getSeverityLevel().trim().isEmpty()) {
+            throw new IllegalArgumentException("심각도는 필수입니다.");
+        }
+        
+        // 1. Incident 생성
+        Incident incident = new Incident();
+        incident.setIncidentType("EMERGENCY");
+        incident.setSourceType("MANUAL");
+        incident.setSeverityLevel(request.getSeverityLevel().toUpperCase());
+        incident.setStatus("PENDING");
+        incident.setDetectedAt(request.getDetectedAt());
+        incident.setLocationDesc(request.getLocationDesc());
+        incident.setMemo(request.getMemo());
+        incident.setCctvId(null);
+        incident.setCreatedAt(OffsetDateTime.now());
+        incident.setUpdatedAt(OffsetDateTime.now());
+        
+        // Incident 저장
+        incident = incidentRepository.save(incident);
+        
+        // 2. 사고 코드 생성 (E-YYMMDD-XXX)
+        String incidentCode = String.format("E-%s-%03d", 
+            incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd")), 
+            incident.getId() % 1000);
+        
+        // 사고 코드를 Incident에 저장
+        incident.setIncidentCode(incidentCode);
+        incident = incidentRepository.save(incident);
+        
+        // 3. EmergencyDetail 생성
+        EmergencyDetail detail = new EmergencyDetail();
+        detail.setIncidentId(incident.getId());
+        detail.setPatientName(request.getPatientName());
+        detail.setPatientAge(request.getPatientAge());
+        detail.setPatientGender(request.getPatientGender());
+        detail.setResponseTeam(request.getResponseTeam());
+        detail.setTransferDest(request.getTransferDest());
+        detail.setOccurredAt(request.getDetectedAt());
+        detail.setLocationDesc(request.getLocationDesc());
+        detail.setCreatedAt(OffsetDateTime.now());
+        
+        emergencyDetailRepository.save(detail);
+        
+        // 4. IncidentAction 로그 저장 (CREATED)
+        IncidentAction action = new IncidentAction();
+        action.setIncidentId(incident.getId());
+        action.setActionType("CREATED");
+        action.setPrevStatus(null);
+        action.setNextStatus("PENDING");
+        action.setActorId(request.getCreatedById());  // ✅ 등록자 저장
+        action.setAcknowledgedAt(null);
+        action.setResolvedAt(null);
+        action.setMemo("신규 응급 사건 등록 (수동)");
+        action.setCreatedAt(OffsetDateTime.now());
+        incidentActionRepository.save(action);
+        
+        // 5. IncidentManual 저장
+        IncidentManual manual = new IncidentManual();
+        manual.setIncidentId(incident.getId());
+        manual.setManualDescription(request.getMemo() != null ? request.getMemo() : "응급 사건 수동 등록");
+        manual.setManualLocation(request.getLocationDesc());
+        manual.setCreatedById(null);
+        manual.setCreatedAt(OffsetDateTime.now());
+        incidentManualRepository.save(manual);
+        
+        return IncidentCreateResponse.success(incident.getId(), incidentCode);
     }
 }
 

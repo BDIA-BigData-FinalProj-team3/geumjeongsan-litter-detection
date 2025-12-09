@@ -39,3 +39,13 @@ management:
       show-details: always
 
 # Trigger deployment - fix JSON parameter issue
+
+# 기상청 API 설정
+weather:
+  api:
+    key: ${WEATHER_API_KEY:YOUR_API_KEY_HERE}  # 공공데이터포털에서 발급받은 Decoding 키
+    url: http://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getUltraSrtNcst
+  location:
+    code: GEUMJEONG_SAN
+    nx: 98  # 금정산 격자 X 좌표
+    ny: 76  # 금정산 격자 Y 좌표

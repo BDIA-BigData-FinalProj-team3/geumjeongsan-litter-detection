@@ -236,33 +236,55 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
     }
   }, [location.search, activeFires, completedFires]);
 
-  const handleNewRecordSubmit = () => {
+  const handleNewRecordSubmit = async () => {
     // 필수 입력 체크
     if (!newRecord.time || !newRecord.location || !newRecord.severity) {
       alert('발생시간, 발생 위치, 심각도는 필수 입력 항목입니다.');
       return;
     }
 
-    // 새 화재 사건 생성
-    const newFire = {
-      id: Date.now(),
-      accidentCode: `FIRE-${String(Date.now()).slice(-4)}`,
-      cctvId: '',
-      time: newRecord.time,
-      status: '대기중',
-      severity: newRecord.severity,
-      handler: '미배정',
-      location: newRecord.location,
-      detectionBasis: '수동 등록',
-      memo: newRecord.memo
-    };
-
-    setActiveFires([newFire, ...activeFires]);
-    
-    // 문자 신고 버튼 활성화
+    try {
+      // Backend API 호출
+      const result = await createFire({
+        detectedAt: new Date(newRecord.time).toISOString(),
+        locationDesc: newRecord.location,
+        severityLevel: newRecord.severity.toUpperCase(),
+        memo: newRecord.memo || undefined,
+      });
+      
+      // 등록 성공
+      alert(`신규 화재 사건이 등록되었습니다. (사고코드: ${result.incidentCode})`);
     setCanSendAlert(true);
     
-    alert('신규 화재 사건이 등록되었습니다. 문자 신고 버튼이 활성화되었습니다.');
+      // 모달 닫기 및 데이터 새로고침
+      setShowNewRecordModal(false);
+      setNewRecord({
+        time: '',
+        location: '',
+        severity: 'medium',
+        memo: ''
+      });
+      
+      // 목록 새로고침
+      const loadFireData = async () => {
+        const [active, completed, statsData, hotspotsData] = await Promise.all([
+          getActiveFires(),
+          getCompletedFires(),
+          getFireStats(),
+          getFireHotspots('this_month', 1),
+        ]);
+        const filteredActive = active.filter(f => !completedIncidents.has(f.cctvId));
+        setActiveFires(filteredActive);
+        setCompletedFires(completed);
+        setStats(statsData);
+        setHotspots(hotspotsData);
+      };
+      loadFireData();
+      
+    } catch (error) {
+      console.error('❌ [Fire] Failed to create:', error);
+      alert('화재 사건 등록 중 오류가 발생했습니다. 다시 시도해주세요.');
+    }
   };
 
   const handleSearch = (code: string) => {

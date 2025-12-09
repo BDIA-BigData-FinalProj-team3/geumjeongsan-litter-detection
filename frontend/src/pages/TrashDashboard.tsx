@@ -5,7 +5,7 @@ import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
-import { getActiveTrashIncidents, getCompletedTrashIncidents, getTrashStats, getTrashHotspots, type TrashStatsResponse, type HotspotResponse } from '../services/api';
+import { getActiveTrashIncidents, getCompletedTrashIncidents, getTrashStats, getTrashHotspots, createTrash, type TrashStatsResponse, type HotspotResponse } from '../services/api';
 
 interface TrashDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -40,6 +40,10 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState<number | null>(null);
   const [dropdownPosition, setDropdownPosition] = useState<{top: number, left: number} | null>(null);
+  
+  // 수정 모드
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedDetail, setEditedDetail] = useState<TrashDetail | null>(null);
   
   // 페이지네이션
   const [currentPage, setCurrentPage] = useState(0);
@@ -221,32 +225,28 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
     }
   }, [location.search, activeTrashIncidents, completedTrashIncidents]);
 
-  const handleNewRecordSubmit = () => {
+  const handleNewRecordSubmit = async () => {
     // 필수 입력 체크
     if (!newRecord.time || !newRecord.location || !newRecord.severity) {
       alert('발생시간, 발생 위치, 심각도는 필수 입력 항목입니다.');
       return;
     }
 
-    // 새 쓰레기 투기 사건 생성
-    const newIncident = {
-      id: Date.now(),
-      accidentCode: `TRASH-${String(Date.now()).slice(-4)}`,
-      cctvId: '',
-      time: newRecord.time,
-      status: '대기중',
-      severity: newRecord.severity,
-      handler: '미배정',
-      location: newRecord.location,
-      detectionBasis: '수동 등록',
-      memo: newRecord.memo,
-      trashType: newRecord.trashType,
-      amount: newRecord.amount
-    };
-
-    setActiveTrashIncidents([newIncident, ...activeTrashIncidents]);
+    try {
+      // Backend API 호출
+      const result = await createTrash({
+        detectedAt: new Date(newRecord.time).toISOString(),
+        locationDesc: newRecord.location,
+        severityLevel: newRecord.severity.toUpperCase(),
+        memo: newRecord.memo || undefined,
+        trashType: newRecord.trashType || undefined,
+        amount: newRecord.amount || undefined,
+      });
+      
+      // 등록 성공
+      alert(`신규 쓰레기 사건이 등록되었습니다. (사고코드: ${result.incidentCode})`);
     
-    // 모달 닫고 폼 초기화
+      // 모달 닫기 및 데이터 새로고침
     setShowNewRecordModal(false);
     setNewRecord({
       time: '',
@@ -257,7 +257,26 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
       amount: ''
     });
 
-    alert('신규 쓰레기 투기 사건이 등록되었습니다.');
+      // 목록 새로고침
+      const loadTrashData = async () => {
+        const [active, completed, statsData, hotspotsData] = await Promise.all([
+          getActiveTrashIncidents(),
+          getCompletedTrashIncidents(),
+          getTrashStats(),
+          getTrashHotspots('this_month', 1),
+        ]);
+        const filteredActive = active.filter(t => !completedIncidents.has(t.cctvId));
+        setActiveTrashIncidents(filteredActive);
+        setCompletedTrashIncidents(completed);
+        setStats(statsData);
+        setHotspots(hotspotsData);
+      };
+      loadTrashData();
+      
+    } catch (error) {
+      console.error('❌ [Trash] Failed to create:', error);
+      alert('쓰레기 사건 등록 중 오류가 발생했습니다. 다시 시도해주세요.');
+    }
   };
 
   const handleSearch = (code: string) => {

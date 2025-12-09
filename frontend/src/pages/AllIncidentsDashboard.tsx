@@ -5,6 +5,7 @@ import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
+import { getAllIncidentsStats, getAllIncidentsList, getAllIncidentDetail, createEmergency, createFire, createTrash } from '../services/api';
 
 interface AllIncidentsDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -46,6 +47,46 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
   // 신규 유형 선택 모달
   const [showTypeSelectModal, setShowTypeSelectModal] = useState(false);
   
+  // 각 유형별 신규 등록 모달
+  const [showEmergencyModal, setShowEmergencyModal] = useState(false);
+  const [showFireModal, setShowFireModal] = useState(false);
+  const [showTrashModal, setShowTrashModal] = useState(false);
+  
+  // 응급 신규 등록 상태
+  const [showPatientInfo, setShowPatientInfo] = useState(false);
+  const [showRescueInfo, setShowRescueInfo] = useState(false);
+  const [canSendAlert, setCanSendAlert] = useState(false);
+  const [emergencyRecord, setEmergencyRecord] = useState({
+    time: '',
+    location: '',
+    severity: 'medium',
+    memo: '',
+    patientName: '',
+    patientAge: '',
+    patientGender: '',
+    rescueTeam: '',
+    transferHospital: ''
+  });
+  
+  // 화재 신규 등록 상태
+  const [canSendFireAlert, setCanSendFireAlert] = useState(false);
+  const [fireRecord, setFireRecord] = useState({
+    time: '',
+    location: '',
+    severity: 'medium',
+    memo: ''
+  });
+  
+  // 쓰레기 신규 등록 상태
+  const [trashRecord, setTrashRecord] = useState({
+    time: '',
+    location: '',
+    severity: 'medium',
+    memo: '',
+    trashType: '',
+    amount: ''
+  });
+  
   // 페이지네이션
   const [currentPage, setCurrentPage] = useState(0);
   const pageSize = 10;
@@ -55,28 +96,54 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
     setCurrentPage(0);
   }, [viewMode]);
   
-  // 데이터 상태 관리 (목데이터)
-  const [activeIncidents, setActiveIncidents] = useState<AllIncidentDetail[]>([
-    { id: 1, accidentCode: 'FIRE-001', type: '화재', cctvId: 'CCTV-001', time: '2025-12-07 10:15', status: '진화중', severity: '상', handler: '119', location: '등산로 1', detectionBasis: 'AI 자동 탐지: 연기 및 화염 감지' },
-    { id: 2, accidentCode: 'EMG-001', type: '응급', cctvId: 'CCTV-005', time: '2025-12-07 10:05', status: '대응중', severity: '중', handler: '119', location: '등산로 입구 1', detectionBasis: 'AI 자동 탐지: 쓰러진 사람 감지' },
-    { id: 3, accidentCode: 'TRASH-001', type: '쓰레기', cctvId: 'CCTV-003', time: '2025-12-07 10:12', status: '대기중', severity: '중', handler: '환경 관리 직원', location: '등산로 3', detectionBasis: 'AI 자동 탐지: 쓰레기 투기 행위 감지' },
-    { id: 6, accidentCode: 'FIRE-003', type: '화재', cctvId: '', time: '2025-12-07 09:30', status: '대기중', severity: '중', handler: '산불 관리 직원', location: '등산로 5', detectionBasis: '수동 등록' },
-    { id: 7, accidentCode: 'EMG-003', type: '응급', cctvId: '', time: '2025-12-07 11:20', status: '대기중', severity: '하', handler: '직원 김철수', location: '휴게소 2', detectionBasis: '수동 등록' },
-  ]);
-  
-  const [completedIncidentsList, setCompletedIncidentsList] = useState<AllIncidentDetail[]>([
-    { id: 4, accidentCode: 'FIRE-002', type: '화재', cctvId: 'CCTV-007', time: '2025-12-07 12:00', responseTime: '2025-12-07 12:45', duration: '45분', status: '진화완료', severity: '하', handler: '산불 관리 직원', location: '전망대 1', detectionBasis: 'AI 자동 탐지: 화염 감지' },
-    { id: 5, accidentCode: 'EMG-002', type: '응급', cctvId: 'CCTV-002', time: '2025-12-07 13:30', responseTime: '2025-12-07 13:42', duration: '12분', status: '처리완료', severity: '중', handler: '직원 박영희', location: '등산로 2', detectionBasis: 'AI 자동 탐지: 부상자 감지' },
-    { id: 8, accidentCode: 'TRASH-002', type: '쓰레기', cctvId: '', time: '2025-12-07 08:00', responseTime: '2025-12-07 08:30', duration: '30분', status: '처리완료', severity: '하', handler: '환경 관리 직원', location: '등산로 입구 3', detectionBasis: '수동 등록' },
-  ]);
-  
+  // 데이터 상태 관리
+  const [activeIncidents, setActiveIncidents] = useState<AllIncidentDetail[]>([]);
+  const [completedIncidentsList, setCompletedIncidentsList] = useState<AllIncidentDetail[]>([]);
   const [stats, setStats] = useState({
-    todayCount: 15,
-    pendingCount: 8,
-    avgResponseTime: 18.5,
-    avgResponseTimeFormatted: '18분 30초',
-    hotspotLocation: '휴게소 1'
+    todayCount: 0,
+    pendingCount: 0,
+    avgResponseTime: 0,
+    avgResponseTimeFormatted: '0분',
+    hotspotLocation: '해당 없음'
   });
+
+  // API에서 데이터 로드
+  useEffect(() => {
+    const loadAllIncidentsData = async () => {
+      try {
+        // 상단 통계 로드
+        const statsData = await getAllIncidentsStats();
+        setStats(statsData);
+
+        // 진행중/처리완료 목록 로드
+        const activeData = await getAllIncidentsList('active');
+        const completedData = await getAllIncidentsList('completed');
+        
+        setActiveIncidents(activeData);
+        setCompletedIncidentsList(completedData);
+        
+        console.log('✅ [AllIncidents] All data loaded');
+      } catch (error) {
+        console.error('❌ [AllIncidents] Failed to load data:', error);
+      }
+    };
+
+    loadAllIncidentsData();
+  }, []);  // 최초 로드만
+
+  // viewMode 변경 시에도 데이터 새로고침 (옵션)
+  useEffect(() => {
+    const reloadList = async () => {
+      if (viewMode === 'active') {
+        const activeData = await getAllIncidentsList('active');
+        setActiveIncidents(activeData);
+      } else {
+        const completedData = await getAllIncidentsList('completed');
+        setCompletedIncidentsList(completedData);
+      }
+    };
+    reloadList();
+  }, [viewMode]);
 
   const incidents = viewMode === 'active' ? activeIncidents : completedIncidentsList;
 
@@ -630,7 +697,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
               <button
                 onClick={() => {
                   setShowTypeSelectModal(false);
-                  navigate('/emergency');
+                  setShowEmergencyModal(true);
                 }}
                 className="w-full flex items-center gap-3 px-4 py-3 bg-orange-100 hover:bg-orange-200 transition-colors"
                 style={{ borderRadius: '0px' }}
@@ -641,7 +708,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
               <button
                 onClick={() => {
                   setShowTypeSelectModal(false);
-                  navigate('/fire');
+                  setShowFireModal(true);
                 }}
                 className="w-full flex items-center gap-3 px-4 py-3 bg-red-100 hover:bg-red-200 transition-colors"
                 style={{ borderRadius: '0px' }}
@@ -652,7 +719,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
               <button
                 onClick={() => {
                   setShowTypeSelectModal(false);
-                  navigate('/trash');
+                  setShowTrashModal(true);
                 }}
                 className="w-full flex items-center gap-3 px-4 py-3 bg-green-100 hover:bg-green-200 transition-colors"
                 style={{ borderRadius: '0px' }}
@@ -668,6 +735,580 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
             >
               취소
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* 응급 신규 등록 모달 */}
+      {showEmergencyModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white w-full max-w-2xl shadow-xl" style={{ borderRadius: '0px', maxHeight: '90vh', overflow: 'auto' }}>
+            <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between sticky top-0">
+              <div className="flex items-center gap-2">
+                <Plus className="w-5 h-5 text-white" />
+                <h2 className="text-white font-semibold">신규 응급 사건 등록</h2>
+              </div>
+              <button
+                onClick={() => {
+                  setShowEmergencyModal(false);
+                  setShowPatientInfo(false);
+                  setShowRescueInfo(false);
+                  setCanSendAlert(false);
+                  setEmergencyRecord({
+                    time: '',
+                    location: '',
+                    severity: 'medium',
+                    memo: '',
+                    patientName: '',
+                    patientAge: '',
+                    patientGender: '',
+                    rescueTeam: '',
+                    transferHospital: ''
+                  });
+                }}
+                className="text-white hover:text-gray-200 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-gray-600 mb-6">
+                <span className="text-red-500">*</span> 표시는 필수 입력 항목입니다.
+              </p>
+              <div className="space-y-5">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 발생시간
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={emergencyRecord.time}
+                    onChange={(e) => setEmergencyRecord({...emergencyRecord, time: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">발생 시간을 모르면 현재 시간을 선택하세요</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 발생 위치
+                  </label>
+                  <input
+                    type="text"
+                    value={emergencyRecord.location}
+                    onChange={(e) => setEmergencyRecord({...emergencyRecord, location: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    placeholder="발생 위치를 입력하세요"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 심각도
+                  </label>
+                  <select
+                    value={emergencyRecord.severity}
+                    onChange={(e) => setEmergencyRecord({...emergencyRecord, severity: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                  >
+                    <option value="low">하</option>
+                    <option value="medium">중</option>
+                    <option value="high">상</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">메모</label>
+                  <textarea
+                    value={emergencyRecord.memo}
+                    onChange={(e) => setEmergencyRecord({...emergencyRecord, memo: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    rows={3}
+                    placeholder="메모를 입력하세요 (선택사항)"
+                  />
+                </div>
+                <div className="border border-gray-200">
+                  <button
+                    type="button"
+                    onClick={() => setShowPatientInfo(!showPatientInfo)}
+                    className="w-full px-4 py-3 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors"
+                  >
+                    <span className="text-sm font-medium text-gray-700">환자 정보</span>
+                    <ChevronDown className={`w-4 h-4 transition-transform ${showPatientInfo ? 'rotate-180' : ''}`} />
+                  </button>
+                  {showPatientInfo && (
+                    <div className="p-4 space-y-4 bg-gray-50">
+                      <div>
+                        <label className="block text-sm text-gray-700 mb-2">환자 이름</label>
+                        <input
+                          type="text"
+                          value={emergencyRecord.patientName}
+                          onChange={(e) => setEmergencyRecord({...emergencyRecord, patientName: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          style={{ borderRadius: '0px' }}
+                          placeholder="환자 이름"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-700 mb-2">환자 나이</label>
+                        <input
+                          type="number"
+                          value={emergencyRecord.patientAge}
+                          onChange={(e) => setEmergencyRecord({...emergencyRecord, patientAge: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          style={{ borderRadius: '0px' }}
+                          placeholder="환자 나이"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-700 mb-2">환자 성별</label>
+                        <select
+                          value={emergencyRecord.patientGender}
+                          onChange={(e) => setEmergencyRecord({...emergencyRecord, patientGender: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          style={{ borderRadius: '0px' }}
+                        >
+                          <option value="">선택하세요</option>
+                          <option value="남성">남성</option>
+                          <option value="여성">여성</option>
+                          <option value="미상">미상</option>
+                        </select>
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="border border-gray-200">
+                  <button
+                    type="button"
+                    onClick={() => setShowRescueInfo(!showRescueInfo)}
+                    className="w-full px-4 py-3 bg-gray-50 flex items-center justify-between hover:bg-gray-100 transition-colors"
+                  >
+                    <span className="text-sm font-medium text-gray-700">투입 구조팀 및 이송 병원</span>
+                    <ChevronDown className={`w-4 h-4 transition-transform ${showRescueInfo ? 'rotate-180' : ''}`} />
+                  </button>
+                  {showRescueInfo && (
+                    <div className="p-4 space-y-4 bg-gray-50">
+                      <div>
+                        <label className="block text-sm text-gray-700 mb-2">투입 구조팀</label>
+                        <input
+                          type="text"
+                          value={emergencyRecord.rescueTeam}
+                          onChange={(e) => setEmergencyRecord({...emergencyRecord, rescueTeam: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          style={{ borderRadius: '0px' }}
+                          placeholder="투입 구조팀"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-700 mb-2">이송 병원 또는 인계 기관</label>
+                        <input
+                          type="text"
+                          value={emergencyRecord.transferHospital}
+                          onChange={(e) => setEmergencyRecord({...emergencyRecord, transferHospital: e.target.value})}
+                          className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                          style={{ borderRadius: '0px' }}
+                          placeholder="이송 병원 또는 인계 기관"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4 mt-6">
+                <button
+                  onClick={async () => {
+                    if (!emergencyRecord.time || !emergencyRecord.location) {
+                      alert('필수 항목(발생시간, 발생위치)을 입력해주세요.');
+                      return;
+                    }
+                    try {
+                      const result = await createEmergency({
+                        detectedAt: new Date(emergencyRecord.time).toISOString(),
+                        locationDesc: emergencyRecord.location,
+                        severityLevel: emergencyRecord.severity.toUpperCase(),
+                        memo: emergencyRecord.memo || undefined,
+                        patientName: emergencyRecord.patientName || undefined,
+                        patientAge: emergencyRecord.patientAge || undefined,
+                        patientGender: emergencyRecord.patientGender || undefined,
+                        responseTeam: emergencyRecord.rescueTeam || undefined,
+                        transferDest: emergencyRecord.transferHospital || undefined,
+                      });
+                      alert(`신규 응급 사건이 등록되었습니다. (사고코드: ${result.incidentCode})`);
+                      setCanSendAlert(true);
+                      setShowEmergencyModal(false);
+                      setShowPatientInfo(false);
+                      setShowRescueInfo(false);
+                      setEmergencyRecord({
+                        time: '',
+                        location: '',
+                        severity: 'medium',
+                        memo: '',
+                        patientName: '',
+                        patientAge: '',
+                        patientGender: '',
+                        rescueTeam: '',
+                        transferHospital: ''
+                      });
+                      // 목록 새로고침
+                      const [activeData, statsData] = await Promise.all([
+                        getAllIncidentsList('active'),
+                        getAllIncidentsStats()
+                      ]);
+                      setActiveIncidents(activeData);
+                      setStats(statsData);
+                    } catch (error: any) {
+                      console.error('❌ [Emergency] Failed to create:', error);
+                      const errorMsg = error?.message || '응급 사건 등록 중 오류가 발생했습니다.';
+                      alert(`오류: ${errorMsg}\n\n디버그: time="${emergencyRecord.time}", location="${emergencyRecord.location}", severity="${emergencyRecord.severity}"`);
+                    }
+                  }}
+                  className="px-6 py-4 bg-emerald-600 text-white text-lg font-semibold hover:bg-emerald-700 transition-colors"
+                  style={{ borderRadius: '0px' }}
+                >
+                  등록
+                </button>
+                <button
+                  onClick={() => {
+                    if (canSendAlert) {
+                      alert('119 및 담당 직원에게 문자 신고가 발송되었습니다.');
+                      setShowEmergencyModal(false);
+                      setShowPatientInfo(false);
+                      setShowRescueInfo(false);
+                      setCanSendAlert(false);
+                      setEmergencyRecord({
+                        time: '',
+                        location: '',
+                        severity: 'medium',
+                        memo: '',
+                        patientName: '',
+                        patientAge: '',
+                        patientGender: '',
+                        rescueTeam: '',
+                        transferHospital: ''
+                      });
+                    }
+                  }}
+                  disabled={!canSendAlert}
+                  className={`px-6 py-4 text-white text-lg font-semibold transition-colors ${
+                    canSendAlert 
+                      ? 'bg-red-600 hover:bg-red-700 cursor-pointer' 
+                      : 'bg-gray-400 cursor-not-allowed'
+                  }`}
+                  style={{ borderRadius: '0px' }}
+                >
+                  문자 신고
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 화재 신규 등록 모달 */}
+      {showFireModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white w-full max-w-2xl shadow-xl" style={{ borderRadius: '0px', maxHeight: '90vh', overflow: 'auto' }}>
+            <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between sticky top-0">
+              <div className="flex items-center gap-2">
+                <Plus className="w-5 h-5 text-white" />
+                <h2 className="text-white font-semibold">신규 화재 사건 등록</h2>
+              </div>
+              <button
+                onClick={() => {
+                  setShowFireModal(false);
+                  setCanSendFireAlert(false);
+                  setFireRecord({
+                    time: '',
+                    location: '',
+                    severity: 'medium',
+                    memo: ''
+                  });
+                }}
+                className="text-white hover:text-gray-200 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-gray-600 mb-6">
+                <span className="text-red-500">*</span> 표시는 필수 입력 항목입니다.
+              </p>
+              <div className="space-y-5">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 발생시간
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={fireRecord.time}
+                    onChange={(e) => setFireRecord({...fireRecord, time: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">발생 시간을 모르면 현재 시간을 선택하세요</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 발생 위치
+                  </label>
+                  <input
+                    type="text"
+                    value={fireRecord.location}
+                    onChange={(e) => setFireRecord({...fireRecord, location: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    placeholder="발생 위치를 입력하세요"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 심각도
+                  </label>
+                  <select
+                    value={fireRecord.severity}
+                    onChange={(e) => setFireRecord({...fireRecord, severity: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                  >
+                    <option value="low">하</option>
+                    <option value="medium">중</option>
+                    <option value="high">상</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">메모</label>
+                  <textarea
+                    value={fireRecord.memo}
+                    onChange={(e) => setFireRecord({...fireRecord, memo: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    rows={3}
+                    placeholder="메모를 입력하세요 (선택사항)"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4 mt-6">
+                <button
+                  onClick={async () => {
+                    if (!fireRecord.time || !fireRecord.location) {
+                      alert('필수 항목(발생시간, 발생위치)을 입력해주세요.');
+                      return;
+                    }
+                    try {
+                      const result = await createFire({
+                        detectedAt: new Date(fireRecord.time).toISOString(),
+                        locationDesc: fireRecord.location,
+                        severityLevel: fireRecord.severity.toUpperCase(),
+                        memo: fireRecord.memo || undefined,
+                      });
+                      alert(`신규 화재 사건이 등록되었습니다. (사고코드: ${result.incidentCode})`);
+                      setCanSendFireAlert(true);
+                      setShowFireModal(false);
+                      setFireRecord({
+                        time: '',
+                        location: '',
+                        severity: 'medium',
+                        memo: ''
+                      });
+                      // 목록 새로고침
+                      const [activeData, statsData] = await Promise.all([
+                        getAllIncidentsList('active'),
+                        getAllIncidentsStats()
+                      ]);
+                      setActiveIncidents(activeData);
+                      setStats(statsData);
+                    } catch (error) {
+                      console.error('❌ [Fire] Failed to create:', error);
+                      alert('화재 사건 등록 중 오류가 발생했습니다. 다시 시도해주세요.');
+                    }
+                  }}
+                  className="px-6 py-4 bg-emerald-600 text-white text-lg font-semibold hover:bg-emerald-700 transition-colors"
+                  style={{ borderRadius: '0px' }}
+                >
+                  등록
+                </button>
+                <button
+                  onClick={() => {
+                    if (canSendFireAlert) {
+                      alert('119 및 담당 직원에게 문자 신고가 발송되었습니다.');
+                      setShowFireModal(false);
+                      setCanSendFireAlert(false);
+                      setFireRecord({
+                        time: '',
+                        location: '',
+                        severity: 'medium',
+                        memo: ''
+                      });
+                    }
+                  }}
+                  disabled={!canSendFireAlert}
+                  className={`px-6 py-4 text-white text-lg font-semibold transition-colors ${
+                    canSendFireAlert 
+                      ? 'bg-red-600 hover:bg-red-700 cursor-pointer' 
+                      : 'bg-gray-400 cursor-not-allowed'
+                  }`}
+                  style={{ borderRadius: '0px' }}
+                >
+                  문자 신고
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 쓰레기 신규 등록 모달 */}
+      {showTrashModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white w-full max-w-2xl shadow-xl" style={{ borderRadius: '0px', maxHeight: '90vh', overflow: 'auto' }}>
+            <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between sticky top-0">
+              <div className="flex items-center gap-2">
+                <Plus className="w-5 h-5 text-white" />
+                <h2 className="text-white font-semibold">신규 쓰레기 투기 등록</h2>
+              </div>
+              <button
+                onClick={() => {
+                  setShowTrashModal(false);
+                  setTrashRecord({
+                    time: '',
+                    location: '',
+                    severity: 'medium',
+                    memo: '',
+                    trashType: '',
+                    amount: ''
+                  });
+                }}
+                className="text-white hover:text-gray-200 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-gray-600 mb-6">
+                <span className="text-red-500">*</span> 표시는 필수 입력 항목입니다.
+              </p>
+              <div className="space-y-5">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 발생시간
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={trashRecord.time}
+                    onChange={(e) => setTrashRecord({...trashRecord, time: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">발생 시간을 모르면 현재 시간을 선택하세요</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 발생 위치
+                  </label>
+                  <input
+                    type="text"
+                    value={trashRecord.location}
+                    onChange={(e) => setTrashRecord({...trashRecord, location: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    placeholder="발생 위치를 입력하세요"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 심각도
+                  </label>
+                  <select
+                    value={trashRecord.severity}
+                    onChange={(e) => setTrashRecord({...trashRecord, severity: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                  >
+                    <option value="low">하</option>
+                    <option value="medium">중</option>
+                    <option value="high">상</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">쓰레기 종류</label>
+                  <input
+                    type="text"
+                    value={trashRecord.trashType}
+                    onChange={(e) => setTrashRecord({...trashRecord, trashType: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    placeholder="예: 일반쓰레기, 플라스틱, 음식물 등"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">양</label>
+                  <input
+                    type="text"
+                    value={trashRecord.amount}
+                    onChange={(e) => setTrashRecord({...trashRecord, amount: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    placeholder="예: 소량, 중량, 대량"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">메모</label>
+                  <textarea
+                    value={trashRecord.memo}
+                    onChange={(e) => setTrashRecord({...trashRecord, memo: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    rows={3}
+                    placeholder="메모를 입력하세요 (선택사항)"
+                  />
+                </div>
+              </div>
+              <div className="mt-6">
+                <button
+                  onClick={async () => {
+                    if (!trashRecord.time || !trashRecord.location) {
+                      alert('필수 항목(발생시간, 발생위치)을 입력해주세요.');
+                      return;
+                    }
+                    try {
+                      const result = await createTrash({
+                        detectedAt: new Date(trashRecord.time).toISOString(),
+                        locationDesc: trashRecord.location,
+                        severityLevel: trashRecord.severity.toUpperCase(),
+                        memo: trashRecord.memo || undefined,
+                        trashType: trashRecord.trashType || undefined,
+                        amount: trashRecord.amount || undefined,
+                      });
+                      alert(`신규 쓰레기 투기 사건이 등록되었습니다. (사고코드: ${result.incidentCode})`);
+                      setShowTrashModal(false);
+                      setTrashRecord({
+                        time: '',
+                        location: '',
+                        severity: 'medium',
+                        memo: '',
+                        trashType: '',
+                        amount: ''
+                      });
+                      // 목록 새로고침
+                      const [activeData, statsData] = await Promise.all([
+                        getAllIncidentsList('active'),
+                        getAllIncidentsStats()
+                      ]);
+                      setActiveIncidents(activeData);
+                      setStats(statsData);
+                    } catch (error) {
+                      console.error('❌ [Trash] Failed to create:', error);
+                      alert('쓰레기 투기 사건 등록 중 오류가 발생했습니다. 다시 시도해주세요.');
+                    }
+                  }}
+                  className="w-full px-6 py-4 bg-emerald-600 text-white text-lg font-semibold hover:bg-emerald-700 transition-colors"
+                  style={{ borderRadius: '0px' }}
+                >
+                  등록
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

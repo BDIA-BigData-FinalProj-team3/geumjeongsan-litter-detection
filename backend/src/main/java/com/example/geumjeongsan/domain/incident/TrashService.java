@@ -1,5 +1,8 @@
 package com.example.geumjeongsan.domain.incident;
 
+import com.example.geumjeongsan.api.dto.IncidentCreateResponse;
+import com.example.geumjeongsan.api.dto.TrashCreateRequest;
+import com.example.geumjeongsan.api.dto.TrashUpdateRequest;
 import com.example.geumjeongsan.api.dto.TrashDashboardResponse;
 import com.example.geumjeongsan.api.dto.TrashIncidentItem;
 import com.example.geumjeongsan.api.dto.TrashStatsDto;
@@ -7,6 +10,7 @@ import com.example.geumjeongsan.api.dto.HotspotDto;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -22,6 +26,8 @@ public class TrashService {
     private final TrashDetailRepository trashDetailRepository;
     private final IncidentSummaryRepository incidentSummaryRepository;
     private final TrashHotspotCctvRepository trashHotspotCctvRepository;
+    private final IncidentActionRepository incidentActionRepository;
+    private final IncidentManualRepository incidentManualRepository;
     private final EntityManager entityManager;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
@@ -29,11 +35,15 @@ public class TrashService {
                        TrashDetailRepository trashDetailRepository,
                        IncidentSummaryRepository incidentSummaryRepository,
                        TrashHotspotCctvRepository trashHotspotCctvRepository,
+                       IncidentActionRepository incidentActionRepository,
+                       IncidentManualRepository incidentManualRepository,
                        EntityManager entityManager) {
         this.incidentRepository = incidentRepository;
         this.trashDetailRepository = trashDetailRepository;
         this.incidentSummaryRepository = incidentSummaryRepository;
         this.trashHotspotCctvRepository = trashHotspotCctvRepository;
+        this.incidentActionRepository = incidentActionRepository;
+        this.incidentManualRepository = incidentManualRepository;
         this.entityManager = entityManager;
     }
 
@@ -159,6 +169,94 @@ public class TrashService {
                 .duration(duration)
                 .build();
     }
+    
+    // 쓰레기 사건 전체 정보 수정
+    @Transactional
+    public TrashIncidentItem updateTrash(Long trashId, TrashUpdateRequest request) {
+        Incident incident = incidentRepository.findById(trashId)
+                .orElseThrow(() -> new RuntimeException("쓰레기 사건을 찾을 수 없습니다: " + trashId));
+        
+        if (!"TRASH".equals(incident.getIncidentType())) {
+            throw new RuntimeException("쓰레기 사건이 아닙니다: " + trashId);
+        }
+        
+        // 이전 상태 저장 (incident_action 로그용)
+        String prevStatus = incident.getStatus();
+        
+        // Incident 업데이트
+        if (request.getDetectedAt() != null) {
+            incident.setDetectedAt(request.getDetectedAt());
+        }
+        if (request.getLocationDesc() != null) {
+            incident.setLocationDesc(request.getLocationDesc());
+        }
+        if (request.getSeverityLevel() != null) {
+            incident.setSeverityLevel(request.getSeverityLevel().toUpperCase());
+        }
+        if (request.getStatus() != null) {
+            String newStatus = switch (request.getStatus()) {
+                case "처리완료", "RESOLVED" -> "RESOLVED";
+                case "대응중", "IN_PROGRESS" -> "IN_PROGRESS";
+                default -> "PENDING";
+            };
+            incident.setStatus(newStatus);
+        }
+        if (request.getHandlerName() != null) {
+            incident.setHandlerName(request.getHandlerName());
+        }
+        
+        // 시간 업데이트
+        OffsetDateTime now = OffsetDateTime.now();
+        if ("IN_PROGRESS".equals(incident.getStatus()) && incident.getAcknowledgedAt() == null) {
+            incident.setAcknowledgedAt(now);
+        }
+        if ("RESOLVED".equals(incident.getStatus())) {
+            if (incident.getAcknowledgedAt() == null) {
+                incident.setAcknowledgedAt(now);
+            }
+            if (incident.getResolvedAt() == null) {
+                incident.setResolvedAt(now);
+            }
+        }
+        
+        incident.setUpdatedAt(now);
+        Incident saved = incidentRepository.save(incident);
+        
+        // TrashDetail 업데이트
+        TrashDetail detail = trashDetailRepository.findByIncidentId(trashId).orElse(null);
+        if (detail == null) {
+            detail = new TrashDetail();
+            detail.setIncidentId(trashId);
+            detail.setCreatedAt(now);
+        }
+        
+        if (request.getMainCategory() != null) {
+            detail.setMainCategory(request.getMainCategory());
+        }
+        if (request.getObjectAmount() != null) {
+            detail.setObjectAmount(request.getObjectAmount());
+        }
+        if (request.getNote() != null) {
+            detail.setNote(request.getNote());
+        }
+        
+        trashDetailRepository.save(detail);
+        
+        // IncidentAction 로그 저장 (상태 변경 시)
+        if (!prevStatus.equals(incident.getStatus())) {
+            IncidentAction action = new IncidentAction();
+            action.setIncidentId(saved.getId());
+            action.setActionType("STATUS_CHANGED");
+            action.setPrevStatus(prevStatus);
+            action.setNextStatus(incident.getStatus());
+            action.setActorId(request.getUpdatedById());
+            action.setMemo("쓰레기 사건 수정: " + prevStatus + " → " + incident.getStatus());
+            action.setCreatedAt(now);
+            incidentActionRepository.save(action);
+        }
+        
+        return toTrashIncidentItem(saved);
+    }
 
     // 쓰레기 사건 상태 업데이트
     @org.springframework.transaction.annotation.Transactional
@@ -169,6 +267,9 @@ public class TrashService {
         if (!"TRASH".equals(incident.getIncidentType())) {
             throw new RuntimeException("쓰레기 사건이 아닙니다: " + trashId);
         }
+        
+        // 이전 상태 저장 (incident_action 로그용)
+        String prevStatus = incident.getStatus();
         
         // 상태 업데이트
         String newStatus = switch (status) {
@@ -196,6 +297,19 @@ public class TrashService {
         }
         
         incidentRepository.save(incident);
+        
+        // IncidentAction 로그 저장 (상태 변경)
+        if (!prevStatus.equals(newStatus)) {
+            IncidentAction action = new IncidentAction();
+            action.setIncidentId(incident.getId());
+            action.setActionType("STATUS_CHANGED");
+            action.setPrevStatus(prevStatus);
+            action.setNextStatus(newStatus);
+            action.setActorId(null); // TODO: 실제 사용자 ID 연동
+            action.setMemo("상태 변경: " + prevStatus + " → " + newStatus);
+            action.setCreatedAt(OffsetDateTime.now());
+            incidentActionRepository.save(action);
+        }
     }
 
     // ===== 신규 메서드: Dashboard KPI용 =====
@@ -270,13 +384,91 @@ public class TrashService {
                 .addressDescription(entity.getCctvAddressDescription())
                 .incidentCount(count)
                 .avgSeverityScore(entity.getAvgSeverityScore())
-                .maxSeverityScore(entity.getMaxSeverityScore())
+                .maxSeverityScore(entity.getMaxSeverityScore() != null ? entity.getMaxSeverityScore().doubleValue() : null)
                 .firstIncidentAt(entity.getFirstTrashAt() != null ? entity.getFirstTrashAt().toString() : null)
                 .lastIncidentAt(entity.getLastTrashAt() != null ? entity.getLastTrashAt().toString() : null)
-                .latitude(entity.getLatitude())
-                .longitude(entity.getLongitude())
-                .geomWkt(entity.getGeomWkt())
+                .latitude(null)
+                .longitude(null)
+                .geomWkt(entity.getGeom() != null ? entity.getGeom().toText() : null)
                 .build();
+    }
+    
+    /**
+     * 신규 쓰레기 사건 등록 (수동 등록)
+     */
+    @Transactional
+    public IncidentCreateResponse createTrash(TrashCreateRequest request) {
+        // 필수 필드 검증
+        if (request.getDetectedAt() == null) {
+            throw new IllegalArgumentException("발생시간은 필수입니다.");
+        }
+        if (request.getLocationDesc() == null || request.getLocationDesc().trim().isEmpty()) {
+            throw new IllegalArgumentException("발생 위치는 필수입니다.");
+        }
+        if (request.getSeverityLevel() == null || request.getSeverityLevel().trim().isEmpty()) {
+            throw new IllegalArgumentException("심각도는 필수입니다.");
+        }
+        
+        // 1. Incident 생성
+        Incident incident = new Incident();
+        incident.setIncidentType("TRASH");
+        incident.setSourceType("MANUAL");
+        incident.setSeverityLevel(request.getSeverityLevel().toUpperCase());
+        incident.setStatus("PENDING");
+        incident.setDetectedAt(request.getDetectedAt());
+        incident.setLocationDesc(request.getLocationDesc());
+        incident.setMemo(request.getMemo());
+        incident.setCctvId(null);
+        incident.setCreatedAt(OffsetDateTime.now());
+        incident.setUpdatedAt(OffsetDateTime.now());
+        
+        // Incident 저장
+        incident = incidentRepository.save(incident);
+        
+        // 2. 사고 코드 생성 (T-YYMMDD-XXX)
+        String incidentCode = String.format("T-%s-%03d", 
+            incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd")), 
+            incident.getId() % 1000);
+        
+        // 사고 코드를 Incident에 저장
+        incident.setIncidentCode(incidentCode);
+        incident = incidentRepository.save(incident);
+        
+        // 3. TrashDetail 생성
+        TrashDetail detail = new TrashDetail();
+        detail.setIncidentId(incident.getId());
+        detail.setMainCategory(request.getTrashType());
+        detail.setObjectAmount(request.getAmount());
+        detail.setNote(request.getMemo());
+        detail.setCreatedAt(OffsetDateTime.now());
+        
+        trashDetailRepository.save(detail);
+        
+        // IncidentAction 로그 저장 (CREATED)
+        IncidentAction action = new IncidentAction();
+        action.setIncidentId(incident.getId());
+        action.setActionType("CREATED");
+        action.setPrevStatus(null);
+        action.setNextStatus("PENDING");
+        action.setActorId(request.getCreatedById());  // ✅ 등록자 저장
+        action.setAcknowledgedAt(null);
+        action.setResolvedAt(null);
+        action.setMemo("신규 쓰레기 사건 등록");
+        action.setCreatedAt(OffsetDateTime.now());
+        incidentActionRepository.save(action);
+        
+        // 수동 등록인 경우 IncidentManual 저장
+        if ("MANUAL".equals(incident.getSourceType())) {
+            IncidentManual manual = new IncidentManual();
+            manual.setIncidentId(incident.getId());
+            manual.setManualDescription(request.getMemo() != null ? request.getMemo() : "");
+            manual.setManualLocation(request.getLocationDesc());
+            manual.setCreatedById(null); // TODO: 실제 사용자 ID 연동
+            manual.setCreatedAt(OffsetDateTime.now());
+            incidentManualRepository.save(manual);
+        }
+        
+        return IncidentCreateResponse.success(incident.getId(), incidentCode);
     }
 }
 

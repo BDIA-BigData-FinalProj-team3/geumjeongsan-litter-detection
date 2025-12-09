@@ -17,18 +17,30 @@ public class IncidentAction {
     @Column(name = "action_id")
     private Long id;
 
+    @Column(name = "incident_id", nullable = false)
+    private Long incidentId;
+
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "incident_id", nullable = false)
+    @JoinColumn(name = "incident_id", insertable = false, updatable = false)
     private Incident incident;
 
-    @Column(name = "action_type", length = 20, nullable = false)
-    private String actionType; // CREATED / ACK / RESOLVED / MEMO_ADD ...
+    @Column(name = "action_type", length = 30)
+    private String actionType; // CREATED / ACK / RESOLVED / STATUS_CHANGED / MEMO_ADD ...
+
+    @Column(name = "prev_status", length = 20)
+    private String prevStatus;
+
+    @Column(name = "next_status", length = 20)
+    private String nextStatus;
+
+    @Column(name = "acknowledged_at")
+    private OffsetDateTime acknowledgedAt;
+
+    @Column(name = "resolved_at")
+    private OffsetDateTime resolvedAt;
 
     @Column(name = "actor_id")
     private Long actorId;
-
-    @Column(name = "actor_name", length = 100)
-    private String actorName;
 
     @Column(name = "memo", columnDefinition = "text")
     private String memo;

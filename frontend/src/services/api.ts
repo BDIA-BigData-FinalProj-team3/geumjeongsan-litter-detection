@@ -163,6 +163,80 @@ export const getActiveIncidents = async () => {
 };
 
 /**
+ * Get incident markers (CCTV-grouped incidents for MainMap)
+ * VIEW: view_mainmap_incident_markers
+ * 
+ * Returns CCTV markers with incident counts already grouped by type
+ * - Eliminates need for frontend grouping logic
+ * - Directly usable for map marker rendering
+ * 
+ * @returns Array of incident markers with CCTV location and incident counts
+ */
+export const getIncidentMarkers = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/mainmap/incident-markers`);
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ [MainMap] Loaded Incident Markers from VIEW:', data.length);
+      return data;
+    }
+  } catch (error) {
+    console.warn('⚠️ [MainMap] Failed to fetch incident markers:', error);
+  }
+  return [];
+};
+
+/**
+ * Get CCTV status (for MainMap real-time CCTV tab)
+ * VIEW: view_mainmap_cctv_status
+ * 
+ * Returns CCTV markers with status information
+ * - Power status (ON/OFF)
+ * - Health status (NORMAL/NEED_CHECK/OFFLINE)
+ * - Display status (OFF/NEED_CHECK/ON) - calculated priority
+ * - Last incident information
+ * 
+ * @returns Array of CCTV status with location and state
+ */
+export const getCCTVStatus = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/mainmap/cctv-status`);
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ [MainMap] Loaded CCTV Status from VIEW:', data.length);
+      return data;
+    }
+  } catch (error) {
+    console.warn('⚠️ [MainMap] Failed to fetch CCTV status:', error);
+  }
+  return [];
+};
+
+/**
+ * Get latest weather for MainMap
+ * 
+ * Returns latest weather information for Geumjeongsan
+ * - Temperature, humidity
+ * - Wind direction, wind speed
+ * - Weather condition (CLEAR/CLOUDY/RAIN/SNOW)
+ * 
+ * @returns Weather object or null
+ */
+export const getMainMapWeather = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/mainmap/weather`);
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ [MainMap] Loaded Weather:', data?.temperature + '°C');
+      return data;
+    }
+  } catch (error) {
+    console.warn('⚠️ [MainMap] Failed to fetch weather:', error);
+  }
+  return null;
+};
+
+/**
  * Get all CCTV markers with location and status (for map display)
  * This converts backend CCTVResponse to map-compatible format
  * 
@@ -300,36 +374,17 @@ export const getHelicopterLocations = async () => {
  * - Include today's incident counts by type
  */
 export const getDailyStats = async () => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/dashboard/daily-stats').then(res => res.json());
-  
-  // Ensure CCTV list is loaded first
-  await getCCTVList();
-  
-  // Calculate from current data
-  const summary = cctvSummary();
-  const incidents = incidentsSummary();
-  
-  const stats = [
-    { 
-      label: '현재 총 가동 cctv', 
-      value: `${summary.on}/${summary.total}` 
-    },
-    { 
-      label: '화재 사고', 
-      value: `${incidents.fire}건` 
-    },
-    { 
-      label: '응급 사고', 
-      value: `${incidents.emergency}건` 
-    },
-    { 
-      label: '쓰레기 사건', 
-      value: `${incidents.trash}건` 
-    },
-  ];
-  
-  return Promise.resolve(stats);
+  try {
+    const response = await fetch(`${API_BASE_URL}/dashboard/daily-stats`);
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ [Dashboard] Loaded daily stats:', data);
+      return data;
+    }
+  } catch (error) {
+    console.error('❌ [Dashboard] Failed to fetch daily stats:', error);
+  }
+  return null;
 };
 
 /**
@@ -375,93 +430,128 @@ export const getAllMonthlyData = async () => {
  * ]
  */
 export const getAvgResponseTime = async () => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/dashboard/avg-response-time').then(res => res.json());
-  return Promise.resolve(mockAvgResponseTime);
+  try {
+    const response = await fetch(`${API_BASE_URL}/dashboard/avg-response-time`);
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ [Dashboard] Loaded avg response time:', data);
+      return data; // Backend에서 UI 형식으로 변환해서 반환
+    }
+  } catch (error) {
+    console.error('❌ [Dashboard] Failed to fetch avg response time:', error);
+  }
+  
+  // 에러 시 기본값 반환
+  return [
+    { type: '응급', time: 0, change: 0, isIncrease: false },
+    { type: '화재', time: 0, change: 0, isIncrease: false },
+    { type: '쓰레기', time: 0, change: 0, isIncrease: false }
+  ];
 };
 
 // ==================== EmergencyDashboard API ====================
 /**
  * Get active emergency incidents
- * 
- * Backend integration:
- * - Fetch from /api/emergencies?status=active
- * - Filter by status: '대기중', '대응중'
- * - Include real-time detection data from CCTV AI
  */
 export const getActiveEmergencies = async (): Promise<EmergencyItem[]> => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/emergencies?status=active').then(res => res.json());
-  return Promise.resolve(mockInitialActiveEmergencies);
+  try {
+    const response = await fetch(`${API_BASE_URL}/emergency/active`);
+    if (response.ok) {
+      return await response.json();
+    }
+    console.error('Failed to fetch active emergencies:', response.status);
+    return [];
+  } catch (error) {
+    console.error('Error fetching active emergencies:', error);
+    return [];
+  }
 };
 
 /**
  * Get completed emergency incidents
- * 
- * Backend integration:
- * - Fetch from /api/emergencies?status=completed
- * - Include response time and duration
  */
 export const getCompletedEmergencies = async (): Promise<EmergencyItem[]> => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/emergencies?status=completed').then(res => res.json());
-  return Promise.resolve(mockCompletedEmergencies);
+  try {
+    const response = await fetch(`${API_BASE_URL}/emergency/completed`);
+    if (response.ok) {
+      return await response.json();
+    }
+    console.error('Failed to fetch completed emergencies:', response.status);
+    return [];
+  } catch (error) {
+    console.error('Error fetching completed emergencies:', error);
+    return [];
+  }
 };
 
 // ==================== FireDashboard API ====================
 /**
  * Get active fire incidents
- * 
- * Backend integration:
- * - Fetch from /api/fires?status=active
- * - Include wind speed, severity
- * - AI detection: smoke and flame detection confidence
  */
 export const getActiveFires = async (): Promise<FireItem[]> => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/fires?status=active').then(res => res.json());
-  return Promise.resolve(mockInitialActiveFires);
+  try {
+    const response = await fetch(`${API_BASE_URL}/fire/active`);
+    if (response.ok) {
+      return await response.json();
+    }
+    console.error('Failed to fetch active fires:', response.status);
+    return [];
+  } catch (error) {
+    console.error('Error fetching active fires:', error);
+    return [];
+  }
 };
 
 /**
  * Get completed fire incidents
- * 
- * Backend integration:
- * - Fetch from /api/fires?status=completed
- * - Include extinguishment time and duration
  */
 export const getCompletedFires = async (): Promise<FireItem[]> => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/fires?status=completed').then(res => res.json());
-  return Promise.resolve(mockCompletedFires);
+  try {
+    const response = await fetch(`${API_BASE_URL}/fire/completed`);
+    if (response.ok) {
+      return await response.json();
+    }
+    console.error('Failed to fetch completed fires:', response.status);
+    return [];
+  } catch (error) {
+    console.error('Error fetching completed fires:', error);
+    return [];
+  }
 };
 
 // ==================== TrashDashboard API ====================
 /**
  * Get active trash dumping incidents
- * 
- * Backend integration:
- * - Fetch from /api/trash?status=active
- * - Include trash type classification (일반쓰레기, 플라스틱, 음식물, 대형쓰레기)
- * - AI detection confidence scores
  */
 export const getActiveTrashIncidents = async (): Promise<TrashItem[]> => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/trash?status=active').then(res => res.json());
-  return Promise.resolve(mockInitialActiveTrashIncidents);
+  try {
+    const response = await fetch(`${API_BASE_URL}/trash/active`);
+    if (response.ok) {
+      return await response.json();
+    }
+    console.error('Failed to fetch active trash incidents:', response.status);
+    return [];
+  } catch (error) {
+    console.error('Error fetching active trash incidents:', error);
+    return [];
+  }
 };
 
 /**
  * Get completed trash incidents
- * 
- * Backend integration:
- * - Fetch from /api/trash?status=completed
- * - Include cleanup completion time
  */
 export const getCompletedTrashIncidents = async (): Promise<TrashItem[]> => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/trash?status=completed').then(res => res.json());
-  return Promise.resolve(mockCompletedTrashIncidents);
+  try {
+    const response = await fetch(`${API_BASE_URL}/trash/completed`);
+    if (response.ok) {
+      return await response.json();
+    }
+    console.error('Failed to fetch completed trash incidents:', response.status);
+    return [];
+  } catch (error) {
+    console.error('Error fetching completed trash incidents:', error);
+    return [];
+  }
 };
 
 // ==================== RockfallDashboard API ====================
@@ -638,7 +728,7 @@ export interface EmergencyStatsResponse {
 
 export const getEmergencyStats = async (): Promise<EmergencyStatsResponse> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/emergency-dashboard/stats`);
+    const response = await fetch(`${API_BASE_URL}/emergency/stats`);
     if (!response.ok) {
       throw new Error(`Failed to fetch emergency stats: ${response.status}`);
     }
@@ -656,31 +746,20 @@ export const getEmergencyStats = async (): Promise<EmergencyStatsResponse> => {
 };
 
 /**
- * 응급 사고다발구간 조회 (실제 백엔드 API)
- * GET /api/emergency-dashboard/hotspots?period=this_month&minCount=3
+ * 사고다발구간 조회 (간단한 형식)
  */
 export interface HotspotResponse {
-  cctvId: number;
-  cctvCode: string;
-  address: string;
-  addressDescription: string;
-  incidentCount: number;
-  avgSeverityScore: number;
-  maxSeverityScore: number;
-  firstIncidentAt: string | null;
-  lastIncidentAt: string | null;
-  latitude: number;
-  longitude: number;
-  geomWkt: string | null;
+  location: string;
+  count: number;
 }
 
 export const getEmergencyHotspots = async (
   period: 'this_month' | '30d' | '7d' | 'all' = 'this_month',
-  minCount: number = 3
+  limit: number = 1
 ): Promise<HotspotResponse[]> => {
   try {
     const response = await fetch(
-      `${API_BASE_URL}/emergency-dashboard/hotspots?period=${period}&minCount=${minCount}`
+      `${API_BASE_URL}/emergency/hotspots?period=${period}&limit=${limit}`
     );
     if (!response.ok) {
       throw new Error(`Failed to fetch emergency hotspots: ${response.status}`);
@@ -688,7 +767,6 @@ export const getEmergencyHotspots = async (
     return await response.json();
   } catch (error) {
     console.error('Error fetching emergency hotspots:', error);
-    // Fallback to empty array
     return [];
   }
 };
@@ -706,7 +784,7 @@ export interface FireStatsResponse {
 
 export const getFireStats = async (): Promise<FireStatsResponse> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/fire-dashboard/stats`);
+    const response = await fetch(`${API_BASE_URL}/fire/stats`);
     if (!response.ok) {
       throw new Error(`Failed to fetch fire stats: ${response.status}`);
     }
@@ -723,16 +801,15 @@ export const getFireStats = async (): Promise<FireStatsResponse> => {
 };
 
 /**
- * 화재 사고다발구간 조회 (실제 백엔드 API)
- * GET /api/fire-dashboard/hotspots?period=this_month&minCount=1
+ * 화재 사고다발구간 조회
  */
 export const getFireHotspots = async (
   period: 'this_month' | '30d' | '7d' | 'all' = 'this_month',
-  minCount: number = 1
+  limit: number = 1
 ): Promise<HotspotResponse[]> => {
   try {
     const response = await fetch(
-      `${API_BASE_URL}/fire-dashboard/hotspots?period=${period}&minCount=${minCount}`
+      `${API_BASE_URL}/fire/hotspots?period=${period}&limit=${limit}`
     );
     if (!response.ok) {
       throw new Error(`Failed to fetch fire hotspots: ${response.status}`);
@@ -757,7 +834,7 @@ export interface TrashStatsResponse {
 
 export const getTrashStats = async (): Promise<TrashStatsResponse> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/trash-dashboard/stats`);
+    const response = await fetch(`${API_BASE_URL}/trash/stats`);
     if (!response.ok) {
       throw new Error(`Failed to fetch trash stats: ${response.status}`);
     }
@@ -774,16 +851,15 @@ export const getTrashStats = async (): Promise<TrashStatsResponse> => {
 };
 
 /**
- * 쓰레기 사고다발구간 조회 (실제 백엔드 API)
- * GET /api/trash-dashboard/hotspots?period=this_month&minCount=1
+ * 쓰레기 사고다발구간 조회
  */
 export const getTrashHotspots = async (
   period: 'this_month' | '30d' | '7d' | 'all' = 'this_month',
-  minCount: number = 1
+  limit: number = 1
 ): Promise<HotspotResponse[]> => {
   try {
     const response = await fetch(
-      `${API_BASE_URL}/trash-dashboard/hotspots?period=${period}&minCount=${minCount}`
+      `${API_BASE_URL}/trash/hotspots?period=${period}&limit=${limit}`
     );
     if (!response.ok) {
       throw new Error(`Failed to fetch trash hotspots: ${response.status}`);
@@ -878,6 +954,255 @@ export const getEmergencyIncidents = async (
       first: true,
       empty: true
     };
+  }
+};
+
+// ============================================
+// AllIncidents Dashboard API (전체현황 페이지)
+// ============================================
+
+/**
+ * 전체현황 상단 통계 조회
+ * GET /api/all-incidents/stats
+ */
+export const getAllIncidentsStats = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/all-incidents/stats`);
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ [AllIncidents] Loaded stats:', data);
+      return data;
+    }
+  } catch (error) {
+    console.error('❌ [AllIncidents] Failed to fetch stats:', error);
+  }
+  return {
+    todayCount: 0,
+    pendingCount: 0,
+    avgResponseTime: 0,
+    avgResponseTimeFormatted: '0분',
+    hotspotLocation: '해당 없음'
+  };
+};
+
+/**
+ * 전체현황 사건 목록 조회
+ * GET /api/all-incidents/list
+ * 
+ * @param status - 'active' (진행중) | 'completed' (처리완료)
+ * @param search - 검색어
+ */
+export const getAllIncidentsList = async (status?: string, search?: string) => {
+  try {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (search) params.append('search', search);
+
+    const queryString = params.toString();
+    const url = `${API_BASE_URL}/all-incidents/list${queryString ? '?' + queryString : ''}`;
+    
+    const response = await fetch(url);
+    if (response.ok) {
+      const data = await response.json();
+      console.log(`✅ [AllIncidents] Loaded list (${status || 'all'}):`, data.length);
+      return data;
+    }
+  } catch (error) {
+    console.error('❌ [AllIncidents] Failed to fetch list:', error);
+  }
+  return [];
+};
+
+/**
+ * 전체현황 사건 상세 조회
+ * GET /api/all-incidents/detail/{id}
+ */
+export const getAllIncidentDetail = async (id: number) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/all-incidents/detail/${id}`);
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ [AllIncidents] Loaded detail:', data);
+      return data;
+    }
+  } catch (error) {
+    console.error('❌ [AllIncidents] Failed to fetch detail:', error);
+  }
+  return null;
+};
+
+// ============================================
+// Dashboard API - 전체 사건 목록 조회
+// ============================================
+
+/**
+ * 전체 사건 목록 조회
+ * VIEW: view_all_incidents_list
+ * 
+ * @param status - 'active' (진행중) | 'resolved' (처리완료) | undefined (전체)
+ * @param type - 'EMERGENCY' | 'FIRE' | 'TRASH' | undefined (전체)
+ * @param search - 검색어 (사고코드, CCTV ID, 지역명)
+ * 
+ * 예시:
+ * - getIncidentsList('active')                    // 진행중 전체
+ * - getIncidentsList('active', 'FIRE')            // 진행중 화재만
+ * - getIncidentsList('resolved')                  // 처리완료 전체
+ * - getIncidentsList(undefined, undefined, 'E-')  // 검색
+ */
+export const getIncidentsList = async (
+  status?: string,
+  type?: string,
+  search?: string
+) => {
+  try {
+    const params = new URLSearchParams();
+    if (status) params.append('status', status);
+    if (type) params.append('type', type);
+    if (search) params.append('search', search);
+
+    const queryString = params.toString();
+    const url = `${API_BASE_URL}/dashboard/incidents${queryString ? '?' + queryString : ''}`;
+    
+    const response = await fetch(url);
+    if (response.ok) {
+      const data = await response.json();
+      console.log(`✅ [Dashboard] Loaded incidents (${status || 'all'}, ${type || 'all'}):`, data.length);
+      return data;
+    }
+  } catch (error) {
+    console.error('❌ [Dashboard] Failed to fetch incidents list:', error);
+  }
+  return [];
+};
+
+/**
+ * 사건 상세 조회
+ * 
+ * @param id - 사건 ID
+ */
+export const getIncidentDetail = async (id: number) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/dashboard/incidents/${id}`);
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ [Dashboard] Loaded incident detail:', data);
+      return data;
+    }
+  } catch (error) {
+    console.error('❌ [Dashboard] Failed to fetch incident detail:', error);
+  }
+  return null;
+};
+
+/**
+ * ========================================
+ * 신규 사건 등록 API
+ * ========================================
+ */
+
+/**
+ * 신규 응급 사건 등록
+ * POST /api/emergency/create
+ */
+export const createEmergency = async (data: {
+  detectedAt: string;      // ISO 8601 format
+  locationDesc: string;
+  severityLevel: string;   // 'HIGH' | 'MEDIUM' | 'LOW'
+  memo?: string;
+  patientName?: string;
+  patientAge?: string;
+  patientGender?: string;
+  responseTeam?: string;
+  transferDest?: string;
+  createdById?: number;
+}) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/emergency/create`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to create emergency: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    console.log('✅ [Emergency] Created:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ [Emergency] Failed to create:', error);
+    throw error;
+  }
+};
+
+/**
+ * 신규 화재 사건 등록
+ * POST /api/fire/create
+ */
+export const createFire = async (data: {
+  detectedAt: string;      // ISO 8601 format
+  locationDesc: string;
+  severityLevel: string;   // 'HIGH' | 'MEDIUM' | 'LOW'
+  memo?: string;
+  createdById?: number;
+}) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/fire/create`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to create fire: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    console.log('✅ [Fire] Created:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ [Fire] Failed to create:', error);
+    throw error;
+  }
+};
+
+/**
+ * 신규 쓰레기 사건 등록
+ * POST /api/trash/create
+ */
+export const createTrash = async (data: {
+  detectedAt: string;      // ISO 8601 format
+  locationDesc: string;
+  severityLevel: string;   // 'HIGH' | 'MEDIUM' | 'LOW'
+  memo?: string;
+  trashType?: string;
+  amount?: string;
+  createdById?: number;
+}) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/trash/create`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to create trash: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    console.log('✅ [Trash] Created:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ [Trash] Failed to create:', error);
+    throw error;
   }
 };
 
