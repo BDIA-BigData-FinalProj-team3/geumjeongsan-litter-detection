@@ -56,9 +56,8 @@ import {
   type HotspotLocation,
 } from './common';
 
-// API Base URL - 환경변수에서 가져오거나 기본값 사용
-// GitHub Actions에서 VITE_BACKEND_URL로 주입됨
-const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080/api';
+// API Base URL - config/api.ts에서 import
+import BACKEND_URL from '../config/api';
 
 // ==================== CCTV API ====================
 /**
@@ -75,7 +74,7 @@ const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8080/
 export const getCCTVList = async (): Promise<CCTVMarker[]> => {
   try {
     // 1. Attempt to fetch from real Backend API
-    const response = await fetch(`${API_BASE_URL}/map/cctvs`);
+    const response = await fetch(`${BACKEND_URL}/api/map/cctvs`);
     
     if (response.ok) {
       const data = await response.json();
@@ -154,7 +153,7 @@ export const getCCTVList = async (): Promise<CCTVMarker[]> => {
  */
 export const getActiveIncidents = async () => {
   try {
-    const response = await fetch(`${API_BASE_URL}/map/active-incidents`);
+    const response = await fetch(`${BACKEND_URL}/api/map/active-incidents`);
     if (response.ok) {
       const data = await response.json();
       console.log('✅ Loaded Active Incidents from Backend:', data.length);
@@ -178,7 +177,7 @@ export const getActiveIncidents = async () => {
  */
 export const getIncidentMarkers = async () => {
   try {
-    const response = await fetch(`${API_BASE_URL}/mainmap/incident-markers`);
+    const response = await fetch(`${BACKEND_URL}/api/mainmap/incident-markers`);
     if (response.ok) {
       const data = await response.json();
       console.log('✅ [MainMap] Loaded Incident Markers from VIEW:', data.length);
@@ -204,7 +203,7 @@ export const getIncidentMarkers = async () => {
  */
 export const getCCTVStatus = async () => {
   try {
-    const response = await fetch(`${API_BASE_URL}/mainmap/cctv-status`);
+    const response = await fetch(`${BACKEND_URL}/api/mainmap/cctv-status`);
     if (response.ok) {
       const data = await response.json();
       console.log('✅ [MainMap] Loaded CCTV Status from VIEW:', data.length);
@@ -228,7 +227,7 @@ export const getCCTVStatus = async () => {
  */
 export const getMainMapWeather = async () => {
   try {
-    const response = await fetch(`${API_BASE_URL}/mainmap/weather`);
+    const response = await fetch(`${BACKEND_URL}/api/mainmap/weather`);
     if (response.ok) {
       const data = await response.json();
       console.log('✅ [MainMap] Loaded Weather:', data?.temperature + '°C');
@@ -379,7 +378,7 @@ export const getHelicopterLocations = async () => {
  */
 export const getDailyStats = async () => {
   try {
-    const response = await fetch(`${API_BASE_URL}/dashboard/daily-stats`);
+    const response = await fetch(`${BACKEND_URL}/api/dashboard/daily-stats`);
     if (response.ok) {
       const data = await response.json();
       console.log('✅ [Dashboard] Loaded daily stats:', data);
@@ -435,7 +434,7 @@ export const getAllMonthlyData = async () => {
  */
 export const getAvgResponseTime = async () => {
   try {
-    const response = await fetch(`${API_BASE_URL}/dashboard/avg-response-time`);
+    const response = await fetch(`${BACKEND_URL}/api/dashboard/avg-response-time`);
     if (response.ok) {
       const data = await response.json();
       console.log('✅ [Dashboard] Loaded avg response time:', data);
@@ -459,7 +458,7 @@ export const getAvgResponseTime = async () => {
  */
 export const getActiveEmergencies = async (): Promise<EmergencyItem[]> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/emergency/active`);
+    const response = await fetch(`${BACKEND_URL}/api/emergency/active`);
     if (response.ok) {
       return await response.json();
     }
@@ -476,7 +475,7 @@ export const getActiveEmergencies = async (): Promise<EmergencyItem[]> => {
  */
 export const getCompletedEmergencies = async (): Promise<EmergencyItem[]> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/emergency/completed`);
+    const response = await fetch(`${BACKEND_URL}/api/emergency/completed`);
     if (response.ok) {
       return await response.json();
     }
@@ -494,7 +493,7 @@ export const getCompletedEmergencies = async (): Promise<EmergencyItem[]> => {
  */
 export const getActiveFires = async (): Promise<FireItem[]> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/fire/active`);
+    const response = await fetch(`${BACKEND_URL}/api/fire/active`);
     if (response.ok) {
       return await response.json();
     }
@@ -511,7 +510,7 @@ export const getActiveFires = async (): Promise<FireItem[]> => {
  */
 export const getCompletedFires = async (): Promise<FireItem[]> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/fire/completed`);
+    const response = await fetch(`${BACKEND_URL}/api/fire/completed`);
     if (response.ok) {
       return await response.json();
     }
@@ -529,7 +528,7 @@ export const getCompletedFires = async (): Promise<FireItem[]> => {
  */
 export const getActiveTrashIncidents = async (): Promise<TrashItem[]> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/trash/active`);
+    const response = await fetch(`${BACKEND_URL}/api/trash/active`);
     if (response.ok) {
       return await response.json();
     }
@@ -546,7 +545,7 @@ export const getActiveTrashIncidents = async (): Promise<TrashItem[]> => {
  */
 export const getCompletedTrashIncidents = async (): Promise<TrashItem[]> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/trash/completed`);
+    const response = await fetch(`${BACKEND_URL}/api/trash/completed`);
     if (response.ok) {
       return await response.json();
     }
@@ -716,7 +715,7 @@ export const generateCCTVStatusData = (allNotifications: NotificationItem[]) => 
 // ============================================
 // 백엔드 API 연동 (VIEW 기반)
 // ============================================
-// API_BASE_URL은 파일 상단에서 환경변수로 정의됨
+// BACKEND_URL은 config/api.ts에서 import됨
 
 /**
  * 응급 대시보드 상단 통계 조회 (실제 백엔드 API)
@@ -731,7 +730,7 @@ export interface EmergencyStatsResponse {
 
 export const getEmergencyStats = async (): Promise<EmergencyStatsResponse> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/emergency/stats`);
+    const response = await fetch(`${BACKEND_URL}/api/emergency/stats`);
     if (!response.ok) {
       throw new Error(`Failed to fetch emergency stats: ${response.status}`);
     }
@@ -762,7 +761,7 @@ export const getEmergencyHotspots = async (
 ): Promise<HotspotResponse[]> => {
   try {
     const response = await fetch(
-      `${API_BASE_URL}/emergency/hotspots?period=${period}&limit=${limit}`
+      `${BACKEND_URL}/api/emergency/hotspots?period=${period}&limit=${limit}`
     );
     if (!response.ok) {
       throw new Error(`Failed to fetch emergency hotspots: ${response.status}`);
@@ -787,7 +786,7 @@ export interface FireStatsResponse {
 
 export const getFireStats = async (): Promise<FireStatsResponse> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/fire/stats`);
+    const response = await fetch(`${BACKEND_URL}/api/fire/stats`);
     if (!response.ok) {
       throw new Error(`Failed to fetch fire stats: ${response.status}`);
     }
@@ -812,7 +811,7 @@ export const getFireHotspots = async (
 ): Promise<HotspotResponse[]> => {
   try {
     const response = await fetch(
-      `${API_BASE_URL}/fire/hotspots?period=${period}&limit=${limit}`
+      `${BACKEND_URL}/api/fire/hotspots?period=${period}&limit=${limit}`
     );
     if (!response.ok) {
       throw new Error(`Failed to fetch fire hotspots: ${response.status}`);
@@ -837,7 +836,7 @@ export interface TrashStatsResponse {
 
 export const getTrashStats = async (): Promise<TrashStatsResponse> => {
   try {
-    const response = await fetch(`${API_BASE_URL}/trash/stats`);
+    const response = await fetch(`${BACKEND_URL}/api/trash/stats`);
     if (!response.ok) {
       throw new Error(`Failed to fetch trash stats: ${response.status}`);
     }
@@ -862,7 +861,7 @@ export const getTrashHotspots = async (
 ): Promise<HotspotResponse[]> => {
   try {
     const response = await fetch(
-      `${API_BASE_URL}/trash/hotspots?period=${period}&limit=${limit}`
+      `${BACKEND_URL}/api/trash/hotspots?period=${period}&limit=${limit}`
     );
     if (!response.ok) {
       throw new Error(`Failed to fetch trash hotspots: ${response.status}`);
@@ -928,7 +927,7 @@ export const getEmergencyIncidents = async (
 ): Promise<PageResponse<IncidentListItem>> => {
   try {
     const response = await fetch(
-      `${API_BASE_URL}/emergency-dashboard/incidents?page=${page}&size=${size}`
+      `${BACKEND_URL}/api/emergency-dashboard/incidents?page=${page}&size=${size}`
     );
     if (!response.ok) {
       throw new Error(`Failed to fetch emergency incidents: ${response.status}`);
@@ -970,7 +969,7 @@ export const getEmergencyIncidents = async (
  */
 export const getAllIncidentsStats = async () => {
   try {
-    const response = await fetch(`${API_BASE_URL}/all-incidents/stats`);
+    const response = await fetch(`${BACKEND_URL}/api/all-incidents/stats`);
     if (response.ok) {
       const data = await response.json();
       console.log('✅ [AllIncidents] Loaded stats:', data);
@@ -1002,7 +1001,7 @@ export const getAllIncidentsList = async (status?: string, search?: string) => {
     if (search) params.append('search', search);
 
     const queryString = params.toString();
-    const url = `${API_BASE_URL}/all-incidents/list${queryString ? '?' + queryString : ''}`;
+    const url = `${BACKEND_URL}/api/all-incidents/list${queryString ? '?' + queryString : ''}`;
     
     const response = await fetch(url);
     if (response.ok) {
@@ -1022,7 +1021,7 @@ export const getAllIncidentsList = async (status?: string, search?: string) => {
  */
 export const getAllIncidentDetail = async (id: number) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/all-incidents/detail/${id}`);
+    const response = await fetch(`${BACKEND_URL}/api/all-incidents/detail/${id}`);
     if (response.ok) {
       const data = await response.json();
       console.log('✅ [AllIncidents] Loaded detail:', data);
@@ -1064,7 +1063,7 @@ export const getIncidentsList = async (
     if (search) params.append('search', search);
 
     const queryString = params.toString();
-    const url = `${API_BASE_URL}/dashboard/incidents${queryString ? '?' + queryString : ''}`;
+    const url = `${BACKEND_URL}/api/dashboard/incidents${queryString ? '?' + queryString : ''}`;
     
     const response = await fetch(url);
     if (response.ok) {
@@ -1085,7 +1084,7 @@ export const getIncidentsList = async (
  */
 export const getIncidentDetail = async (id: number) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/dashboard/incidents/${id}`);
+    const response = await fetch(`${BACKEND_URL}/api/dashboard/incidents/${id}`);
     if (response.ok) {
       const data = await response.json();
       console.log('✅ [Dashboard] Loaded incident detail:', data);
@@ -1120,7 +1119,7 @@ export const createEmergency = async (data: {
   createdById?: number;
 }) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/emergency/create`, {
+    const response = await fetch(`${BACKEND_URL}/api/emergency/create`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1153,7 +1152,7 @@ export const createFire = async (data: {
   createdById?: number;
 }) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/fire/create`, {
+    const response = await fetch(`${BACKEND_URL}/api/fire/create`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1188,7 +1187,7 @@ export const createTrash = async (data: {
   createdById?: number;
 }) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/trash/create`, {
+    const response = await fetch(`${BACKEND_URL}/api/trash/create`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
