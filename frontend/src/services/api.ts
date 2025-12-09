@@ -126,7 +126,7 @@ export const getCCTVList = async (): Promise<CCTVMarker[]> => {
 
   // 2. Fallback to Mock Data (if backend is offline or fails)
   const mockData: CCTVMarker[] = [
-    { id: 1, cctvCode: 'CCTV-001', name: '등산로 1 CCTV', locationDesc: '등산로 1', installDate: '2024-01-15', modelName: 'HD-1080P', resolution: '1920x1080', isActive: true, powerStatus: 'on', longitude: 127.5, latitude: 37.5, incidentCount: 1, lastIncidentTime: '2025-11-25 10:15:00', lastIncidentType: 'fire' },
+    { id: 1, cctvCode: 'CCTV-001', name: '등산로 1 CCTV', locationDesc: '등산로 1', installDate: '2024-01-15', modelName: 'HD-1080P', resolution: '1920x1080', isActive: true, powerStatus: 'on', longitude: 127.5, latitude: 37.5 },
     { id: 2, cctvCode: 'CCTV-002', name: '등산로 2 CCTV', locationDesc: '등산로 2', installDate: '2024-01-15', modelName: 'HD-1080P', resolution: '1920x1080', isActive: true, powerStatus: 'on', longitude: 127.6, latitude: 37.6 },
     { id: 3, cctvCode: 'CCTV-003', name: '등산로 3 CCTV', locationDesc: '등산로 3', installDate: '2024-01-15', modelName: 'HD-1080P', resolution: '1920x1080', isActive: true, powerStatus: 'on', longitude: 127.4, latitude: 37.4, incidentCount: 1, lastIncidentTime: '2025-11-25 10:12:00', lastIncidentType: 'trash' },
     { id: 4, cctvCode: 'CCTV-004', name: '등산로 4 CCTV', locationDesc: '등산로 4', installDate: '2024-01-15', modelName: 'HD-1080P', resolution: '1920x1080', isActive: true, powerStatus: 'on', longitude: 127.55, latitude: 37.55, incidentCount: 1, lastIncidentTime: '2025-11-25 09:40:00', lastIncidentType: 'trash' },
@@ -1204,6 +1204,54 @@ export const createTrash = async (data: {
     return result;
   } catch (error) {
     console.error('❌ [Trash] Failed to create:', error);
+    throw error;
+  }
+};
+
+// ==================== CCTV Fallen Analysis API ====================
+/**
+ * CCTV 낙상 분석 요청
+ * POST /api/cctv/{cctvCode}/fallen-analyze
+ * 
+ * @param cctvCode - CCTV 코드 (예: 'CCTV-001')
+ * @returns 분석 결과 (클립 URL, 프레임 URL들)
+ */
+export interface FallenAnalysisResponse {
+  status: string;
+  camera_id: string;
+  s3_key: string;
+  result: {
+    success: boolean;
+    total_frames: number;
+    fallen_events: number;
+    duration: number;
+    fps: number;
+    effective_fps: number;
+    frame_skip: number;
+    clip_url: string;
+    frame_urls: string[];
+  };
+  geminiMessage?: string; // Gemini 호출 필요 시 메시지
+}
+
+export const analyzeFallenVideo = async (cctvCode: string): Promise<FallenAnalysisResponse> => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/cctv/${cctvCode}/fallen-analyze`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to analyze video: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    console.log('✅ [CCTV] Analysis result:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ [CCTV] Failed to analyze video:', error);
     throw error;
   }
 };
