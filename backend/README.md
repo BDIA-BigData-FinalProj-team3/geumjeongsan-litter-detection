@@ -2,7 +2,6 @@
 
 Spring Boot 기반 백엔드 애플리케이션
 
-### 기술 스택
 
 - Java 24
 - Spring Boot 3.3.0
