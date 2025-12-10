@@ -9,7 +9,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 
 @Entity
-@Table(name = "cctv")
+@Table(name = "cctv_info")
 @Getter
 @Setter
 public class CCTV {

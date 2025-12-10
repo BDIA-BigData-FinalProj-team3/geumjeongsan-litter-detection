@@ -6,7 +6,6 @@ import com.example.geumjeongsan.api.dto.TrashUpdateRequest;
 import com.example.geumjeongsan.api.dto.TrashDashboardResponse;
 import com.example.geumjeongsan.api.dto.TrashIncidentItem;
 import com.example.geumjeongsan.api.dto.TrashStatsDto;
-import com.example.geumjeongsan.api.dto.HotspotDto;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import org.springframework.stereotype.Service;
@@ -25,7 +24,6 @@ public class TrashService {
     private final IncidentRepository incidentRepository;
     private final TrashDetailRepository trashDetailRepository;
     private final IncidentSummaryRepository incidentSummaryRepository;
-    private final TrashHotspotCctvRepository trashHotspotCctvRepository;
     private final IncidentActionRepository incidentActionRepository;
     private final IncidentManualRepository incidentManualRepository;
     private final EntityManager entityManager;
@@ -34,14 +32,12 @@ public class TrashService {
     public TrashService(IncidentRepository incidentRepository,
                        TrashDetailRepository trashDetailRepository,
                        IncidentSummaryRepository incidentSummaryRepository,
-                       TrashHotspotCctvRepository trashHotspotCctvRepository,
                        IncidentActionRepository incidentActionRepository,
                        IncidentManualRepository incidentManualRepository,
                        EntityManager entityManager) {
         this.incidentRepository = incidentRepository;
         this.trashDetailRepository = trashDetailRepository;
         this.incidentSummaryRepository = incidentSummaryRepository;
-        this.trashHotspotCctvRepository = trashHotspotCctvRepository;
         this.incidentActionRepository = incidentActionRepository;
         this.incidentManualRepository = incidentManualRepository;
         this.entityManager = entityManager;
@@ -278,6 +274,7 @@ public class TrashService {
             default -> incident.getStatus();
         };
         incident.setStatus(newStatus);
+        incident.setUpdatedAt(OffsetDateTime.now()); // ✅ updated_at 자동 설정
         
         // 처리자 이름 업데이트
         if (handlerName != null && !handlerName.isEmpty()) {
@@ -302,13 +299,67 @@ public class TrashService {
         if (!prevStatus.equals(newStatus)) {
             IncidentAction action = new IncidentAction();
             action.setIncidentId(incident.getId());
-            action.setActionType("STATUS_CHANGED");
+            
+            if ("IN_PROGRESS".equals(newStatus) && "PENDING".equals(prevStatus)) {
+                action.setActionType("ACK");
+                action.setAcknowledgedAt(now);
+            } else if ("RESOLVED".equals(newStatus)) {
+                action.setActionType("RESOLVED");
+                action.setResolvedAt(now);
+            } else {
+                action.setActionType("STATUS_CHANGED");
+            }
+            
             action.setPrevStatus(prevStatus);
             action.setNextStatus(newStatus);
             action.setActorId(null); // TODO: 실제 사용자 ID 연동
             action.setMemo("상태 변경: " + prevStatus + " → " + newStatus);
-            action.setCreatedAt(OffsetDateTime.now());
+            action.setCreatedAt(now);
             incidentActionRepository.save(action);
+        }
+    }
+    
+    /**
+     * 쓰레기 사건 상세정보 업데이트 (수동 등록 전용)
+     */
+    @Transactional
+    public void updateTrashDetail(Long id, String memo, String severityLevel, 
+                                  String trashType, String amount) {
+        Incident incident = incidentRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("쓰레기 사건을 찾을 수 없습니다: " + id));
+        
+        if (!"TRASH".equals(incident.getIncidentType())) {
+            throw new RuntimeException("쓰레기 사건이 아닙니다: " + id);
+        }
+        
+        // incident 테이블 업데이트
+        if (memo != null) {
+            incident.setMemo(memo);
+        }
+        if (severityLevel != null) {
+            String dbSeverity = switch (severityLevel) {
+                case "상", "HIGH" -> "HIGH";
+                case "중", "MEDIUM" -> "MEDIUM";
+                case "하", "LOW" -> "LOW";
+                default -> incident.getSeverityLevel();
+            };
+            incident.setSeverityLevel(dbSeverity);
+        }
+        incident.setUpdatedAt(OffsetDateTime.now());
+        incidentRepository.save(incident);
+        
+        // trash_detail 테이블 업데이트
+        TrashDetail detail = trashDetailRepository.findByIncidentId(id)
+                .orElse(null);
+        
+        if (detail != null) {
+            if (trashType != null && !trashType.isEmpty()) {
+                detail.setMainCategory(trashType);
+            }
+            if (amount != null && !amount.isEmpty()) {
+                detail.setObjectAmount(amount);
+            }
+            trashDetailRepository.save(detail);
         }
     }
 
@@ -340,58 +391,6 @@ public class TrashService {
                 .build();
     }
 
-    public List<HotspotDto> getTrashHotspots(String period, Long minCount) {
-        if (minCount == null || minCount < 1) {
-            minCount = 3L;
-        }
-        
-        List<TrashHotspotCctv> hotspots;
-        
-        switch (period.toLowerCase()) {
-            case "this_month":
-                hotspots = trashHotspotCctvRepository.findHotspotsByThisMonth(minCount);
-                break;
-            case "30d":
-                hotspots = trashHotspotCctvRepository.findHotspotsByLast30Days(minCount);
-                break;
-            case "7d":
-                hotspots = trashHotspotCctvRepository.findHotspotsByLast7Days(minCount);
-                break;
-            case "all":
-                hotspots = trashHotspotCctvRepository.findHotspotsByTotal(minCount);
-                break;
-            default:
-                hotspots = trashHotspotCctvRepository.findHotspotsByThisMonth(minCount);
-        }
-
-        return hotspots.stream()
-                .map(h -> fromTrashHotspot(h, period))
-                .collect(Collectors.toList());
-    }
-
-    private HotspotDto fromTrashHotspot(TrashHotspotCctv entity, String period) {
-        Long count = switch (period) {
-            case "this_month" -> entity.getTrashCountThisMonth();
-            case "30d" -> entity.getTrashCount30d();
-            case "7d" -> entity.getTrashCount7d();
-            default -> entity.getTotalTrashCount();
-        };
-
-        return HotspotDto.builder()
-                .cctvId(entity.getCctvId())
-                .cctvCode(entity.getCctvCode())
-                .address(entity.getCctvAddress())
-                .addressDescription(entity.getCctvAddressDescription())
-                .incidentCount(count)
-                .avgSeverityScore(entity.getAvgSeverityScore())
-                .maxSeverityScore(entity.getMaxSeverityScore() != null ? entity.getMaxSeverityScore().doubleValue() : null)
-                .firstIncidentAt(entity.getFirstTrashAt() != null ? entity.getFirstTrashAt().toString() : null)
-                .lastIncidentAt(entity.getLastTrashAt() != null ? entity.getLastTrashAt().toString() : null)
-                .latitude(null)
-                .longitude(null)
-                .geomWkt(entity.getGeom() != null ? entity.getGeom().toText() : null)
-                .build();
-    }
     
     /**
      * 신규 쓰레기 사건 등록 (수동 등록)

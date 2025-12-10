@@ -298,6 +298,7 @@ public class FireService {
             default -> incident.getStatus();
         };
         incident.setStatus(newStatus);
+        incident.setUpdatedAt(OffsetDateTime.now()); // ✅ updated_at 자동 설정
         
         // 처리자 이름 업데이트
         if (handlerName != null && !handlerName.isEmpty()) {
@@ -322,14 +323,53 @@ public class FireService {
         if (!prevStatus.equals(newStatus)) {
             IncidentAction action = new IncidentAction();
             action.setIncidentId(incident.getId());
-            action.setActionType("STATUS_CHANGED");
+            
+            if ("IN_PROGRESS".equals(newStatus) && "PENDING".equals(prevStatus)) {
+                action.setActionType("ACK");
+                action.setAcknowledgedAt(now);
+            } else if ("RESOLVED".equals(newStatus)) {
+                action.setActionType("RESOLVED");
+                action.setResolvedAt(now);
+            } else {
+                action.setActionType("STATUS_CHANGED");
+            }
+            
             action.setPrevStatus(prevStatus);
             action.setNextStatus(newStatus);
             action.setActorId(null); // TODO: 실제 사용자 ID 연동
             action.setMemo("상태 변경: " + prevStatus + " → " + newStatus);
-            action.setCreatedAt(OffsetDateTime.now());
+            action.setCreatedAt(now);
             incidentActionRepository.save(action);
         }
+    }
+    
+    /**
+     * 화재 사건 상세정보 업데이트 (수동 등록 전용)
+     */
+    @Transactional
+    public void updateFireDetail(Long id, String memo, String severityLevel) {
+        Incident incident = incidentRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("화재 사건을 찾을 수 없습니다: " + id));
+        
+        if (!"FIRE".equals(incident.getIncidentType())) {
+            throw new RuntimeException("화재 사건이 아닙니다: " + id);
+        }
+        
+        // incident 테이블 업데이트
+        if (memo != null) {
+            incident.setMemo(memo);
+        }
+        if (severityLevel != null) {
+            String dbSeverity = switch (severityLevel) {
+                case "상", "HIGH" -> "HIGH";
+                case "중", "MEDIUM" -> "MEDIUM";
+                case "하", "LOW" -> "LOW";
+                default -> incident.getSeverityLevel();
+            };
+            incident.setSeverityLevel(dbSeverity);
+        }
+        incident.setUpdatedAt(OffsetDateTime.now());
+        incidentRepository.save(incident);
     }
     
     private String getCurrentWindSpeedFromAPI() {

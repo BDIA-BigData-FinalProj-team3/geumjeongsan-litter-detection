@@ -1,6 +1,7 @@
 package com.example.geumjeongsan.api;
 
 import com.example.geumjeongsan.api.dto.AllIncidentDto;
+import com.example.geumjeongsan.api.dto.IncidentDetailDto;
 import com.example.geumjeongsan.api.dto.FireCreateRequest;
 import com.example.geumjeongsan.api.dto.FireUpdateRequest;
 import com.example.geumjeongsan.api.dto.FireIncidentItem;
@@ -14,6 +15,7 @@ import com.example.geumjeongsan.domain.dashboard.AvgResponseTimeRepository;
 import com.example.geumjeongsan.domain.incident.FireService;
 import com.example.geumjeongsan.domain.incident.IncidentListView;
 import com.example.geumjeongsan.domain.incident.IncidentListViewRepository;
+import com.example.geumjeongsan.domain.incident.IncidentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -35,6 +37,7 @@ public class FireController {
     private final AvgResponseTimeRepository avgResponseTimeRepository;
     private final IncidentListViewRepository incidentListViewRepository;
     private final FireService fireService;
+    private final IncidentService incidentService;
 
     /**
      * 화재 통계
@@ -118,9 +121,10 @@ public class FireController {
     public List<AllIncidentDto> getActiveFires() {
         log.info("📋 [Fire] Fetching active list");
         
+        // 전체현황과 동일한 방식: 타입 필터링 없이 전체 조회 후 프론트에서 필터링
         List<String> activeStatuses = Arrays.asList("PENDING", "IN_PROGRESS");
         List<IncidentListView> viewList = incidentListViewRepository
-                .findByStatusInAndIncidentTypeOrderByDetectedAtDesc(activeStatuses, "FIRE");
+                .findByStatusInOrderByDetectedAtDesc(activeStatuses);
         
         return viewList.stream()
                 .map(AllIncidentDto::new)
@@ -135,11 +139,9 @@ public class FireController {
     public List<AllIncidentDto> getCompletedFires() {
         log.info("📋 [Fire] Fetching completed list");
         
+        // 전체현황과 동일한 방식
         List<IncidentListView> viewList = incidentListViewRepository
-                .findByStatusInAndIncidentTypeOrderByDetectedAtDesc(
-                        Arrays.asList("RESOLVED"), 
-                        "FIRE"
-                );
+                .findByStatusInOrderByDetectedAtDesc(Arrays.asList("RESOLVED"));
         
         return viewList.stream()
                 .map(AllIncidentDto::new)
@@ -151,7 +153,7 @@ public class FireController {
      * GET /api/fire/detail/{id}
      */
     @GetMapping("/detail/{id}")
-    public AllIncidentDto getFireDetail(@PathVariable Long id) {
+    public IncidentDetailDto getFireDetail(@PathVariable Long id) {
         log.info("🔍 [Fire] Fetching detail - id: {}", id);
         IncidentListView view = incidentListViewRepository.findById(id).orElse(null);
         
@@ -160,7 +162,28 @@ public class FireController {
             return null;
         }
         
-        return view != null ? new AllIncidentDto(view) : null;
+        if (view == null) {
+            return null;
+        }
+        
+        // CCTV 좌표 조회 (VIEW에 있으면 사용, 없으면 별도 조회)
+        Double latitude = view.getCctvLatitude();
+        Double longitude = view.getCctvLongitude();
+        
+        // VIEW에 좌표가 없으면 별도 조회
+        if ((latitude == null || longitude == null) && view.getCctvId() != null) {
+            try {
+                var cctvResponse = incidentService.getCCTVById(view.getCctvId());
+                if (cctvResponse != null) {
+                    latitude = cctvResponse.getLatitude();
+                    longitude = cctvResponse.getLongitude();
+                }
+            } catch (Exception e) {
+                log.warn("⚠️ [Fire] Failed to fetch CCTV coordinates for CCTV ID {}: {}", view.getCctvId(), e.getMessage());
+            }
+        }
+        
+        return new IncidentDetailDto(view, latitude, longitude);
     }
     
     /**
@@ -186,5 +209,28 @@ public class FireController {
     public FireIncidentItem updateFire(@PathVariable Long id, @RequestBody FireUpdateRequest request) {
         log.info("✏️ [Fire] Updating fire incident - id: {}", id);
         return fireService.updateFire(id, request);
+    }
+    
+    /**
+     * 화재 사건 상세정보 업데이트 (수동 등록)
+     * PUT /api/fire/{id}/detail
+     */
+    @PutMapping("/{id}/detail")
+    public Map<String, String> updateFireDetail(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> request) {
+        try {
+            log.info("✏️ [Fire] Updating fire detail - id: {}", id);
+            
+            fireService.updateFireDetail(
+                    id,
+                    request.get("memo"),
+                    request.get("severity")
+            );
+            return Map.of("message", "수정 완료");
+        } catch (RuntimeException e) {
+            log.error("❌ [Fire] Failed to update detail: {}", e.getMessage());
+            throw e;
+        }
     }
 }

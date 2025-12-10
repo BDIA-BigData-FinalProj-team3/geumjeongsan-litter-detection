@@ -1,6 +1,7 @@
 package com.example.geumjeongsan.api;
 
 import com.example.geumjeongsan.api.dto.AllIncidentDto;
+import com.example.geumjeongsan.api.dto.IncidentDetailDto;
 import com.example.geumjeongsan.api.dto.AllIncidentsStatsDto;
 import com.example.geumjeongsan.domain.dashboard.*;
 import com.example.geumjeongsan.domain.incident.*;
@@ -25,6 +26,7 @@ public class AllIncidentsController {
     private final DailyStatsRepository dailyStatsRepository;
     private final AvgResponseTimeRepository avgResponseTimeRepository;
     private final IncidentListViewRepository incidentListViewRepository;
+    private final IncidentService incidentService;
 
     /**
      * 전체현황 페이지 상단 통계
@@ -106,10 +108,32 @@ public class AllIncidentsController {
      * Frontend 형식으로 변환
      */
     @GetMapping("/detail/{id}")
-    public AllIncidentDto getAllIncidentDetail(@PathVariable Long id) {
+    public IncidentDetailDto getAllIncidentDetail(@PathVariable Long id) {
         log.info("🔍 [AllIncidents] Fetching detail - id: {}", id);
         IncidentListView view = incidentListViewRepository.findById(id).orElse(null);
-        return view != null ? new AllIncidentDto(view) : null;
+        
+        if (view == null) {
+            return null;
+        }
+        
+        // CCTV 좌표 조회 (VIEW에 있으면 사용, 없으면 별도 조회)
+        Double latitude = view.getCctvLatitude();
+        Double longitude = view.getCctvLongitude();
+        
+        // VIEW에 좌표가 없으면 별도 조회
+        if ((latitude == null || longitude == null) && view.getCctvId() != null) {
+            try {
+                var cctvResponse = incidentService.getCCTVById(view.getCctvId());
+                if (cctvResponse != null) {
+                    latitude = cctvResponse.getLatitude();
+                    longitude = cctvResponse.getLongitude();
+                }
+            } catch (Exception e) {
+                log.warn("⚠️ [AllIncidents] Failed to fetch CCTV coordinates for CCTV ID {}: {}", view.getCctvId(), e.getMessage());
+            }
+        }
+        
+        return new IncidentDetailDto(view, latitude, longitude);
     }
 }
 

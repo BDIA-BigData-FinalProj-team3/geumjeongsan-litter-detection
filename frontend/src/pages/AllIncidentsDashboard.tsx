@@ -5,7 +5,7 @@ import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
-import { getAllIncidentsStats, getAllIncidentsList, getAllIncidentDetail, createEmergency, createFire, createTrash } from '../services/api';
+import { getAllIncidentsStats, getAllIncidentsList, getAllIncidentDetail, createEmergency, createFire, createTrash, updateEmergencyStatus, updateFireStatus, updateTrashStatus, updateEmergencyDetail, updateFireDetail, updateTrashDetail } from '../services/api';
 
 interface AllIncidentsDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -169,35 +169,66 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
     }
   };
 
-  const updateStatus = (id: number, newStatus: string) => {
-    if (newStatus === '처리완료' || newStatus === '진화완료') {
-      // 처리완료로 변경 시 목록 이동
-      const now = new Date();
-      const responseTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      
-      const itemToComplete = activeIncidents.find(item => item.id === id);
-      if (itemToComplete) {
-        const completedItem = {
-          ...itemToComplete,
-          status: newStatus,
-          responseTime,
-          duration: '10분'
-        };
-        
-        addCompletedIncident(itemToComplete.cctvId);
-        setCompletedIncidentsList(prev => [completedItem, ...prev]);
-        setActiveIncidents(prev => prev.filter(item => item.id !== id));
+  const updateStatus = async (id: number, newStatus: string, incidentType: string) => {
+    try {
+      // 상태 매핑 (화면 → DB)
+      let dbStatus: string;
+      if (incidentType === '화재') {
+        dbStatus = newStatus === '진화완료' ? 'RESOLVED' 
+                 : newStatus === '진화중' ? 'EXTINGUISHING' 
+                 : 'PENDING';
+      } else if (incidentType === '응급') {
+        dbStatus = newStatus === '처리완료' ? 'RESOLVED' 
+                 : newStatus === '대응중' ? 'IN_PROGRESS' 
+                 : 'PENDING';
+      } else {
+        dbStatus = newStatus === '처리완료' ? 'RESOLVED' 
+                 : newStatus === '대응중' ? 'IN_PROGRESS' 
+                 : 'PENDING';
       }
-    } else {
-      // 일반 상태 변경
-      setActiveIncidents(prev => prev.map(item => 
-        item.id === id 
-          ? { ...item, status: newStatus }
-          : item
-      ));
+      
+      // 타입별 API 호출
+      if (incidentType === '화재') {
+        await updateFireStatus(id, dbStatus);
+      } else if (incidentType === '응급') {
+        await updateEmergencyStatus(id, dbStatus);
+      } else {
+        await updateTrashStatus(id, dbStatus);
+      }
+      
+      // 성공 시 로컬 state 업데이트
+      if (newStatus === '처리완료' || newStatus === '진화완료') {
+        const now = new Date();
+        const responseTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        
+        const itemToComplete = activeIncidents.find(item => item.id === id);
+        if (itemToComplete) {
+          const completedItem = {
+            ...itemToComplete,
+            status: newStatus,
+            responseTime,
+            duration: '10분'
+          };
+          
+          addCompletedIncident(itemToComplete.cctvId);
+          setCompletedIncidentsList(prev => [completedItem, ...prev]);
+          setActiveIncidents(prev => prev.filter(item => item.id !== id));
+        }
+      } else {
+        // 일반 상태 변경
+        setActiveIncidents(prev => prev.map(item => 
+          item.id === id 
+            ? { ...item, status: newStatus }
+            : item
+        ));
+      }
+      
+      setStatusDropdownOpen(null);
+      setDropdownPosition(null);
+    } catch (error) {
+      console.error('상태 업데이트 실패:', error);
+      alert('상태 변경에 실패했습니다.');
     }
-    setStatusDropdownOpen(null);
-    setDropdownPosition(null);
   };
 
   const handleBatchComplete = () => {
@@ -226,18 +257,52 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
     setEditedDetail({ ...selectedDetail! });
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!editedDetail) return;
     
-    if (viewMode === 'active') {
-      setActiveIncidents(prev => prev.map(e => e.id === editedDetail.id ? editedDetail : e));
-    } else {
-      setCompletedIncidentsList(prev => prev.map(e => e.id === editedDetail.id ? editedDetail : e));
+    try {
+      // 사건 유형에 따라 적절한 API 호출
+      if (editedDetail.type === '응급') {
+        await updateEmergencyDetail(editedDetail.id, {
+          memo: editedDetail.note,
+          severity: editedDetail.severity,
+          patientName: editedDetail.patientName,
+          patientGender: editedDetail.gender,
+          transferHospital: editedDetail.transferHospital,
+        });
+      } else if (editedDetail.type === '화재') {
+        await updateFireDetail(editedDetail.id, {
+          memo: editedDetail.note,
+          severity: editedDetail.severity,
+        });
+      } else if (editedDetail.type === '쓰레기') {
+        await updateTrashDetail(editedDetail.id, {
+          memo: editedDetail.note,
+          severity: editedDetail.severity,
+          trashType: editedDetail.trashType,
+          amount: editedDetail.amount,
+        });
+      }
+      
+      // 성공 시 데이터 재로드
+      const statsData = await getAllIncidentsStats();
+      setStats(statsData);
+      
+      const allData = await getAllIncidentsList();
+      const activeData = allData.filter(i => i.status === '대기중' || i.status === '대응중' || i.status === '진화중');
+      const completedData = allData.filter(i => i.status === '처리완료' || i.status === '이송완료');
+      
+      setActiveIncidents(activeData);
+      setCompletedIncidentsList(completedData);
+      
+      setIsEditing(false);
+      setSelectedDetail(null);
+      setEditedDetail(null);
+      alert('수정이 완료되었습니다.');
+    } catch (error) {
+      console.error('저장 실패:', error);
+      alert('저장에 실패했습니다.');
     }
-    
-    setSelectedDetail(editedDetail);
-    setIsEditing(false);
-    setEditedDetail(null);
   };
 
   const handleCancel = () => {
@@ -508,7 +573,22 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                         <tr 
                           key={incident.id} 
                           className={`hover:bg-gray-50 cursor-pointer ${isHighlighted ? 'bg-yellow-100' : ''}`} 
-                          onClick={() => { setSelectedDetail(incident); setIsEditing(false); setEditedDetail(null); }}
+                          onClick={async () => { 
+                            try {
+                              const detail = await getAllIncidentDetail(incident.id);
+                              if (detail) {
+                                setSelectedDetail(detail as any);
+                                setIsEditing(false);
+                                setEditedDetail(null);
+                              }
+                            } catch (error) {
+                              console.error('❌ [AllIncidents] Failed to load detail:', error);
+                              // 실패 시 목록 데이터 사용
+                              setSelectedDetail(incident as any);
+                              setIsEditing(false);
+                              setEditedDetail(null);
+                            }
+                          }}
                         >
                           {viewMode === 'active' && (
                             <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
@@ -600,7 +680,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                                     }}
                                   >
                                     <button
-                                      onClick={() => updateStatus(incident.id, '대기중')}
+                                      onClick={() => updateStatus(incident.id, '대기중', incident.type)}
                                       className="w-full px-3 py-2 text-left text-sm hover:bg-orange-50 text-gray-700"
                                     >
                                       대기중
@@ -608,7 +688,8 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                                     <button
                                       onClick={() => updateStatus(incident.id, 
                                         incident.type === '화재' ? '진화중' : 
-                                        incident.type === '응급' ? '대응중' : '처리중'
+                                        incident.type === '응급' ? '대응중' : '처리중',
+                                        incident.type
                                       )}
                                       className="w-full px-3 py-2 text-left text-sm hover:bg-green-50 text-gray-700"
                                     >
@@ -617,7 +698,8 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                                     </button>
                                     <button
                                       onClick={() => updateStatus(incident.id, 
-                                        incident.type === '화재' ? '진화완료' : '처리완료'
+                                        incident.type === '화재' ? '진화완료' : '처리완료',
+                                        incident.type
                                       )}
                                       className="w-full px-3 py-2 text-left text-sm hover:bg-blue-50 text-gray-700"
                                     >
@@ -1341,39 +1423,71 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                   </button>
                 </div>
                 <div className="flex p-6 gap-6">
-                <div className="flex-1 space-y-4">
-                  <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}><div className="text-center text-gray-500"><ImageIcon className="w-10 h-10 mx-auto mb-2" /><p className="text-sm">이미지</p></div></div>
-                  <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}><div className="text-center text-gray-500"><Video className="w-10 h-10 mx-auto mb-2" /><p className="text-sm">영상</p></div></div>
-                </div>
-                <div className="flex-1 flex flex-col">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
-                  <div className="space-y-4 flex-1">
-                    <div><label className="text-sm text-gray-600">사고 코드</label><p className="text-gray-900 mt-1">{selectedDetail.accidentCode}</p></div>
-                    <div><label className="text-sm text-gray-600">발생시간</label><p className="text-gray-900 mt-1">{selectedDetail.time}</p></div>
-                    <div><label className="text-sm text-gray-600">발생 위치</label><p className="text-gray-900 mt-1">{selectedDetail.location || '-'}</p></div>
-                    <div><label className="text-sm text-gray-600">심각도</label><p className="mt-1"><span className={`px-2 py-1 text-xs ${selectedDetail.severity === '상' ? 'bg-red-100 text-red-700' : selectedDetail.severity === '중' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}`} style={{ borderRadius: '0px' }}>{selectedDetail.severity}</span></p></div>
-                    <div><label className="text-sm text-gray-600">메모</label><p className="text-gray-900 mt-1">{(selectedDetail as any).memo || '-'}</p></div>
-                    {selectedDetail.type === '응급' && (
-                      <>
-                        <div><label className="text-sm text-gray-600">환자 이름</label><p className="text-gray-900 mt-1">{(selectedDetail as any).patientName || '-'}</p></div>
-                        <div><label className="text-sm text-gray-600">환자 나이</label><p className="text-gray-900 mt-1">{(selectedDetail as any).patientAge || '-'}</p></div>
-                        <div><label className="text-sm text-gray-600">환자 성별</label><p className="text-gray-900 mt-1">{(selectedDetail as any).patientGender || '-'}</p></div>
-                        <div><label className="text-sm text-gray-600">투입 구조팀</label><p className="text-gray-900 mt-1">{(selectedDetail as any).rescueTeam || '-'}</p></div>
-                        <div><label className="text-sm text-gray-600">이송 병원 또는 인계 기관</label><p className="text-gray-900 mt-1">{(selectedDetail as any).transferHospital || '-'}</p></div>
-                      </>
-                    )}
-                    {selectedDetail.type === '쓰레기' && (
-                      <>
-                        <div><label className="text-sm text-gray-600">쓰레기 종류</label><p className="text-gray-900 mt-1">{(selectedDetail as any).trashType || '-'}</p></div>
-                        <div><label className="text-sm text-gray-600">양</label><p className="text-gray-900 mt-1">{(selectedDetail as any).amount || '-'}</p></div>
-                      </>
-                    )}
+                  {/* 왼쪽 패널 - 이미지/영상 */}
+                  <div className="flex-1 space-y-4">
+                    <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
+                      <div className="text-center text-gray-500">
+                        <ImageIcon className="w-10 h-10 mx-auto mb-2" />
+                        <p className="text-sm">이미지</p>
+                      </div>
+                    </div>
+                    <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
+                      <div className="text-center text-gray-500">
+                        <Video className="w-10 h-10 mx-auto mb-2" />
+                        <p className="text-sm">영상</p>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex gap-3 mt-6">
-                    <button className="w-full px-4 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center gap-2" style={{ borderRadius: '0px' }}><Edit2 className="w-4 h-4" />수정</button>
+
+                  {/* 우측 패널 - 상세정보 */}
+                  <div className="flex-1 flex flex-col">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
+                    <div className="flex gap-4 flex-1">
+                      {/* 왼쪽 열 - 기본 정보 */}
+                      <div className="flex-1 space-y-4">
+                        <div><label className="text-sm text-gray-600">사고 코드</label><p className="text-gray-900 mt-1">{selectedDetail.accidentCode}</p></div>
+                        <div><label className="text-sm text-gray-600">발생시간</label><p className="text-gray-900 mt-1">{selectedDetail.time}</p></div>
+                        <div><label className="text-sm text-gray-600">유형</label><p className="text-gray-900 mt-1">{selectedDetail.type}</p></div>
+                        <div><label className="text-sm text-gray-600">심각도</label><p className="mt-1"><span className={`px-2 py-1 text-xs ${selectedDetail.severity === '상' ? 'bg-red-100 text-red-700' : selectedDetail.severity === '중' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}`} style={{ borderRadius: '0px' }}>{selectedDetail.severity}</span></p></div>
+                        <div><label className="text-sm text-gray-600">상태</label><p className="text-gray-900 mt-1">{selectedDetail.status}</p></div>
+                        <div><label className="text-sm text-gray-600">처리자</label><p className="text-gray-900 mt-1">{selectedDetail.handler}</p></div>
+                        <div><label className="text-sm text-gray-600">탐지근거</label><p className="text-gray-900 mt-1">수동 등록</p></div>
+                      </div>
+                      {/* 오른쪽 열 - 추가 정보 */}
+                      <div className="flex-1 space-y-4">
+                        <div><label className="text-sm text-gray-600">위치</label><p className="text-gray-900 mt-1">{selectedDetail.location || '-'}</p></div>
+                        {selectedDetail.responseTime && (
+                          <div><label className="text-sm text-gray-600">처리완료시각</label><p className="text-gray-900 mt-1">{selectedDetail.responseTime}</p></div>
+                        )}
+                        {selectedDetail.duration && (
+                          <div><label className="text-sm text-gray-600">소요시간</label><p className="text-gray-900 mt-1">{selectedDetail.duration}</p></div>
+                        )}
+                        <div><label className="text-sm text-gray-600">메모</label><p className="text-gray-900 mt-1">{(selectedDetail as any).memo || '-'}</p></div>
+                        {selectedDetail.type === '응급' && (
+                          <>
+                            <div><label className="text-sm text-gray-600">환자명</label><p className="text-gray-900 mt-1">{(selectedDetail as any).patientName || '미상'}</p></div>
+                            <div><label className="text-sm text-gray-600">성별</label><p className="text-gray-900 mt-1">{(selectedDetail as any).patientGender || '미상'}</p></div>
+                            <div><label className="text-sm text-gray-600">이송병원 및 처리 기관</label><p className="text-gray-900 mt-1">{(selectedDetail as any).transferHospital || '-'}</p></div>
+                          </>
+                        )}
+                        {selectedDetail.type === '쓰레기' && (
+                          <>
+                            <div><label className="text-sm text-gray-600">쓰레기 종류</label><p className="text-gray-900 mt-1">{(selectedDetail as any).trashType || '-'}</p></div>
+                            <div><label className="text-sm text-gray-600">양</label><p className="text-gray-900 mt-1">{(selectedDetail as any).amount || '-'}</p></div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 하단 버튼 */}
+                    <div className="flex justify-end gap-3 mt-4">
+                      <button className="px-6 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center gap-2" style={{ borderRadius: '0px' }}>
+                        <Edit2 className="w-4 h-4" />
+                        수정
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
             </div>
           </div>
           )}

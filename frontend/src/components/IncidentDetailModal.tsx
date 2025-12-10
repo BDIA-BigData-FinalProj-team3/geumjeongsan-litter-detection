@@ -3,42 +3,62 @@ import { X, Video, Camera, Map, Edit2, Save } from 'lucide-react';
 import { MapContainer, TileLayer, Marker } from 'react-leaflet';
 import L from 'leaflet';
 
-interface BaseDetail {
+// 백엔드 IncidentDetailDto와 일치하는 인터페이스
+interface IncidentDetail {
+  // 기본 정보
+  id: number;
   accidentCode: string;
+  type: string;  // '화재', '응급', '쓰레기'
   cctvId: string;
+  cctvCode: string;
   location: string;
+  locationDesc?: string;
   time: string;
-  severity: string;
   status: string;
+  severity: string;
   handler: string;
-  detectionBasis?: string;
-}
-
-interface EmergencyDetail extends BaseDetail {
-  type: string;
+  handlerDept?: string;
+  detectionBasis: string;
+  note?: string;
+  responseTime?: string;
+  duration?: string;
+  
+  // CCTV 정보
+  cctvAddress?: string;
+  cctvAddressDescription?: string;
+  latitude?: number;  // CCTV 위도
+  longitude?: number;  // CCTV 경도
+  
+  // AUTO 정보
+  isAIDetection: boolean;
+  modelName?: string;
+  modelVersion?: string;
+  confidence?: string;  // "88%"
+  confidenceReason?: string;
+  severityReason?: string;
+  detectedFeatures?: string;
+  autoCreatedAt?: string;
+  
+  // 응급 상세
   patientName?: string;
   patientAge?: string;
   patientGender?: string;
+  emergencyType?: string;
+  emergencySymptom?: string;
   rescueTeam?: string;
   transferHospital?: string;
-  note?: string;
-}
-
-interface FireDetail extends BaseDetail {
+  
+  // 화재 상세
   windSpeed?: string;
+  windInfo?: string;
   spreadDirection?: string;
   surroundingRisk?: string;
-  note?: string;
-}
-
-interface TrashDetail extends BaseDetail {
-  type: string;
+  
+  // 쓰레기 상세
   trashType?: string;
   amount?: string;
-  note?: string;
+  trashNote?: string;
 }
-
-type IncidentDetail = EmergencyDetail | FireDetail | TrashDetail;
 
 interface IncidentDetailModalProps {
   type: 'emergency' | 'fire' | 'trash';
@@ -81,32 +101,8 @@ export default function IncidentDetailModal({
     trash: '#576F93'
   };
 
-  const modelNames = {
-    emergency: 'EmergencyDetectionModel-v2',
-    fire: 'FireDetectionModel-v2',
-    trash: 'TrashDetectionModel-v2'
-  };
-
-  const modelVersions = {
-    emergency: '2.1.0',
-    fire: '2.0.3',
-    trash: '1.8.5'
-  };
-
-  const confidences = {
-    emergency: '88%',
-    fire: '92%',
-    trash: '85%'
-  };
-
-  const confidenceReasons = {
-    emergency: '낙상 자세 감지, 움직임 패턴 이상, 장시간 움직임 없음',
-    fire: '화염 패턴 명확, 연기 농도 높음, 온도 상승 감지',
-    trash: '투기 행위 명확, 물체 인식 정확, 위치 일치'
-  };
-
-  // AI 자동 탐지인지 확인
-  const isAIDetection = detail.detectionBasis?.includes('AI') || detail.detectionBasis?.includes('자동');
+  // AI 자동 탐지인지 확인 (백엔드에서 제공)
+  const isAIDetection = detail.isAIDetection || false;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4" style={{ zIndex: 10000 }} onClick={onClose}>
@@ -126,17 +122,26 @@ export default function IncidentDetailModal({
             {/* 지도 영역 */}
             <div className="border border-gray-300 mb-3" style={{ height: '380px', borderRadius: '0px' }}>
               <MapContainer
-                center={[35.2456, 129.0917]} 
-                zoom={15}
+                center={
+                  detail.latitude && detail.longitude 
+                    ? [detail.latitude, detail.longitude] 
+                    : [35.2456, 129.0917]  // 기본값: 부산 좌표
+                }
+                zoom={detail.latitude && detail.longitude ? 17 : 15}
                 style={{ height: '100%', width: '100%' }}
                 zoomControl={false}
+                key={`${detail.latitude || 35.2456}-${detail.longitude || 129.0917}`}  // 좌표 변경 시 지도 재렌더링
               >
                 <TileLayer
                   attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                   url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 />
                 <Marker 
-                  position={[35.2456, 129.0917]}
+                  position={
+                    detail.latitude && detail.longitude 
+                      ? [detail.latitude, detail.longitude] 
+                      : [35.2456, 129.0917]  // 좌표가 없어도 기본 위치에 마커 표시
+                  }
                   icon={L.divIcon({
                     className: `custom-${type}-marker`,
                     html: `<div style="width: 40px; height: 40px;">
@@ -267,85 +272,139 @@ export default function IncidentDetailModal({
               {/* AI 자동 탐지인 경우 모델 정보 */}
               {isAIDetection && (
                 <>
-                  <div>
-                    <label className="text-sm text-gray-600">모델명</label>
-                    <p className="text-gray-900 mt-1">{modelNames[type]}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm text-gray-600">모델버전</label>
-                    <p className="text-gray-900 mt-1">{modelVersions[type]}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm text-gray-600">신뢰도</label>
-                    <p className="text-emerald-600 mt-1 font-medium">{confidences[type]}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm text-gray-600">신뢰도 근거</label>
-                    <p className="text-gray-900 mt-1 text-sm">{confidenceReasons[type]}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm text-gray-600 flex items-center gap-1">
-                      심각도 상세
-                      <span className="text-xs text-gray-400 cursor-help" title="심각도 점수 계산 방법">(?)</span>
-                    </label>
-                    <p className="text-gray-900 mt-1 text-sm">
-                      {type === 'emergency' && '응급 점수: 78/100 (낙상 정도: 높음, 반응: 없음, 경과시간: 2분)'}
-                      {type === 'fire' && '위험도 점수: 85/100 (화염 크기: 높음, 연기 농도: 높음, 확산 속도: 중간)'}
-                      {type === 'trash' && '위반 점수: 70/100 (투기량: 많음, 위치: 금지구역, 빈도: 높음)'}
-                    </p>
-                  </div>
+                  {detail.modelName && (
+                    <div>
+                      <label className="text-sm text-gray-600">모델명</label>
+                      <p className="text-gray-900 mt-1">{detail.modelName}</p>
+                    </div>
+                  )}
+                  {detail.modelVersion && (
+                    <div>
+                      <label className="text-sm text-gray-600">모델버전</label>
+                      <p className="text-gray-900 mt-1">{detail.modelVersion}</p>
+                    </div>
+                  )}
+                  {detail.confidence && (
+                    <div>
+                      <label className="text-sm text-gray-600">신뢰도</label>
+                      <p className="text-emerald-600 mt-1 font-medium">{detail.confidence}</p>
+                    </div>
+                  )}
+                  {detail.confidenceReason && (
+                    <div>
+                      <label className="text-sm text-gray-600">신뢰도 근거</label>
+                      <p className="text-gray-900 mt-1 text-sm">{detail.confidenceReason}</p>
+                    </div>
+                  )}
+                  {detail.severityReason && (
+                    <div>
+                      <label className="text-sm text-gray-600 flex items-center gap-1">
+                        심각도 상세
+                        <span className="text-xs text-gray-400 cursor-help" title="심각도 점수 계산 방법">(?)</span>
+                      </label>
+                      <p className="text-gray-900 mt-1 text-sm">{detail.severityReason}</p>
+                    </div>
+                  )}
+                  {detail.detectedFeatures && (
+                    <div>
+                      <label className="text-sm text-gray-600">탐지된 특징</label>
+                      <p className="text-gray-900 mt-1 text-sm">{detail.detectedFeatures}</p>
+                    </div>
+                  )}
                 </>
               )}
 
               {/* 응급 전용 필드 */}
               {type === 'emergency' && (
                 <>
-                  <div>
-                    <label className="text-sm text-gray-600">환자명</label>
-                    <p className="text-gray-900 mt-1">{(detail as EmergencyDetail).patientName || '미상'}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm text-gray-600">성별</label>
-                    <p className="text-gray-900 mt-1">{(detail as EmergencyDetail).patientGender || '미상'}</p>
-                  </div>
-                  <div>
-                    <label className="text-sm text-gray-600">이송병원 및 처리 기관</label>
-                    <p className="text-gray-900 mt-1">{(detail as EmergencyDetail).transferHospital || '-'}</p>
-                  </div>
+                  {detail.patientName && (
+                    <div>
+                      <label className="text-sm text-gray-600">환자명</label>
+                      <p className="text-gray-900 mt-1">{detail.patientName}</p>
+                    </div>
+                  )}
+                  {detail.patientAge && (
+                    <div>
+                      <label className="text-sm text-gray-600">나이</label>
+                      <p className="text-gray-900 mt-1">{detail.patientAge}</p>
+                    </div>
+                  )}
+                  {detail.patientGender && (
+                    <div>
+                      <label className="text-sm text-gray-600">성별</label>
+                      <p className="text-gray-900 mt-1">{detail.patientGender}</p>
+                    </div>
+                  )}
+                  {detail.emergencyType && (
+                    <div>
+                      <label className="text-sm text-gray-600">응급 유형</label>
+                      <p className="text-gray-900 mt-1">{detail.emergencyType}</p>
+                    </div>
+                  )}
+                  {detail.emergencySymptom && (
+                    <div>
+                      <label className="text-sm text-gray-600">증상</label>
+                      <p className="text-gray-900 mt-1">{detail.emergencySymptom}</p>
+                    </div>
+                  )}
+                  {detail.rescueTeam && (
+                    <div>
+                      <label className="text-sm text-gray-600">대응팀</label>
+                      <p className="text-gray-900 mt-1">{detail.rescueTeam}</p>
+                    </div>
+                  )}
+                  {detail.transferHospital && (
+                    <div>
+                      <label className="text-sm text-gray-600">이송병원 및 처리 기관</label>
+                      <p className="text-gray-900 mt-1">{detail.transferHospital}</p>
+                    </div>
+                  )}
                 </>
               )}
 
               {/* 화재 전용 필드 */}
-              {type === 'fire' && isAIDetection && (
+              {type === 'fire' && (
                 <>
-                  <div>
-                    <label className="text-sm text-gray-600">풍향/풍속</label>
-                    <p className="text-gray-900 mt-1">남동풍 15m/s</p>
-                  </div>
-                  <div>
-                    <label className="text-sm text-gray-600">확산 방향</label>
-                    <p className="text-gray-900 mt-1">북서쪽 방향</p>
-                  </div>
-                  <div>
-                    <label className="text-sm text-gray-600">주변 위험</label>
-                    <p className="text-gray-900 mt-1">등산객 10명 예상, 목조 건물 50m 거리</p>
-                  </div>
+                  {detail.windInfo && (
+                    <div>
+                      <label className="text-sm text-gray-600">풍향/풍속</label>
+                      <p className="text-gray-900 mt-1">{detail.windInfo}</p>
+                    </div>
+                  )}
+                  {detail.windSpeed && (
+                    <div>
+                      <label className="text-sm text-gray-600">풍속</label>
+                      <p className="text-gray-900 mt-1">{detail.windSpeed}</p>
+                    </div>
+                  )}
+                  {detail.spreadDirection && (
+                    <div>
+                      <label className="text-sm text-gray-600">확산 방향</label>
+                      <p className="text-gray-900 mt-1">{detail.spreadDirection}</p>
+                    </div>
+                  )}
+                  {detail.surroundingRisk && (
+                    <div>
+                      <label className="text-sm text-gray-600">주변 위험</label>
+                      <p className="text-gray-900 mt-1">{detail.surroundingRisk}</p>
+                    </div>
+                  )}
                 </>
               )}
 
               {/* 쓰레기 전용 필드 */}
               {type === 'trash' && (
                 <>
-                  {(detail as TrashDetail).trashType && (
+                  {detail.trashType && (
                     <div>
                       <label className="text-sm text-gray-600">쓰레기 종류</label>
-                      <p className="text-gray-900 mt-1">{(detail as TrashDetail).trashType}</p>
+                      <p className="text-gray-900 mt-1">{detail.trashType}</p>
                     </div>
                   )}
-                  {(detail as TrashDetail).amount && (
+                  {detail.amount && (
                     <div>
                       <label className="text-sm text-gray-600">양</label>
-                      <p className="text-gray-900 mt-1">{(detail as TrashDetail).amount}</p>
+                      <p className="text-gray-900 mt-1">{detail.amount}</p>
                     </div>
                   )}
                 </>
@@ -356,20 +415,32 @@ export default function IncidentDetailModal({
                 <label className="text-sm text-gray-600">상황메모</label>
                 {isEditing && editedDetail ? (
                   <textarea
-                    value={(editedDetail as any).note || ''}
+                    value={editedDetail.note || ''}
                     onChange={(e) => onFieldChange('note', e.target.value)}
                     className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
                     style={{ borderRadius: '0px' }}
                     rows={3}
                   />
                 ) : (
-                  <p className="text-gray-900 mt-1">
-                    {type === 'emergency' && '동산로 입구에서 낙상, 즉시 119 신고함'}
-                    {type === 'fire' && '초기 화염 발견, 소방대 출동 요청함'}
-                    {type === 'trash' && '대형 쓰레기 불법 투기, 담당 부서 연락 완료'}
-                  </p>
+                  <p className="text-gray-900 mt-1">{detail.note || '-'}</p>
                 )}
               </div>
+              
+              {/* 처리 정보 (처리완료인 경우) */}
+              {detail.responseTime && (
+                <>
+                  <div>
+                    <label className="text-sm text-gray-600">처리완료 시간</label>
+                    <p className="text-gray-900 mt-1">{detail.responseTime}</p>
+                  </div>
+                  {detail.duration && (
+                    <div>
+                      <label className="text-sm text-gray-600">소요 시간</label>
+                      <p className="text-gray-900 mt-1">{detail.duration}</p>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
 
             {/* 하단 버튼 */}

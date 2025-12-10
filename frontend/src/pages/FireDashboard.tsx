@@ -5,7 +5,7 @@ import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
-import { getActiveFires, getCompletedFires, getFireStats, getFireHotspots, createFire, type FireStatsResponse, type HotspotResponse } from '../services/api';
+import { getActiveFires, getCompletedFires, getFireStats, getFireHotspots, createFire, updateFireStatus, getFireDetail, updateFireDetail, type FireStatsResponse, type HotspotResponse } from '../services/api';
 
 interface FireDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -83,9 +83,15 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
         getFireStats(),
         getFireHotspots('this_month', 1),
       ]);
-      const filteredActive = active.filter(f => !completedIncidents.has(f.cctvId));
-      setActiveFires(filteredActive);
-      setCompletedFires(completed);
+      
+      // 프론트엔드에서 화재 타입만 필터링
+      const filteredActive = active.filter(f => f.type === '화재');
+      const filteredCompleted = completed.filter(f => f.type === '화재');
+      
+      const filteredActiveFinal = filteredActive.filter(f => !completedIncidents.has(f.cctvId));
+      setActiveFires(filteredActiveFinal);
+      setCompletedFires(filteredCompleted);
+      setFireCount(filteredActiveFinal.length);
       setStats(statsData);
       setHotspots(hotspotsData);
     };
@@ -111,34 +117,48 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
   const totalPages = Math.ceil(fires.length / pageSize);
   const paginatedFires = fires.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
 
-  const updateStatus = (id: number, newStatus: string) => {
-    if (newStatus === '진화완료') {
-      // 진화완료로 변경 시 목록 이동
-      const now = new Date();
-      const responseTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const updateStatus = async (id: number, newStatus: string) => {
+    try {
+      // 상태 매핑 (화면 → DB)
+      const dbStatus = newStatus === '진화완료' ? 'RESOLVED' 
+                     : newStatus === '진화중' ? 'EXTINGUISHING' 
+                     : newStatus === '대응중' ? 'IN_PROGRESS'
+                     : 'PENDING';
       
-      const itemToComplete = activeFires.find(item => item.id === id);
-      if (itemToComplete) {
-        const completedItem = {
-          ...itemToComplete,
-          status: newStatus,
-          responseTime,
-          duration: '10분'
-        };
+      // 백엔드 API 호출
+      await updateFireStatus(id, dbStatus);
+      
+      // 성공 시 로컬 state 업데이트
+      if (newStatus === '진화완료') {
+        // VIEW에서 최신 데이터를 다시 조회하여 정확한 responseTime과 duration 가져오기
+        const [active, completed] = await Promise.all([
+          getActiveFires(),
+          getCompletedFires(),
+        ]);
         
-        setCompletedFires(prev => [completedItem, ...prev]);
-        setActiveFires(prev => prev.filter(item => item.id !== id));
+        // 프론트엔드에서 화재 타입만 필터링
+        const filteredActive = active.filter(f => f.type === '화재');
+        const filteredCompleted = completed.filter(f => f.type === '화재');
+        
+        const filteredActiveFinal = filteredActive.filter(f => !completedIncidents.has(f.cctvId));
+        setActiveFires(filteredActiveFinal);
+        setCompletedFires(filteredCompleted);
+        setFireCount(filteredActiveFinal.length);
+      } else {
+        // 진행중 상태 변경 시에는 active 목록만 다시 조회
+        const active = await getActiveFires();
+        const filteredActive = active.filter(f => f.type === '화재');
+        const filteredActiveFinal = filteredActive.filter(f => !completedIncidents.has(f.cctvId));
+        setActiveFires(filteredActiveFinal);
+        setFireCount(filteredActiveFinal.length);
       }
-    } else {
-      // 일반 상태 변경
-      setActiveFires(prev => prev.map(item => 
-        item.id === id 
-          ? { ...item, status: newStatus }
-          : item
-      ));
+      
+      setStatusDropdownOpen(null);
+      setDropdownPosition(null);
+    } catch (error) {
+      console.error('상태 업데이트 실패:', error);
+      alert('상태 변경에 실패했습니다.');
     }
-    setStatusDropdownOpen(null);
-    setDropdownPosition(null);
   };
 
   const toggleSelection = (id: number) => {
@@ -183,22 +203,52 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
     setEditedDetail({ ...selectedDetail! });
   };
 
-  const handleSave = () => {
-    if (!editedDetail) return;
+  const handleSave = async () => {
+    if (!editedDetail || !selectedDetail) return;
+
+    // 변경 사항 체크
+    const hasChanges = 
+      editedDetail.severity !== selectedDetail.severity ||
+      editedDetail.note !== (selectedDetail as any).memo;
     
-    // activeFires 또는 completedFires 업데이트
-    if (viewMode === 'active') {
-      setActiveFires(prev => prev.map(f => 
-        f.id === editedDetail.id ? editedDetail : f
-      ));
-    } else {
-      setCompletedFires(prev => prev.map(f => 
-        f.id === editedDetail.id ? editedDetail : f
-      ));
+    if (!hasChanges) {
+      alert('변경된 내용이 없습니다.');
+      setIsEditing(false);
+      return;
     }
     
-    setSelectedDetail(editedDetail);
-    setIsEditing(false);
+    try {
+      await updateFireDetail(editedDetail.id, {
+        memo: editedDetail.note,
+        severity: editedDetail.severity,
+      });
+      
+      // 성공 시 데이터 재로드
+      const [active, completed, statsData, hotspotsData] = await Promise.all([
+        getActiveFires(),
+        getCompletedFires(),
+        getFireStats(),
+        getFireHotspots('this_month', 1),
+      ]);
+      
+      const filteredActive = active.filter(f => f.type === '화재');
+      const filteredCompleted = completed.filter(f => f.type === '화재');
+      const filteredActiveFinal = filteredActive.filter(f => !completedIncidents.has(f.cctvId));
+      
+      setActiveFires(filteredActiveFinal);
+      setCompletedFires(filteredCompleted);
+      setFireCount(filteredActiveFinal.length);
+      setStats(statsData);
+      setHotspots(hotspotsData);
+      
+      setIsEditing(false);
+      setSelectedDetail(null);
+      setEditedDetail(null);
+      alert('수정이 완료되었습니다.');
+    } catch (error) {
+      console.error('저장 실패:', error);
+      alert('저장에 실패했습니다.');
+    }
     setEditedDetail(null);
   };
 
@@ -273,9 +323,15 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
           getFireStats(),
           getFireHotspots('this_month', 1),
         ]);
-        const filteredActive = active.filter(f => !completedIncidents.has(f.cctvId));
-        setActiveFires(filteredActive);
-        setCompletedFires(completed);
+        
+        // 프론트엔드에서 화재 타입만 필터링
+        const filteredActive = active.filter(f => f.type === '화재');
+        const filteredCompleted = completed.filter(f => f.type === '화재');
+        
+        const filteredActiveFinal = filteredActive.filter(f => !completedIncidents.has(f.cctvId));
+        setActiveFires(filteredActiveFinal);
+        setCompletedFires(filteredCompleted);
+        setFireCount(filteredActiveFinal.length);
         setStats(statsData);
         setHotspots(hotspotsData);
       };
@@ -520,7 +576,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                       )}
                       <th className="px-6 py-3 text-left text-gray-600 text-sm">사고 코드</th>
                       <th className="px-6 py-3 text-left text-gray-600 text-sm" style={{ minWidth: '130px', width: '130px' }}>탐지근거</th>
-                      <th className="px-6 py-3 text-left text-gray-600 text-sm">CCTV ID</th>
+                      <th className="px-6 py-3 text-left text-gray-600 text-sm">지역명/CCTV ID</th>
                       <th className="px-6 py-3 text-left text-gray-600 text-sm">발생시간</th>
                       {viewMode === 'completed' && (
                         <>
@@ -543,7 +599,22 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                       <tr 
                         key={fire.id} 
                         className={`hover:bg-gray-50 cursor-pointer ${isHighlighted ? 'bg-yellow-100' : ''}`} 
-                        onClick={() => { setSelectedDetail(fire); setIsEditing(false); setEditedDetail(null); }}
+                        onClick={async () => { 
+                          try {
+                            const detail = await getFireDetail(fire.id);
+                            if (detail) {
+                              setSelectedDetail(detail as any);
+                              setIsEditing(false);
+                              setEditedDetail(null);
+                            }
+                          } catch (error) {
+                            console.error('❌ [Fire] Failed to load detail:', error);
+                            // 실패 시 목록 데이터 사용
+                            setSelectedDetail(fire as any);
+                            setIsEditing(false);
+                            setEditedDetail(null);
+                          }
+                        }}
                       >
                         {viewMode === 'active' && (
                           <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
@@ -565,12 +636,15 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                             {fire.detectionBasis?.includes('AI') || fire.detectionBasis?.includes('자동') ? 'AI 자동 탐지' : '수동 등록'}
                           </span>
                         </td>
-                        <td className="px-6 py-4 text-gray-900">{fire.cctvId}</td>
+                        <td className="px-6 py-4">
+                          <div className="text-gray-900">{fire.location || '-'}</div>
+                          <div className="text-xs text-gray-500">{fire.cctvId}</div>
+                        </td>
                         <td className="px-6 py-4 text-gray-600 text-sm">{fire.time}</td>
-                        {viewMode === 'completed' && 'responseTime' in fire && (
+                        {viewMode === 'completed' && (
                           <>
-                            <td className="px-6 py-4 text-gray-600 text-sm">{fire.responseTime}</td>
-                            <td className="px-6 py-4 text-gray-600">{fire.duration}</td>
+                            <td className="px-6 py-4 text-gray-600 text-sm">{fire.responseTime || '-'}</td>
+                            <td className="px-6 py-4 text-gray-600">{fire.duration || '-'}</td>
                           </>
                         )}
                         <td className="px-6 py-4">
@@ -616,24 +690,31 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                               </button>
                               {statusDropdownOpen === fire.id && dropdownPosition && (
                                 <div className="fixed bg-white shadow-lg border border-gray-200 min-w-[100px]" style={{ borderRadius: '0px', top: `${dropdownPosition.top + 4}px`, left: `${dropdownPosition.left}px`, zIndex: 9999 }}>
-                                  <button
-                                    onClick={() => updateStatus(fire.id, '대기중')}
-                                    className="w-full px-3 py-2 text-left text-sm hover:bg-orange-50 text-gray-700"
-                                  >
-                                    대기중
-                                  </button>
-                                  <button
-                                    onClick={() => updateStatus(fire.id, '진화중')}
-                                    className="w-full px-3 py-2 text-left text-sm hover:bg-green-50 text-gray-700"
-                                  >
-                                    진화중
-                                  </button>
-                                  <button
-                                    onClick={() => updateStatus(fire.id, '진화완료')}
-                                    className="w-full px-3 py-2 text-left text-sm hover:bg-blue-50 text-gray-700"
-                                  >
-                                    진화완료
-                                  </button>
+                                  {/* 상태 옵션에서 현재 상태 제외 */}
+                                  {fire.status !== '대기중' && (
+                                    <button
+                                      onClick={() => updateStatus(fire.id, '대기중')}
+                                      className="w-full px-3 py-2 text-left text-sm hover:bg-orange-50 text-gray-700"
+                                    >
+                                      대기중
+                                    </button>
+                                  )}
+                                  {fire.status !== '진화중' && (
+                                    <button
+                                      onClick={() => updateStatus(fire.id, '진화중')}
+                                      className="w-full px-3 py-2 text-left text-sm hover:bg-green-50 text-gray-700"
+                                    >
+                                      진화중
+                                    </button>
+                                  )}
+                                  {fire.status !== '진화완료' && fire.status !== '처리완료' && (
+                                    <button
+                                      onClick={() => updateStatus(fire.id, '진화완료')}
+                                      className="w-full px-3 py-2 text-left text-sm hover:bg-blue-50 text-gray-700"
+                                    >
+                                      진화완료
+                                    </button>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -1021,22 +1102,82 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                   </button>
                 </div>
                 <div className="flex p-6 gap-6">
-                <div className="flex-1 space-y-4">
-                  <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}><div className="text-center text-gray-500"><ImageIcon className="w-10 h-10 mx-auto mb-2" /><p className="text-sm">이미지</p></div></div>
-                  <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}><div className="text-center text-gray-500"><Video className="w-10 h-10 mx-auto mb-2" /><p className="text-sm">영상</p></div></div>
-                </div>
-                <div className="flex-1 flex flex-col">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
-                  <div className="space-y-4 flex-1">
-                    <div><label className="text-sm text-gray-600">사고 코드</label><p className="text-gray-900 mt-1">{selectedDetail.accidentCode}</p></div>
-                    <div><label className="text-sm text-gray-600">발생시간</label>{isEditing && editedDetail ? <input type="text" value={editedDetail.time} onChange={(e) => setEditedDetail({...editedDetail, time: e.target.value})} className="w-full mt-1 px-3 py-2 border border-gray-300" style={{ borderRadius: '0px' }} /> : <p className="text-gray-900 mt-1">{selectedDetail.time}</p>}</div>
-                    <div><label className="text-sm text-gray-600">발생 위치</label>{isEditing && editedDetail ? <input type="text" value={editedDetail.location || ''} onChange={(e) => setEditedDetail({...editedDetail, location: e.target.value})} className="w-full mt-1 px-3 py-2 border border-gray-300" style={{ borderRadius: '0px' }} /> : <p className="text-gray-900 mt-1">{selectedDetail.location || '-'}</p>}</div>
-                    <div><label className="text-sm text-gray-600">심각도</label>{isEditing && editedDetail ? <select value={editedDetail.severity} onChange={(e) => setEditedDetail({...editedDetail, severity: e.target.value})} className="w-full mt-1 px-3 py-2 border border-gray-300" style={{ borderRadius: '0px' }}><option value="상">상</option><option value="중">중</option><option value="하">하</option></select> : <p className="mt-1"><span className={`px-2 py-1 text-xs ${selectedDetail.severity === '상' ? 'bg-red-100 text-red-700' : selectedDetail.severity === '중' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}`} style={{ borderRadius: '0px' }}>{selectedDetail.severity}</span></p>}</div>
-                    <div><label className="text-sm text-gray-600">메모</label>{isEditing && editedDetail ? <textarea value={(editedDetail as any).memo || ''} onChange={(e) => setEditedDetail({...editedDetail, memo: (e.target as any).value})} className="w-full mt-1 px-3 py-2 border border-gray-300" style={{ borderRadius: '0px' }} rows={3} /> : <p className="text-gray-900 mt-1">{(selectedDetail as any).memo || '-'}</p>}</div>
+                  {/* 왼쪽 패널 - 이미지/영상 */}
+                  <div className="flex-1 space-y-4">
+                    <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
+                      <div className="text-center text-gray-500">
+                        <ImageIcon className="w-10 h-10 mx-auto mb-2" />
+                        <p className="text-sm">이미지</p>
+                      </div>
+                    </div>
+                    <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
+                      <div className="text-center text-gray-500">
+                        <Video className="w-10 h-10 mx-auto mb-2" />
+                        <p className="text-sm">영상</p>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex gap-3 mt-6">{isEditing ? <><button onClick={() => { if (editedDetail) { setSelectedDetail(editedDetail); setIsEditing(false); } }} className="flex-1 px-4 py-2 bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2" style={{ borderRadius: '0px' }}><Save className="w-4 h-4" />저장</button><button onClick={() => { setEditedDetail(selectedDetail); setIsEditing(false); }} className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors" style={{ borderRadius: '0px' }}>취소</button></> : <button onClick={() => { setEditedDetail(selectedDetail); setIsEditing(true); }} className="w-full px-4 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center gap-2" style={{ borderRadius: '0px' }}><Edit2 className="w-4 h-4" />수정</button>}</div>
+
+                  {/* 우측 패널 - 상세정보 */}
+                  <div className="flex-1 flex flex-col">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
+                    <div className="flex gap-4 flex-1">
+                      {/* 왼쪽 열 - 기본 정보 */}
+                      <div className="flex-1 space-y-4">
+                        <div><label className="text-sm text-gray-600">사고 코드</label><p className="text-gray-900 mt-1">{selectedDetail.accidentCode}</p></div>
+                        <div><label className="text-sm text-gray-600">발생시간</label><p className="text-gray-900 mt-1">{selectedDetail.time}</p></div>
+                        <div><label className="text-sm text-gray-600">유형</label><p className="text-gray-900 mt-1">화재</p></div>
+                        <div>
+                          <label className="text-sm text-gray-600">심각도</label>
+                          {isEditing && editedDetail ? (
+                            <select value={editedDetail.severity} onChange={(e) => handleFieldChange('severity', e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900" style={{ borderRadius: '0px' }}>
+                              <option value="상">상</option>
+                              <option value="중">중</option>
+                              <option value="하">하</option>
+                            </select>
+                          ) : (
+                            <p className="mt-1"><span className={`px-2 py-1 text-xs ${selectedDetail.severity === '상' ? 'bg-red-100 text-red-700' : selectedDetail.severity === '중' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}`} style={{ borderRadius: '0px' }}>{selectedDetail.severity}</span></p>
+                          )}
+                        </div>
+                        <div><label className="text-sm text-gray-600">상태</label><p className="text-gray-900 mt-1">{selectedDetail.status}</p></div>
+                        <div><label className="text-sm text-gray-600">처리자</label><p className="text-gray-900 mt-1">{selectedDetail.handler}</p></div>
+                        <div><label className="text-sm text-gray-600">탐지근거</label><p className="text-gray-900 mt-1">수동 등록</p></div>
+                      </div>
+                      {/* 오른쪽 열 - 추가 정보 */}
+                      <div className="flex-1 space-y-4">
+                        <div><label className="text-sm text-gray-600">위치</label><p className="text-gray-900 mt-1">{selectedDetail.location || '-'}</p></div>
+                        <div>
+                          <label className="text-sm text-gray-600">메모</label>
+                          {isEditing && editedDetail ? (
+                            <textarea value={(editedDetail as any).memo || ''} onChange={(e) => handleFieldChange('note', e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-300" style={{ borderRadius: '0px' }} rows={3} />
+                          ) : (
+                            <p className="text-gray-900 mt-1">{(selectedDetail as any).memo || '-'}</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 하단 버튼 */}
+                    <div className="flex justify-end gap-3 mt-4">
+                      {isEditing ? (
+                        <>
+                          <button onClick={handleCancel} className="px-6 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors" style={{ borderRadius: '0px' }}>
+                            취소
+                          </button>
+                          <button onClick={handleSave} className="px-6 py-2 bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2" style={{ borderRadius: '0px' }}>
+                            <Save className="w-4 h-4" />
+                            저장
+                          </button>
+                        </>
+                      ) : (
+                        <button onClick={handleEditClick} className="px-6 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center gap-2" style={{ borderRadius: '0px' }}>
+                          <Edit2 className="w-4 h-4" />
+                          수정
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              </div>
             </div>
           </div>
         )}

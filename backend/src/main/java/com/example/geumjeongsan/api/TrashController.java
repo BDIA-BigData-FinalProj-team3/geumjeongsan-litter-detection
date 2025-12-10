@@ -1,6 +1,7 @@
 package com.example.geumjeongsan.api;
 
 import com.example.geumjeongsan.api.dto.AllIncidentDto;
+import com.example.geumjeongsan.api.dto.IncidentDetailDto;
 import com.example.geumjeongsan.api.dto.IncidentCreateResponse;
 import com.example.geumjeongsan.api.dto.SimpleHotspotDto;
 import com.example.geumjeongsan.api.dto.TrashCreateRequest;
@@ -14,6 +15,7 @@ import com.example.geumjeongsan.domain.dashboard.AvgResponseTimeRepository;
 import com.example.geumjeongsan.domain.incident.IncidentListView;
 import com.example.geumjeongsan.domain.incident.IncidentListViewRepository;
 import com.example.geumjeongsan.domain.incident.TrashService;
+import com.example.geumjeongsan.domain.incident.IncidentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -35,6 +37,7 @@ public class TrashController {
     private final AvgResponseTimeRepository avgResponseTimeRepository;
     private final IncidentListViewRepository incidentListViewRepository;
     private final TrashService trashService;
+    private final IncidentService incidentService;
 
     /**
      * 쓰레기 통계
@@ -118,9 +121,10 @@ public class TrashController {
     public List<AllIncidentDto> getActiveTrashIncidents() {
         log.info("📋 [Trash] Fetching active list");
         
+        // 전체현황과 동일한 방식: 타입 필터링 없이 전체 조회 후 프론트에서 필터링
         List<String> activeStatuses = Arrays.asList("PENDING", "IN_PROGRESS");
         List<IncidentListView> viewList = incidentListViewRepository
-                .findByStatusInAndIncidentTypeOrderByDetectedAtDesc(activeStatuses, "TRASH");
+                .findByStatusInOrderByDetectedAtDesc(activeStatuses);
         
         return viewList.stream()
                 .map(AllIncidentDto::new)
@@ -135,11 +139,9 @@ public class TrashController {
     public List<AllIncidentDto> getCompletedTrashIncidents() {
         log.info("📋 [Trash] Fetching completed list");
         
+        // 전체현황과 동일한 방식
         List<IncidentListView> viewList = incidentListViewRepository
-                .findByStatusInAndIncidentTypeOrderByDetectedAtDesc(
-                        Arrays.asList("RESOLVED"), 
-                        "TRASH"
-                );
+                .findByStatusInOrderByDetectedAtDesc(Arrays.asList("RESOLVED"));
         
         return viewList.stream()
                 .map(AllIncidentDto::new)
@@ -151,7 +153,7 @@ public class TrashController {
      * GET /api/trash/detail/{id}
      */
     @GetMapping("/detail/{id}")
-    public AllIncidentDto getTrashDetail(@PathVariable Long id) {
+    public IncidentDetailDto getTrashDetail(@PathVariable Long id) {
         log.info("🔍 [Trash] Fetching detail - id: {}", id);
         IncidentListView view = incidentListViewRepository.findById(id).orElse(null);
         
@@ -160,7 +162,28 @@ public class TrashController {
             return null;
         }
         
-        return view != null ? new AllIncidentDto(view) : null;
+        if (view == null) {
+            return null;
+        }
+        
+        // CCTV 좌표 조회 (VIEW에 있으면 사용, 없으면 별도 조회)
+        Double latitude = view.getCctvLatitude();
+        Double longitude = view.getCctvLongitude();
+        
+        // VIEW에 좌표가 없으면 별도 조회
+        if ((latitude == null || longitude == null) && view.getCctvId() != null) {
+            try {
+                var cctvResponse = incidentService.getCCTVById(view.getCctvId());
+                if (cctvResponse != null) {
+                    latitude = cctvResponse.getLatitude();
+                    longitude = cctvResponse.getLongitude();
+                }
+            } catch (Exception e) {
+                log.warn("⚠️ [Trash] Failed to fetch CCTV coordinates for CCTV ID {}: {}", view.getCctvId(), e.getMessage());
+            }
+        }
+        
+        return new IncidentDetailDto(view, latitude, longitude);
     }
     
     /**
@@ -186,5 +209,30 @@ public class TrashController {
     public TrashIncidentItem updateTrash(@PathVariable Long id, @RequestBody TrashUpdateRequest request) {
         log.info("✏️ [Trash] Updating trash incident - id: {}", id);
         return trashService.updateTrash(id, request);
+    }
+    
+    /**
+     * 쓰레기 사건 상세정보 업데이트 (수동 등록)
+     * PUT /api/trash/{id}/detail
+     */
+    @PutMapping("/{id}/detail")
+    public Map<String, String> updateTrashDetail(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> request) {
+        try {
+            log.info("✏️ [Trash] Updating trash detail - id: {}", id);
+            
+            trashService.updateTrashDetail(
+                    id,
+                    request.get("memo"),
+                    request.get("severity"),
+                    request.get("trashType"),
+                    request.get("amount")
+            );
+            return Map.of("message", "수정 완료");
+        } catch (RuntimeException e) {
+            log.error("❌ [Trash] Failed to update detail: {}", e.getMessage());
+            throw e;
+        }
     }
 }

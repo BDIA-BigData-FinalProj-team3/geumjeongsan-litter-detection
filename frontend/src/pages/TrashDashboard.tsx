@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Trash2, AlertTriangle, Clock, MapPin, HelpCircle, User, LogOut, X, Video, Image as ImageIcon, Map, Search, ChevronDown, Plus } from 'lucide-react';
+import { Trash2, AlertTriangle, Clock, MapPin, HelpCircle, User, LogOut, X, Video, Image as ImageIcon, Map, Search, ChevronDown, Plus, Edit2, Save } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
-import { getActiveTrashIncidents, getCompletedTrashIncidents, getTrashStats, getTrashHotspots, createTrash, type TrashStatsResponse, type HotspotResponse } from '../services/api';
+import { getActiveTrashIncidents, getCompletedTrashIncidents, getTrashStats, getTrashHotspots, createTrash, updateTrashStatus, getTrashDetail, updateTrashDetail, type TrashStatsResponse, type HotspotResponse } from '../services/api';
 
 interface TrashDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -85,9 +85,15 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
         getTrashStats(),
         getTrashHotspots('this_month', 1),
       ]);
-      const filteredActive = active.filter(t => !completedIncidents.has(t.cctvId));
-      setActiveTrashIncidents(filteredActive);
-      setCompletedTrashIncidents(completed);
+      
+      // 프론트엔드에서 쓰레기 타입만 필터링
+      const filteredActive = active.filter(t => t.type === '쓰레기');
+      const filteredCompleted = completed.filter(t => t.type === '쓰레기');
+      
+      const filteredActiveFinal = filteredActive.filter(t => !completedIncidents.has(t.cctvId));
+      setActiveTrashIncidents(filteredActiveFinal);
+      setCompletedTrashIncidents(filteredCompleted);
+      setTrashCount(filteredActiveFinal.length);
       setStats(statsData);
       setHotspots(hotspotsData);
     };
@@ -135,34 +141,47 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
   const totalPages = Math.ceil(trashIncidents.length / pageSize);
   const paginatedIncidents = trashIncidents.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
 
-  const updateStatus = (id: number, newStatus: string) => {
-    if (newStatus === '처리완료') {
-      // 처리완료로 변경 시 목록 이동
-      const now = new Date();
-      const responseTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  const updateStatus = async (id: number, newStatus: string) => {
+    try {
+      // 상태 매핑 (화면 → DB)
+      const dbStatus = newStatus === '처리완료' ? 'RESOLVED' 
+                     : newStatus === '대응중' ? 'IN_PROGRESS' 
+                     : 'PENDING';
       
-      const itemToComplete = activeTrashIncidents.find(item => item.id === id);
-      if (itemToComplete) {
-        const completedItem = {
-          ...itemToComplete,
-          status: newStatus,
-          responseTime,
-          duration: '10분'
-        };
+      // 백엔드 API 호출
+      await updateTrashStatus(id, dbStatus);
+      
+      // 성공 시 로컬 state 업데이트
+      if (newStatus === '처리완료') {
+        // VIEW에서 최신 데이터를 다시 조회하여 정확한 responseTime과 duration 가져오기
+        const [active, completed] = await Promise.all([
+          getActiveTrashIncidents(),
+          getCompletedTrashIncidents(),
+        ]);
         
-        setCompletedTrashIncidents(prev => [completedItem, ...prev]);
-        setActiveTrashIncidents(prev => prev.filter(item => item.id !== id));
+        // 프론트엔드에서 쓰레기 타입만 필터링
+        const filteredActive = active.filter(t => t.type === '쓰레기');
+        const filteredCompleted = completed.filter(t => t.type === '쓰레기');
+        
+        const filteredActiveFinal = filteredActive.filter(t => !completedIncidents.has(t.cctvId));
+        setActiveTrashIncidents(filteredActiveFinal);
+        setCompletedTrashIncidents(filteredCompleted);
+        setTrashCount(filteredActiveFinal.length);
+      } else {
+        // 진행중 상태 변경 시에는 active 목록만 다시 조회
+        const active = await getActiveTrashIncidents();
+        const filteredActive = active.filter(t => t.type === '쓰레기');
+        const filteredActiveFinal = filteredActive.filter(t => !completedIncidents.has(t.cctvId));
+        setActiveTrashIncidents(filteredActiveFinal);
+        setTrashCount(filteredActiveFinal.length);
       }
-    } else {
-      // 일반 상태 변경
-      setActiveTrashIncidents(prev => prev.map(item => 
-        item.id === id 
-          ? { ...item, status: newStatus }
-          : item
-      ));
+      
+      setStatusDropdownOpen(null);
+      setDropdownPosition(null);
+    } catch (error) {
+      console.error('상태 업데이트 실패:', error);
+      alert('상태 변경에 실패했습니다.');
     }
-    setStatusDropdownOpen(null);
-    setDropdownPosition(null);
   };
 
   const toggleSelection = (id: number) => {
@@ -225,6 +244,78 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
     }
   }, [location.search, activeTrashIncidents, completedTrashIncidents]);
 
+  // 수동 등록 상세 편집 관련 핸들러
+  const handleEditClick = () => {
+    setEditedDetail(selectedDetail);
+    setIsEditing(true);
+  };
+
+  const handleCancel = () => {
+    setEditedDetail(selectedDetail);
+    setIsEditing(false);
+  };
+
+  const handleFieldChange = (field: string, value: string) => {
+    if (editedDetail) {
+      setEditedDetail({
+        ...editedDetail,
+        [field]: value,
+      } as TrashDetail);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!editedDetail || !selectedDetail) return;
+
+    // 변경 사항 체크
+    const hasChanges = 
+      editedDetail.severity !== selectedDetail.severity ||
+      (editedDetail as any).memo !== (selectedDetail as any).memo ||
+      (editedDetail as any).trashType !== (selectedDetail as any).trashType ||
+      (editedDetail as any).amount !== (selectedDetail as any).amount;
+    
+    if (!hasChanges) {
+      alert('변경된 내용이 없습니다.');
+      setIsEditing(false);
+      return;
+    }
+
+    try {
+      await updateTrashDetail(editedDetail.id, {
+        memo: (editedDetail as any).memo,
+        severity: editedDetail.severity,
+        trashType: (editedDetail as any).trashType,
+        amount: (editedDetail as any).amount,
+      });
+
+      // 성공 시 데이터 재로드
+      const [active, completed, statsData, hotspotsData] = await Promise.all([
+        getActiveTrashIncidents(),
+        getCompletedTrashIncidents(),
+        getTrashStats(),
+        getTrashHotspots('this_month', 1),
+      ]);
+
+      const filteredActive = active.filter(t => t.type === '쓰레기');
+      const filteredCompleted = completed.filter(t => t.type === '쓰레기');
+      const filteredActiveFinal = filteredActive.filter(t => !completedIncidents.has(t.cctvId));
+
+      setActiveTrashIncidents(filteredActiveFinal);
+      setCompletedTrashIncidents(filteredCompleted);
+      setTrashCount(filteredActiveFinal.length);
+      setStats(statsData);
+      setHotspots(hotspotsData);
+
+      setIsEditing(false);
+      setSelectedDetail(null);
+      setEditedDetail(null);
+      alert('수정이 완료되었습니다.');
+    } catch (error) {
+      console.error('저장 실패:', error);
+      alert('저장에 실패했습니다.');
+    }
+  };
+
   const handleNewRecordSubmit = async () => {
     // 필수 입력 체크
     if (!newRecord.time || !newRecord.location || !newRecord.severity) {
@@ -265,9 +356,15 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
           getTrashStats(),
           getTrashHotspots('this_month', 1),
         ]);
-        const filteredActive = active.filter(t => !completedIncidents.has(t.cctvId));
-        setActiveTrashIncidents(filteredActive);
-        setCompletedTrashIncidents(completed);
+        
+        // 프론트엔드에서 쓰레기 타입만 필터링
+        const filteredActive = active.filter(t => t.type === '쓰레기');
+        const filteredCompleted = completed.filter(t => t.type === '쓰레기');
+        
+        const filteredActiveFinal = filteredActive.filter(t => !completedIncidents.has(t.cctvId));
+        setActiveTrashIncidents(filteredActiveFinal);
+        setCompletedTrashIncidents(filteredCompleted);
+        setTrashCount(filteredActiveFinal.length);
         setStats(statsData);
         setHotspots(hotspotsData);
       };
@@ -504,7 +601,7 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
                         )}
                         <th className="px-6 py-3 text-left text-gray-600">사고 코드</th>
                         <th className="px-6 py-3 text-left text-gray-600" style={{ minWidth: '130px', width: '130px' }}>탐지근거</th>
-                        <th className="px-6 py-3 text-left text-gray-600">CCTV ID</th>
+                        <th className="px-6 py-3 text-left text-gray-600">지역명/CCTV ID</th>
                         <th className="px-6 py-3 text-left text-gray-600">발생시간</th>
                         {viewMode === 'completed' && (
                           <>
@@ -526,7 +623,18 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
                         <tr 
                           key={incident.id} 
                           className={`border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${isHighlighted ? 'bg-yellow-100' : ''}`} 
-                          onClick={() => setSelectedDetail(incident)}
+                          onClick={async () => { 
+                            try {
+                              const detail = await getTrashDetail(incident.id);
+                              if (detail) {
+                                setSelectedDetail(detail as any);
+                              }
+                            } catch (error) {
+                              console.error('❌ [Trash] Failed to load detail:', error);
+                              // 실패 시 목록 데이터 사용
+                              setSelectedDetail(incident as any);
+                            }
+                          }}
                         >
                           {viewMode === 'active' && (
                             <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
@@ -548,12 +656,15 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
                               {incident.detectionBasis?.includes('AI') || incident.detectionBasis?.includes('자동') ? 'AI 자동 탐지' : '수동 등록'}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-gray-900">{incident.cctvId}</td>
+                          <td className="px-6 py-4">
+                            <div className="text-gray-900">{incident.location || '-'}</div>
+                            <div className="text-xs text-gray-500">{incident.cctvId}</div>
+                          </td>
                           <td className="px-6 py-4 text-gray-600">{incident.time}</td>
-                          {viewMode === 'completed' && 'responseTime' in incident && (
+                          {viewMode === 'completed' && (
                             <>
-                              <td className="px-6 py-4 text-gray-600">{incident.responseTime}</td>
-                              <td className="px-6 py-4 text-gray-600">{incident.duration}</td>
+                              <td className="px-6 py-4 text-gray-600">{incident.responseTime || '-'}</td>
+                              <td className="px-6 py-4 text-gray-600">{incident.duration || '-'}</td>
                             </>
                           )}
                           <td className="px-6 py-4">
@@ -598,24 +709,31 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
                                 </button>
                                 {statusDropdownOpen === incident.id && dropdownPosition && (
                                   <div className="fixed bg-white shadow-lg border border-gray-200 min-w-[100px]" style={{ borderRadius: '0px', top: `${dropdownPosition.top + 4}px`, left: `${dropdownPosition.left}px`, zIndex: 9999 }}>
-                                    <button
-                                      onClick={() => updateStatus(incident.id, '대기중')}
-                                      className="w-full px-3 py-2 text-left text-sm hover:bg-orange-50 text-gray-700"
-                                    >
-                                      대기중
-                                    </button>
-                                    <button
-                                      onClick={() => updateStatus(incident.id, '대응중')}
-                                      className="w-full px-3 py-2 text-left text-sm hover:bg-green-50 text-gray-700"
-                                    >
-                                      대응중
-                                    </button>
-                                    <button
-                                      onClick={() => updateStatus(incident.id, '처리완료')}
-                                      className="w-full px-3 py-2 text-left text-sm hover:bg-blue-50 text-gray-700"
-                                    >
-                                      처리완료
-                                    </button>
+                                    {/* 상태 옵션에서 현재 상태 제외 */}
+                                    {incident.status !== '대기중' && (
+                                      <button
+                                        onClick={() => updateStatus(incident.id, '대기중')}
+                                        className="w-full px-3 py-2 text-left text-sm hover:bg-orange-50 text-gray-700"
+                                      >
+                                        대기중
+                                      </button>
+                                    )}
+                                    {incident.status !== '대응중' && (
+                                      <button
+                                        onClick={() => updateStatus(incident.id, '대응중')}
+                                        className="w-full px-3 py-2 text-left text-sm hover:bg-green-50 text-gray-700"
+                                      >
+                                        대응중
+                                      </button>
+                                    )}
+                                    {incident.status !== '처리완료' && (
+                                      <button
+                                        onClick={() => updateStatus(incident.id, '처리완료')}
+                                        className="w-full px-3 py-2 text-left text-sm hover:bg-blue-50 text-gray-700"
+                                      >
+                                        처리완료
+                                      </button>
+                                    )}
                                   </div>
                                 )}
                               </div>
@@ -724,26 +842,98 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
                   </button>
                 </div>
                 <div className="flex p-6 gap-6">
-                <div className="flex-1 space-y-4">
-                  <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}><div className="text-center text-gray-500"><ImageIcon className="w-10 h-10 mx-auto mb-2" /><p className="text-sm">이미지</p></div></div>
-                  <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}><div className="text-center text-gray-500"><Video className="w-10 h-10 mx-auto mb-2" /><p className="text-sm">영상</p></div></div>
-                </div>
-                <div className="flex-1 flex flex-col">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
-                  <div className="space-y-4 flex-1">
-                    <div><label className="text-sm text-gray-600">사고 코드</label><p className="text-gray-900 mt-1">{selectedDetail.accidentCode}</p></div>
-                    <div><label className="text-sm text-gray-600">발생시간</label><p className="text-gray-900 mt-1">{selectedDetail.time}</p></div>
-                    <div><label className="text-sm text-gray-600">발생 위치</label><p className="text-gray-900 mt-1">{selectedDetail.location || '-'}</p></div>
-                    <div><label className="text-sm text-gray-600">심각도</label><p className="mt-1"><span className={`px-2 py-1 text-xs ${selectedDetail.severity === 'high' ? 'bg-red-100 text-red-700' : selectedDetail.severity === 'medium' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}`} style={{ borderRadius: '0px' }}>{selectedDetail.severity === 'high' ? '상' : selectedDetail.severity === 'medium' ? '중' : '하'}</span></p></div>
-                    <div><label className="text-sm text-gray-600">메모</label><p className="text-gray-900 mt-1">{(selectedDetail as any).memo || '-'}</p></div>
-                    <div><label className="text-sm text-gray-600">쓰레기 종류</label><p className="text-gray-900 mt-1">{(selectedDetail as any).trashType || '-'}</p></div>
-                    <div><label className="text-sm text-gray-600">양</label><p className="text-gray-900 mt-1">{(selectedDetail as any).amount || '-'}</p></div>
+                  {/* 왼쪽 패널 - 이미지/영상 */}
+                  <div className="flex-1 space-y-4">
+                    <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
+                      <div className="text-center text-gray-500">
+                        <ImageIcon className="w-10 h-10 mx-auto mb-2" />
+                        <p className="text-sm">이미지</p>
+                      </div>
+                    </div>
+                    <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
+                      <div className="text-center text-gray-500">
+                        <Video className="w-10 h-10 mx-auto mb-2" />
+                        <p className="text-sm">영상</p>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex gap-3 mt-6">
-                    <button className="w-full px-4 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center gap-2" style={{ borderRadius: '0px' }}><Edit2 className="w-4 h-4" />수정</button>
+
+                  {/* 우측 패널 - 상세정보 */}
+                  <div className="flex-1 flex flex-col">
+                    <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
+                    <div className="flex gap-4 flex-1">
+                      {/* 왼쪽 열 - 기본 정보 */}
+                      <div className="flex-1 space-y-4">
+                        <div><label className="text-sm text-gray-600">사고 코드</label><p className="text-gray-900 mt-1">{selectedDetail.accidentCode}</p></div>
+                        <div><label className="text-sm text-gray-600">발생시간</label><p className="text-gray-900 mt-1">{selectedDetail.time}</p></div>
+                        <div><label className="text-sm text-gray-600">유형</label><p className="text-gray-900 mt-1">쓰레기</p></div>
+                        <div>
+                          <label className="text-sm text-gray-600">심각도</label>
+                          {isEditing && editedDetail ? (
+                            <select value={editedDetail.severity} onChange={(e) => handleFieldChange('severity', e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900" style={{ borderRadius: '0px' }}>
+                              <option value="상">상</option>
+                              <option value="중">중</option>
+                              <option value="하">하</option>
+                            </select>
+                          ) : (
+                            <p className="mt-1"><span className={`px-2 py-1 text-xs ${selectedDetail.severity === '상' ? 'bg-red-100 text-red-700' : selectedDetail.severity === '중' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}`} style={{ borderRadius: '0px' }}>{selectedDetail.severity}</span></p>
+                          )}
+                        </div>
+                        <div><label className="text-sm text-gray-600">상태</label><p className="text-gray-900 mt-1">{selectedDetail.status}</p></div>
+                        <div><label className="text-sm text-gray-600">처리자</label><p className="text-gray-900 mt-1">{selectedDetail.handler}</p></div>
+                        <div><label className="text-sm text-gray-600">탐지근거</label><p className="text-gray-900 mt-1">수동 등록</p></div>
+                      </div>
+                      {/* 오른쪽 열 - 추가 정보 */}
+                      <div className="flex-1 space-y-4">
+                        <div><label className="text-sm text-gray-600">위치</label><p className="text-gray-900 mt-1">{selectedDetail.location || '-'}</p></div>
+                        <div>
+                          <label className="text-sm text-gray-600">쓰레기 종류</label>
+                          {isEditing && editedDetail ? (
+                            <input type="text" value={(editedDetail as any).trashType || ''} onChange={(e) => handleFieldChange('trashType', e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-300" style={{ borderRadius: '0px' }} placeholder="쓰레기 종류" />
+                          ) : (
+                            <p className="text-gray-900 mt-1">{(selectedDetail as any).trashType || '-'}</p>
+                          )}
+                        </div>
+                        <div>
+                          <label className="text-sm text-gray-600">양</label>
+                          {isEditing && editedDetail ? (
+                            <input type="text" value={(editedDetail as any).amount || ''} onChange={(e) => handleFieldChange('amount', e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-300" style={{ borderRadius: '0px' }} placeholder="양" />
+                          ) : (
+                            <p className="text-gray-900 mt-1">{(selectedDetail as any).amount || '-'}</p>
+                          )}
+                        </div>
+                        <div>
+                          <label className="text-sm text-gray-600">메모</label>
+                          {isEditing && editedDetail ? (
+                            <textarea value={(editedDetail as any).memo || ''} onChange={(e) => handleFieldChange('memo', e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-300" style={{ borderRadius: '0px' }} rows={3} />
+                          ) : (
+                            <p className="text-gray-900 mt-1">{(selectedDetail as any).memo || '-'}</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 하단 버튼 */}
+                    <div className="flex justify-end gap-3 mt-4">
+                      {isEditing ? (
+                        <>
+                          <button onClick={handleCancel} className="px-6 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors" style={{ borderRadius: '0px' }}>
+                            취소
+                          </button>
+                          <button onClick={handleSave} className="px-6 py-2 bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2" style={{ borderRadius: '0px' }}>
+                            <Save className="w-4 h-4" />
+                            저장
+                          </button>
+                        </>
+                      ) : (
+                        <button onClick={handleEditClick} className="px-6 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center gap-2" style={{ borderRadius: '0px' }}>
+                          <Edit2 className="w-4 h-4" />
+                          수정
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
             </div>
           </div>
         )}
@@ -842,6 +1032,7 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
                   />
                 </div>
 
+                {/* 쓰레기 특화 필드 */}
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">쓰레기 종류</label>
                   <input

@@ -34,6 +34,7 @@ public class IncidentService {
     private final IncidentManualRepository incidentManualRepository;
     private final CCTVRepository cctvRepository;
     private final MediaFileRepository mediaFileRepository;
+    private final IncidentListViewRepository incidentListViewRepository;
     private final EntityManager entityManager;
     private final ObjectMapper objectMapper;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
@@ -44,6 +45,7 @@ public class IncidentService {
                          IncidentManualRepository incidentManualRepository,
                          CCTVRepository cctvRepository,
                          MediaFileRepository mediaFileRepository,
+                         IncidentListViewRepository incidentListViewRepository,
                          EntityManager entityManager,
                          ObjectMapper objectMapper) {
         this.incidentRepository = incidentRepository;
@@ -52,6 +54,7 @@ public class IncidentService {
         this.incidentManualRepository = incidentManualRepository;
         this.cctvRepository = cctvRepository;
         this.mediaFileRepository = mediaFileRepository;
+        this.incidentListViewRepository = incidentListViewRepository;
         this.entityManager = entityManager;
         this.objectMapper = objectMapper;
     }
@@ -978,29 +981,32 @@ public class IncidentService {
                 .build();
     }
 
-    // CCTV별 사건 상세 조회
+    // CCTV별 사건 상세 조회 (VIEW 사용)
     public List<CCTVIncidentDetailResponse.IncidentDetail> getCCTVIncidents(Long cctvId) {
-        List<Incident> incidents = incidentRepository.findAll().stream()
-                .filter(i -> i.getCctvId().equals(cctvId))
-                .sorted((a, b) -> b.getDetectedAt().compareTo(a.getDetectedAt()))
-                .collect(Collectors.toList());
+        // view_all_incidents_list에서 CCTV ID로 조회
+        List<IncidentListView> viewList = incidentListViewRepository.findByCctvIdOrderByDetectedAtDesc(cctvId);
         
-        return incidents.stream().map(incident -> {
-            String severity = switch (incident.getSeverityLevel()) {
+        return viewList.stream().map(view -> {
+            String severity = switch (view.getSeverityLevel()) {
                 case "HIGH" -> "high";
                 case "MEDIUM" -> "medium";
                 case "LOW" -> "low";
                 default -> "medium";
             };
             
+            // detectedAt을 문자열로 변환
+            String detectedAtStr = view.getDetectedAt() != null 
+                ? view.getDetectedAt().format(DATE_FORMATTER)
+                : "";
+            
             return CCTVIncidentDetailResponse.IncidentDetail.builder()
-                    .id(incident.getId())
-                    .incidentType(incident.getIncidentType())
-                    .detectedAt(incident.getDetectedAt().format(DATE_FORMATTER))
-                    .detectionModel(incident.getDetectionModel())
-                    .detectionConfidence(incident.getDetectionConfidence())
+                    .id(view.getIncidentId())
+                    .incidentType(view.getIncidentType())
+                    .detectedAt(detectedAtStr)
+                    .detectionModel(view.getDetectionModel())
+                    .detectionConfidence(view.getDetectionConfidence())
                     .severity(severity)
-                    .status(incident.getStatus())
+                    .status(view.getStatus())
                     .build();
         }).collect(Collectors.toList());
     }

@@ -265,12 +265,18 @@ export const getCCTVMarkers = async (): Promise<CCTVMarker[]> => {
  * @returns Array of incident objects
  */
 export const getCCTVIncidents = async (id: number): Promise<any[]> => {
-  // TODO: Replace with actual API call
-  // const response = await fetch(`/api/cctv/${id}/incidents`);
-  // return await response.json();
-  
-  // Mock data for development
-  return Promise.resolve([]);
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/cctv/${id}/incidents`);
+    if (!response.ok) {
+      console.warn(`⚠️ [CCTV] Failed to fetch incidents for CCTV ${id}: ${response.status}`);
+      return [];
+    }
+    const data = await response.json();
+    return data || [];
+  } catch (error) {
+    console.error(`❌ [CCTV] Error fetching incidents for CCTV ${id}:`, error);
+    return [];
+  }
 };
 
 /**
@@ -774,6 +780,30 @@ export const getEmergencyHotspots = async (
 };
 
 /**
+ * 응급 사건 상태 업데이트
+ */
+export const updateEmergencyStatus = async (id: number, status: string, handlerName?: string) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/emergency/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ status, handlerName }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to update emergency status: ${response.status}`);
+    }
+    const result = await response.json();
+    console.log('✅ [Emergency] Status updated:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ [Emergency] Failed to update status:', error);
+    throw error;
+  }
+};
+
+/**
  * 화재 통계 조회 (실제 백엔드 API)
  * GET /api/fire-dashboard/stats
  */
@@ -824,6 +854,30 @@ export const getFireHotspots = async (
 };
 
 /**
+ * 화재 사건 상태 업데이트
+ */
+export const updateFireStatus = async (id: number, status: string, handlerName?: string) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/fire/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ status, handlerName }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to update fire status: ${response.status}`);
+    }
+    const result = await response.json();
+    console.log('✅ [Fire] Status updated:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ [Fire] Failed to update status:', error);
+    throw error;
+  }
+};
+
+/**
  * 쓰레기 통계 조회 (실제 백엔드 API)
  * GET /api/trash-dashboard/stats
  */
@@ -870,6 +924,116 @@ export const getTrashHotspots = async (
   } catch (error) {
     console.error('Error fetching trash hotspots:', error);
     return [];
+  }
+};
+
+/**
+ * 쓰레기 사건 상태 업데이트
+ */
+export const updateTrashStatus = async (id: number, status: string, handlerName?: string) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/trash/${id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ status, handlerName }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to update trash status: ${response.status}`);
+    }
+    const result = await response.json();
+    console.log('✅ [Trash] Status updated:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ [Trash] Failed to update status:', error);
+    throw error;
+  }
+};
+
+/**
+ * 응급 사건 상세정보 업데이트 (수동 등록)
+ */
+export const updateEmergencyDetail = async (id: number, data: {
+  memo?: string;
+  severity?: string;
+  patientName?: string;
+  patientGender?: string;
+  transferHospital?: string;
+}) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/emergency/${id}/detail`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to update emergency detail: ${response.status}`);
+    }
+    const result = await response.json();
+    console.log('✅ [Emergency] Detail updated:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ [Emergency] Failed to update detail:', error);
+    throw error;
+  }
+};
+
+/**
+ * 화재 사건 상세정보 업데이트 (수동 등록)
+ */
+export const updateFireDetail = async (id: number, data: {
+  memo?: string;
+  severity?: string;
+}) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/fire/${id}/detail`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to update fire detail: ${response.status}`);
+    }
+    const result = await response.json();
+    console.log('✅ [Fire] Detail updated:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ [Fire] Failed to update detail:', error);
+    throw error;
+  }
+};
+
+/**
+ * 쓰레기 사건 상세정보 업데이트 (수동 등록)
+ */
+export const updateTrashDetail = async (id: number, data: {
+  memo?: string;
+  severity?: string;
+  trashType?: string;
+  amount?: string;
+}) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/trash/${id}/detail`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to update trash detail: ${response.status}`);
+    }
+    const result = await response.json();
+    console.log('✅ [Trash] Detail updated:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ [Trash] Failed to update detail:', error);
+    throw error;
   }
 };
 
@@ -1029,6 +1193,60 @@ export const getAllIncidentDetail = async (id: number) => {
     }
   } catch (error) {
     console.error('❌ [AllIncidents] Failed to fetch detail:', error);
+  }
+  return null;
+};
+
+/**
+ * 응급 사건 상세 조회
+ * GET /api/emergency/detail/{id}
+ */
+export const getEmergencyDetail = async (id: number) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/emergency/detail/${id}`);
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ [Emergency] Loaded detail:', data);
+      return data;
+    }
+  } catch (error) {
+    console.error('❌ [Emergency] Failed to fetch detail:', error);
+  }
+  return null;
+};
+
+/**
+ * 화재 사건 상세 조회
+ * GET /api/fire/detail/{id}
+ */
+export const getFireDetail = async (id: number) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/fire/detail/${id}`);
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ [Fire] Loaded detail:', data);
+      return data;
+    }
+  } catch (error) {
+    console.error('❌ [Fire] Failed to fetch detail:', error);
+  }
+  return null;
+};
+
+/**
+ * 쓰레기 사건 상세 조회
+ * GET /api/trash/detail/{id}
+ */
+export const getTrashDetail = async (id: number) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/trash/detail/${id}`);
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ [Trash] Loaded detail:', data);
+      return data;
+    }
+  } catch (error) {
+    console.error('❌ [Trash] Failed to fetch detail:', error);
   }
   return null;
 };
@@ -1207,4 +1425,29 @@ export const createTrash = async (data: {
     throw error;
   }
 };
+
+// ============================================
+// MainMap API - 등산로
+// ============================================
+
+/**
+ * 등산로 구간 조회
+ * GET /api/mainmap/trails
+ */
+export const getTrails = async () => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/mainmap/trails`);
+    if (!response.ok) {
+      console.warn('⚠️ [MainMap] Failed to fetch trails');
+      return [];
+    }
+    const data = await response.json();
+    console.log('✅ [MainMap] Loaded trails:', data.length);
+    return data;
+  } catch (error) {
+    console.error('❌ [MainMap] Error fetching trails:', error);
+    return [];
+  }
+};
+
 

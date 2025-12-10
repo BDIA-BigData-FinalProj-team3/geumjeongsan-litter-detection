@@ -52,7 +52,9 @@ public class CCTVController {
             List<CCTVIncidentDetailResponse.IncidentDetail> incidents = incidentService.getCCTVIncidents(id);
             return ResponseEntity.ok(incidents);
         } catch (Exception e) {
-            return ResponseEntity.notFound().build();
+            e.printStackTrace();
+            // 빈 리스트 반환 (404 대신)
+            return ResponseEntity.ok(java.util.Collections.emptyList());
         }
     }
 

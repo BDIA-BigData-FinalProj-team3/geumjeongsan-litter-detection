@@ -64,12 +64,12 @@ public class AllIncidentDto {
         // 처리완료 시간
         this.responseTime = view.getResolvedAt() != null 
                 ? view.getResolvedAt().format(TIME_FORMATTER) 
-                : null;
+                : "";
         
         // 소요 시간
         this.duration = view.getProcessingMinutes() != null 
                 ? formatDuration(view.getProcessingMinutes()) 
-                : null;
+                : "";
     }
 
     private String convertTypeToKorean(String type) {

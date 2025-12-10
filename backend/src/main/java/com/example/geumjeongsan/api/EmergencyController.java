@@ -1,8 +1,11 @@
 package com.example.geumjeongsan.api;
 
 import com.example.geumjeongsan.api.dto.AllIncidentDto;
+import com.example.geumjeongsan.api.dto.IncidentDetailDto;
 import com.example.geumjeongsan.api.dto.EmergencyCreateRequest;
+import com.example.geumjeongsan.api.dto.EmergencyResponse;
 import com.example.geumjeongsan.api.dto.IncidentCreateResponse;
+import com.example.geumjeongsan.api.dto.IncidentStatusUpdateRequest;
 import com.example.geumjeongsan.api.dto.SimpleHotspotDto;
 import com.example.geumjeongsan.api.dto.EmergencyStatsDto;
 import com.example.geumjeongsan.domain.dashboard.DailyStats;
@@ -12,6 +15,7 @@ import com.example.geumjeongsan.domain.dashboard.AvgResponseTimeRepository;
 import com.example.geumjeongsan.domain.incident.EmergencyService;
 import com.example.geumjeongsan.domain.incident.IncidentListView;
 import com.example.geumjeongsan.domain.incident.IncidentListViewRepository;
+import com.example.geumjeongsan.domain.incident.IncidentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -35,6 +39,7 @@ public class EmergencyController {
     private final AvgResponseTimeRepository avgResponseTimeRepository;
     private final IncidentListViewRepository incidentListViewRepository;
     private final EmergencyService emergencyService;
+    private final IncidentService incidentService;
 
     /**
      * 응급 통계
@@ -124,9 +129,10 @@ public class EmergencyController {
     public List<AllIncidentDto> getActiveEmergencies() {
         log.info("📋 [Emergency] Fetching active list");
         
+        // 전체현황과 동일한 방식: 타입 필터링 없이 전체 조회 후 프론트에서 필터링
         List<String> activeStatuses = Arrays.asList("PENDING", "IN_PROGRESS");
         List<IncidentListView> viewList = incidentListViewRepository
-                .findByStatusInAndIncidentTypeOrderByDetectedAtDesc(activeStatuses, "EMERGENCY");
+                .findByStatusInOrderByDetectedAtDesc(activeStatuses);
         
         return viewList.stream()
                 .map(AllIncidentDto::new)
@@ -141,11 +147,9 @@ public class EmergencyController {
     public List<AllIncidentDto> getCompletedEmergencies() {
         log.info("📋 [Emergency] Fetching completed list");
         
+        // 전체현황과 동일한 방식
         List<IncidentListView> viewList = incidentListViewRepository
-                .findByStatusInAndIncidentTypeOrderByDetectedAtDesc(
-                        Arrays.asList("RESOLVED"), 
-                        "EMERGENCY"
-                );
+                .findByStatusInOrderByDetectedAtDesc(Arrays.asList("RESOLVED"));
         
         return viewList.stream()
                 .map(AllIncidentDto::new)
@@ -157,7 +161,7 @@ public class EmergencyController {
      * GET /api/emergency/detail/{id}
      */
     @GetMapping("/detail/{id}")
-    public AllIncidentDto getEmergencyDetail(@PathVariable Long id) {
+    public IncidentDetailDto getEmergencyDetail(@PathVariable Long id) {
         log.info("🔍 [Emergency] Fetching detail - id: {}", id);
         IncidentListView view = incidentListViewRepository.findById(id).orElse(null);
         
@@ -167,7 +171,84 @@ public class EmergencyController {
             return null;
         }
         
-        return view != null ? new AllIncidentDto(view) : null;
+        if (view == null) {
+            return null;
+        }
+        
+        // CCTV 좌표 조회 (VIEW에 있으면 사용, 없으면 별도 조회)
+        Double latitude = view.getCctvLatitude();
+        Double longitude = view.getCctvLongitude();
+        
+        // VIEW에 좌표가 없으면 별도 조회
+        if ((latitude == null || longitude == null) && view.getCctvId() != null) {
+            try {
+                var cctvResponse = incidentService.getCCTVById(view.getCctvId());
+                if (cctvResponse != null) {
+                    latitude = cctvResponse.getLatitude();
+                    longitude = cctvResponse.getLongitude();
+                }
+            } catch (Exception e) {
+                log.warn("⚠️ [Emergency] Failed to fetch CCTV coordinates for CCTV ID {}: {}", view.getCctvId(), e.getMessage());
+            }
+        }
+        
+        return new IncidentDetailDto(view, latitude, longitude);
+    }
+    
+    /**
+     * 응급 사건 상태 업데이트
+     * PUT /api/emergency/{id}
+     */
+    @PutMapping("/{id}")
+    public ResponseEntity<?> updateEmergencyStatus(
+            @PathVariable Long id,
+            @RequestBody IncidentStatusUpdateRequest request) {
+        try {
+            log.info("✏️ [Emergency] Updating emergency incident - id: {}, status: {}", id, request.getStatus());
+            
+            EmergencyResponse response = emergencyService.updateEmergencyStatus(
+                    id,
+                    request.getStatus(),
+                    request.getHandlerName()
+            );
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            log.error("❌ [Emergency] Validation error: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (RuntimeException e) {
+            log.error("❌ [Emergency] Failed to update emergency: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("❌ [Emergency] Failed to update emergency: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+    
+    /**
+     * 응급 사건 상세정보 업데이트 (수동 등록)
+     * PUT /api/emergency/{id}/detail
+     */
+    @PutMapping("/{id}/detail")
+    public ResponseEntity<?> updateEmergencyDetail(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> request) {
+        try {
+            log.info("✏️ [Emergency] Updating emergency detail - id: {}", id);
+            
+            emergencyService.updateEmergencyDetail(
+                    id,
+                    request.get("memo"),
+                    request.get("severity"),
+                    request.get("patientName"),
+                    request.get("patientGender"),
+                    request.get("transferHospital")
+            );
+            return ResponseEntity.ok(Map.of("message", "수정 완료"));
+        } catch (RuntimeException e) {
+            log.error("❌ [Emergency] Failed to update detail: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
     }
     
     /**

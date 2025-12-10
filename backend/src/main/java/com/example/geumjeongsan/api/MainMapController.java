@@ -4,6 +4,8 @@ import com.example.geumjeongsan.domain.mainmap.MainMapIncidentMarker;
 import com.example.geumjeongsan.domain.mainmap.MainMapIncidentMarkerRepository;
 import com.example.geumjeongsan.domain.mainmap.MainMapCCTVStatus;
 import com.example.geumjeongsan.domain.mainmap.MainMapCCTVStatusRepository;
+import com.example.geumjeongsan.domain.mainmap.MainMapTrail;
+import com.example.geumjeongsan.domain.mainmap.MainMapTrailRepository;
 import com.example.geumjeongsan.domain.weather.Weather;
 import com.example.geumjeongsan.domain.weather.WeatherRepository;
 import lombok.extern.slf4j.Slf4j;
@@ -21,15 +23,18 @@ public class MainMapController {
     private final MainMapIncidentMarkerRepository incidentMarkerRepository;
     private final MainMapCCTVStatusRepository cctvStatusRepository;
     private final WeatherRepository weatherRepository;
+    private final MainMapTrailRepository trailRepository;
 
     public MainMapController(
             MainMapIncidentMarkerRepository incidentMarkerRepository,
             MainMapCCTVStatusRepository cctvStatusRepository,
-            WeatherRepository weatherRepository
+            WeatherRepository weatherRepository,
+            MainMapTrailRepository trailRepository
     ) {
         this.incidentMarkerRepository = incidentMarkerRepository;
         this.cctvStatusRepository = cctvStatusRepository;
         this.weatherRepository = weatherRepository;
+        this.trailRepository = trailRepository;
     }
 
     /**
@@ -104,6 +109,31 @@ public class MainMapController {
         }
         
         return weather;
+    }
+    
+    /**
+     * 등산로 구간 조회
+     * 
+     * GET /api/mainmap/trails
+     * 
+     * 용도: MainMap - 등산로 표시
+     * VIEW: view_mainmap_trail
+     * 
+     * 반환:
+     * - 등산로 구간 정보 (segment_id, segment_name, trail_name_kor)
+     * - LineString geometry (좌표 배열)
+     */
+    @GetMapping("/trails")
+    public List<MainMapTrail> getTrails() {
+        log.info("🥾 [MainMap] Fetching trail segments");
+        try {
+            List<MainMapTrail> trails = trailRepository.findAll();
+            log.info("✅ [MainMap] Loaded {} trail segments", trails.size());
+            return trails;
+        } catch (Exception e) {
+            log.error("❌ [MainMap] Failed to load trails: {}", e.getMessage(), e);
+            return java.util.Collections.emptyList();
+        }
     }
 }
 

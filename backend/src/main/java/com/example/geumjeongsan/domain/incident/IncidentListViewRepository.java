@@ -33,6 +33,11 @@ public interface IncidentListViewRepository extends JpaRepository<IncidentListVi
     );
 
     /**
+     * CCTV ID로 조회
+     */
+    List<IncidentListView> findByCctvIdOrderByDetectedAtDesc(Long cctvId);
+
+    /**
      * 검색 (사고코드, CCTV ID, 지역명)
      */
     @Query("SELECT i FROM IncidentListView i WHERE " +

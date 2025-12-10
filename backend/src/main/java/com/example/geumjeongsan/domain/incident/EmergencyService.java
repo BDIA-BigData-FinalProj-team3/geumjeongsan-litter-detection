@@ -7,7 +7,6 @@ import com.example.geumjeongsan.api.dto.EmergencyIncidentListDto;
 import com.example.geumjeongsan.api.dto.EmergencyRequest;
 import com.example.geumjeongsan.api.dto.EmergencyResponse;
 import com.example.geumjeongsan.api.dto.EmergencyStatsDto;
-import com.example.geumjeongsan.api.dto.HotspotDto;
 import com.example.geumjeongsan.api.dto.IncidentCreateResponse;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
@@ -31,7 +30,6 @@ public class EmergencyService {
     private final IncidentRepository incidentRepository;
     private final EmergencyDetailRepository emergencyDetailRepository;
     private final IncidentSummaryRepository incidentSummaryRepository;
-    private final EmergencyHotspotCctvRepository emergencyHotspotCctvRepository;
     private final IncidentActionRepository incidentActionRepository;
     private final IncidentManualRepository incidentManualRepository;
     private final EntityManager entityManager;
@@ -40,14 +38,12 @@ public class EmergencyService {
     public EmergencyService(IncidentRepository incidentRepository,
                            EmergencyDetailRepository emergencyDetailRepository,
                            IncidentSummaryRepository incidentSummaryRepository,
-                           EmergencyHotspotCctvRepository emergencyHotspotCctvRepository,
                            IncidentActionRepository incidentActionRepository,
                            IncidentManualRepository incidentManualRepository,
                            EntityManager entityManager) {
         this.incidentRepository = incidentRepository;
         this.emergencyDetailRepository = emergencyDetailRepository;
         this.incidentSummaryRepository = incidentSummaryRepository;
-        this.emergencyHotspotCctvRepository = emergencyHotspotCctvRepository;
         this.incidentActionRepository = incidentActionRepository;
         this.incidentManualRepository = incidentManualRepository;
         this.entityManager = entityManager;
@@ -98,53 +94,6 @@ public class EmergencyService {
         }
     }
     
-    /**
-     * 응급 사고다발구간 조회 (VIEW 기반)
-     * @param period 기간 (this_month, 30d, 7d, all)
-     * @param minCount 최소 건수 (기본값: 3)
-     * @return List<HotspotDto>
-     */
-    public List<HotspotDto> getEmergencyHotspots(String period, Long minCount) {
-        if (minCount == null || minCount < 1) {
-            minCount = 3L;  // 기본값: 3건 이상
-        }
-        
-        List<EmergencyHotspotCctv> hotspots;
-        
-        switch (period.toLowerCase()) {
-            case "this_month":
-                hotspots = emergencyHotspotCctvRepository.findHotspotsByThisMonth(minCount);
-                return hotspots.stream()
-                        .map(HotspotDto::fromEntityThisMonth)
-                        .collect(Collectors.toList());
-            
-            case "30d":
-                hotspots = emergencyHotspotCctvRepository.findHotspotsByLast30Days(minCount);
-                return hotspots.stream()
-                        .map(HotspotDto::fromEntity30Days)
-                        .collect(Collectors.toList());
-            
-            case "7d":
-                hotspots = emergencyHotspotCctvRepository.findHotspotsByLast7Days(minCount);
-                return hotspots.stream()
-                        .map(HotspotDto::fromEntity7Days)
-                        .collect(Collectors.toList());
-            
-            case "all":
-                hotspots = emergencyHotspotCctvRepository.findHotspotsByTotal(minCount);
-                return hotspots.stream()
-                        .map(HotspotDto::fromEntityThisMonth)  // 전체 기간이므로 total 사용
-                        .collect(Collectors.toList());
-            
-            default:
-                // 기본값: 이번 달
-                hotspots = emergencyHotspotCctvRepository.findHotspotsByThisMonth(minCount);
-                return hotspots.stream()
-                        .map(HotspotDto::fromEntityThisMonth)
-                        .collect(Collectors.toList());
-        }
-    }
-
     // 응급 현황 + 목록 조회
     public EmergencyDashboardResponse getDashboard() {
         LocalDate today = LocalDate.now();
@@ -462,6 +411,121 @@ public class EmergencyService {
         }
         
         return toEmergencyResponse(saved);
+    }
+
+    // 응급 사건 상태 업데이트
+    @Transactional
+    public EmergencyResponse updateEmergencyStatus(Long id, String status, String handlerName) {
+        Incident incident = incidentRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("응급 기록을 찾을 수 없습니다: " + id));
+        
+        if (!"EMERGENCY".equals(incident.getIncidentType())) {
+            throw new RuntimeException("응급 기록이 아닙니다: " + id);
+        }
+        
+        String prevStatus = incident.getStatus();
+        String newStatus = switch (status) {
+            case "대응중", "IN_PROGRESS" -> "IN_PROGRESS";
+            case "이송완료", "처리완료", "RESOLVED" -> "RESOLVED";
+            default -> "PENDING";
+        };
+        
+        incident.setStatus(newStatus);
+        incident.setUpdatedAt(OffsetDateTime.now()); // ✅ updated_at 자동 설정
+        
+        if (handlerName != null && !handlerName.isEmpty()) {
+            incident.setHandlerName(handlerName);
+        }
+        
+        OffsetDateTime now = OffsetDateTime.now();
+        if ("IN_PROGRESS".equals(newStatus) && incident.getAcknowledgedAt() == null) {
+            incident.setAcknowledgedAt(now);
+        }
+        if ("RESOLVED".equals(newStatus)) {
+            if (incident.getAcknowledgedAt() == null) {
+                incident.setAcknowledgedAt(now);
+            }
+            incident.setResolvedAt(now);
+        }
+        
+        Incident saved = incidentRepository.save(incident);
+        
+        // incident_action 테이블에 로그 기록
+        if (!prevStatus.equals(newStatus)) {
+            IncidentAction action = new IncidentAction();
+            action.setIncidentId(saved.getId());
+            
+            if ("IN_PROGRESS".equals(newStatus) && "PENDING".equals(prevStatus)) {
+                action.setActionType("ACK");
+                action.setAcknowledgedAt(now);
+            } else if ("RESOLVED".equals(newStatus)) {
+                action.setActionType("RESOLVED");
+                action.setResolvedAt(now);
+            } else {
+                action.setActionType("STATUS_CHANGED");
+            }
+            
+            action.setPrevStatus(prevStatus);
+            action.setNextStatus(newStatus);
+            action.setActorId(null);
+            action.setMemo("상태 변경: " + prevStatus + " → " + newStatus);
+            action.setCreatedAt(now);
+            incidentActionRepository.save(action);
+        }
+        
+        return toEmergencyResponse(saved);
+    }
+    
+    /**
+     * 응급 사건 상세정보 업데이트 (수동 등록 전용)
+     */
+    @Transactional
+    public void updateEmergencyDetail(Long id, String memo, String severityLevel, 
+                                      String patientName, String patientGender, String transferHospital) {
+        Incident incident = incidentRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("응급 기록을 찾을 수 없습니다: " + id));
+        
+        if (!"EMERGENCY".equals(incident.getIncidentType())) {
+            throw new RuntimeException("응급 기록이 아닙니다: " + id);
+        }
+        
+        // incident 테이블 업데이트
+        if (memo != null) {
+            incident.setMemo(memo);
+        }
+        if (severityLevel != null) {
+            String dbSeverity = switch (severityLevel) {
+                case "상", "HIGH" -> "HIGH";
+                case "중", "MEDIUM" -> "MEDIUM";
+                case "하", "LOW" -> "LOW";
+                default -> incident.getSeverityLevel();
+            };
+            incident.setSeverityLevel(dbSeverity);
+        }
+        incident.setUpdatedAt(OffsetDateTime.now());
+        incidentRepository.save(incident);
+        
+        // emergency_detail 테이블 업데이트
+        EmergencyDetail detail = emergencyDetailRepository.findByIncidentId(id)
+                .orElse(null);
+        
+        if (detail != null) {
+            if (patientName != null && !patientName.isEmpty() && !"미상".equals(patientName)) {
+                detail.setPatientName(patientName);
+            }
+            if (patientGender != null && !patientGender.isEmpty() && !"미상".equals(patientGender)) {
+                String dbGender = switch (patientGender) {
+                    case "남성", "남" -> "M";
+                    case "여성", "여" -> "F";
+                    default -> patientGender;
+                };
+                detail.setPatientGender(dbGender);
+            }
+            if (transferHospital != null && !transferHospital.isEmpty()) {
+                detail.setTransferDest(transferHospital);
+            }
+            emergencyDetailRepository.save(detail);
+        }
     }
 
     // 응급환자 기록 삭제

@@ -5,9 +5,7 @@ import Sidebar from '../components/Sidebar';
 import LogoutButton from '../components/LogoutButton';
 import MyPageButton from '../components/MyPageButton';
 import DetectionButton from '../components/DetectionButton';
-import MonthlyStatsButton from '../components/MonthlyStatsButton';
-import AccidentHotspotButton from '../components/AccidentHotspotButton';
-import SectionFrequencyButton from '../components/SectionFrequencyButton';
+import RiskMapButton from '../components/RiskMapButton';
 import CCTVButton from '../components/CCTVButton';
 import HelicopterButton from '../components/HelicopterButton';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
@@ -17,7 +15,7 @@ import TrashMarkerIcon from '../components/TrashMarkerIcon';
 import CCTVOnMarkerIcon from '../components/CCTVOnMarkerIcon';
 import CCTVOffMarkerIcon from '../components/CCTVOffMarkerIcon';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
-import { getFireNotifications, getEmergencyNotifications, getTrashNotifications, getHelicopterLocations, getHotspots, getCCTVVideoClips, getCCTVMedia, getCCTVList, getActiveIncidents, getIncidentMarkers, getCCTVStatus, getMainMapWeather } from '../services/api';
+import { getFireNotifications, getEmergencyNotifications, getTrashNotifications, getHelicopterLocations, getHotspots, getCCTVVideoClips, getCCTVMedia, getCCTVList, getActiveIncidents, getIncidentMarkers, getCCTVStatus, getMainMapWeather, getCCTVIncidents, getTrails } from '../services/api';
 import type { VideoClip } from '../services/mock';
 import type { CCTVMedia } from '../services/api';
 import type { CCTVMarker as BackendCCTVMarker } from '../services/common';
@@ -29,7 +27,7 @@ import logoIcon from 'figma:asset/0abed642df6551dc36712b1dfc4c5cda079eed1a.png';
 import headerLogo from 'figma:asset/14f294982efa79d8462919ccdda7d0c0c674d095.png';
 
 // Leaflet 추가
-import { MapContainer, TileLayer, Marker, Popup as LeafletPopup, useMap, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup as LeafletPopup, Polyline, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 
@@ -204,13 +202,13 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     }
   }, [isFirstVisit]);
   
-  const [activeView, setActiveView] = useState<'default' | 'detections' | 'cctv' | 'helicopter' | 'monthly-stats' | 'accident-hotspot' | 'section-frequency'>('detections');
-  const [showMonthlyStatsButtons, setShowMonthlyStatsButtons] = useState(false);
+  const [activeView, setActiveView] = useState<'default' | 'detections' | 'cctv' | 'helicopter' | 'risk-map'>('detections');
   const [showAllDetections, setShowAllDetections] = useState(true);
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const [activeFilters, setActiveFilters] = useState<Set<'fire' | 'emergency' | 'trash'>>(new Set(['fire', 'emergency', 'trash']));
   const [hotspotFilter, setHotspotFilter] = useState<'all' | 'fire' | 'emergency' | 'trash'>('all');
   const [hoveredHotspot, setHoveredHotspot] = useState<{ cctvId: string; location: string; count: number; type: 'fire' | 'emergency' | 'trash'; x: number; y: number } | null>(null);
+  const [hoveredTrailId, setHoveredTrailId] = useState<number | null>(null);
   const [selectedCCTV, setSelectedCCTV] = useState<CCTVPopup | null>(null);
   const [selectedDetection, setSelectedDetection] = useState<DetectionPopup | null>(null);
   const [zoomLevel, setZoomLevel] = useState(12.5);
@@ -454,6 +452,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   const [cctvMarkers, setCctvMarkers] = useState<MapCCTVMarker[]>([]);
   const [helicopterLocations, setHelicopterLocations] = useState<Array<{ id: string; x: number; y: number }>>([]);
   const [hotspotLocations, setHotspotLocations] = useState<Array<{ cctvId: string; x: number; y: number; location: string; count: number; type: 'fire' | 'emergency' | 'trash' }>>([]);
+  const [trails, setTrails] = useState<any[]>([]);
   
   // Convert backend CCTV data to map-compatible format
   const convertToMapMarker = (backendCCTV: BackendCCTVMarker): MapCCTVMarker => {
@@ -563,6 +562,22 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     loadMapData();
   }, []);
 
+  // 등산로 데이터 로드
+  useEffect(() => {
+    const loadTrails = async () => {
+      try {
+        console.log("🥾 [MainMap] Loading Trail Segments...");
+        const trailData = await getTrails();
+        console.log("✅ [MainMap] Loaded Trails:", trailData);
+        setTrails(trailData);
+      } catch (error) {
+        console.error("❌ [MainMap] Error loading trails:", error);
+      }
+    };
+    
+    loadTrails();
+  }, []);
+
   // activeView에 따라 다른 마커 데이터 로드
   useEffect(() => {
     const loadViewData = async () => {
@@ -670,7 +685,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   // 사고다발구간 데이터 로드
   useEffect(() => {
     const loadHotspots = async () => {
-      if (activeView === 'accident-hotspot') {
+      if (activeView === 'risk-map') {
         const [fire, emergency, trash] = await Promise.all([
           getHotspots('fire'),
           getHotspots('emergency'),
@@ -749,30 +764,43 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     }
   }, [showFilterDropdown, sidebarOpen]);
 
-  const handleMarkerClick = (marker: MapCCTVMarker, event: React.MouseEvent | any) => {
+  const handleMarkerClick = async (marker: MapCCTVMarker, event: React.MouseEvent | any) => {
     if (activeView === 'cctv') {
       // Leaflet 마커 클릭 시 clientX/clientY 사용
       const x = event.clientX || (event.currentTarget ? event.currentTarget.getBoundingClientRect().left + event.currentTarget.getBoundingClientRect().width / 2 : 0);
       const y = event.clientY || (event.currentTarget ? event.currentTarget.getBoundingClientRect().top : 0);
       setSelectedCCTV({ cctv: marker, x, y });
     } else if (activeView === 'detections') {
-      const incidents: Array<{ type: 'fire' | 'emergency' | 'trash'; time: string; confidence: string; }> = [];
-      if (marker.incidents.fire) {
-        for (let i = 0; i < marker.incidents.fire; i++) {
-          incidents.push({ type: 'fire', time: `2025-11-25 ${10 + i}:${15 + i * 5}:00`, confidence: `${95 - i * 2}%` });
-        }
+      // 실제 API에서 CCTV별 사건 목록 가져오기
+      try {
+        const cctvIncidents = await getCCTVIncidents(marker.cctvId);
+        
+        // 백엔드 응답 형식을 프론트엔드 형식으로 변환
+        const incidents: Array<{ type: 'fire' | 'emergency' | 'trash'; time: string; confidence: string; }> = 
+          cctvIncidents.map((incident: any) => {
+            // incidentType을 소문자로 변환 (FIRE -> fire, EMERGENCY -> emergency, TRASH -> trash)
+            const type = incident.incidentType?.toLowerCase() || 'fire';
+            
+            // detectedAt을 time 형식으로 변환
+            const time = incident.detectedAt || '';
+            
+            // detectionConfidence를 confidence 형식으로 변환 (0.95 -> "95%")
+            const confidence = incident.detectionConfidence 
+              ? `${Math.round(incident.detectionConfidence * 100)}%`
+              : '0%';
+            
+            return {
+              type: type as 'fire' | 'emergency' | 'trash',
+              time: time,
+              confidence: confidence
+            };
+          });
+        
+        setSelectedDetection({ marker: marker, incidents: incidents });
+      } catch (error) {
+        console.error('❌ [MainMap] Failed to load incidents:', error);
+        setSelectedDetection({ marker: marker, incidents: [] });
       }
-      if (marker.incidents.emergency) {
-        for (let i = 0; i < marker.incidents.emergency; i++) {
-          incidents.push({ type: 'emergency', time: `2025-11-25 ${12 + i}:${20 + i * 5}:00`, confidence: `${92 - i * 2}%` });
-        }
-      }
-      if (marker.incidents.trash) {
-        for (let i = 0; i < marker.incidents.trash; i++) {
-          incidents.push({ type: 'trash', time: `2025-11-25 ${14 + i}:${30 + i * 5}:00`, confidence: `${82 - i * 2}%` });
-        }
-      }
-      setSelectedDetection({ marker: marker, incidents: incidents });
     }
   };
 
@@ -1091,30 +1119,13 @@ export default function MainMap({ onNavigate }: MainMapProps) {
           }}
         />
         
-        <MonthlyStatsButton 
-          isActive={showMonthlyStatsButtons}
+        <RiskMapButton 
+          isActive={activeView === 'risk-map'}
           onClick={() => {
             setShowFilterDropdown(false);
-            setShowMonthlyStatsButtons(!showMonthlyStatsButtons);
+            setActiveView(activeView === 'risk-map' ? 'detections' : 'risk-map');
           }}
         />
-        
-        {showMonthlyStatsButtons && (
-          <>
-            <AccidentHotspotButton 
-              isActive={activeView === 'accident-hotspot'}
-              onClick={() => {
-                setActiveView('accident-hotspot');
-              }}
-            />
-            <SectionFrequencyButton 
-              isActive={activeView === 'section-frequency'}
-              onClick={() => {
-                setActiveView('section-frequency');
-              }}
-            />
-          </>
-        )}
       </div>
 
       {/* 필터 드롭다운 - fixed positioning으로 최상위 레이어에 배치 */}
@@ -1355,6 +1366,74 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                 />
               );
             })}
+            
+            {/* 등산로 렌더링 */}
+            {trails.map((trail) => {
+              if (!trail.geom || !trail.geom.coordinates) return null;
+              
+              // [[lng, lat], ...] → [[lat, lng], ...] 로 변환 (Leaflet 형식)
+              const positions = trail.geom.coordinates.map((coord: number[]) => [coord[1], coord[0]]);
+              
+              // 등산로 중앙 좌표 계산 (라벨 표시 위치 - 경로 위)
+              const totalLength = positions.length;
+              const midIndex = Math.floor(totalLength / 2);
+              const centerPosition = positions[midIndex] as [number, number];
+              
+              const isHovered = hoveredTrailId === trail.segmentId;
+              
+              return (
+                <React.Fragment key={trail.segmentId}>
+                  <Polyline
+                    positions={positions}
+                    pathOptions={{
+                      color: isHovered ? '#059669' : '#10b981',  // hover 시 더 진한 초록
+                      weight: isHovered ? 6 : 4,  // hover 시 더 두꺼운 선
+                      opacity: isHovered ? 1.0 : 0.8,  // hover 시 더 선명
+                    }}
+                    eventHandlers={{
+                      mouseover: () => {
+                        setHoveredTrailId(trail.segmentId);
+                      },
+                      mouseout: () => {
+                        setHoveredTrailId(null);
+                      },
+                    }}
+                  >
+                    {/* 줌 아웃 시: hover 시에만 Tooltip 표시 */}
+                    {zoomLevel < 14.5 && (
+                      <Tooltip permanent={false}>
+                        <div style={{
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                          color: '#000000',
+                        }}>
+                          {trail.segmentName}
+                        </div>
+                      </Tooltip>
+                    )}
+                  </Polyline>
+                  {/* 줌 인 시: 항상 라벨 표시 */}
+                  {zoomLevel >= 14.5 && trail.segmentName && (
+                    <Marker
+                      position={centerPosition}
+                      icon={L.divIcon({
+                        className: 'trail-label-marker',
+                        html: `<div style="
+                          font-size: 11px;
+                          font-weight: bold;
+                          color: #000000;
+                          white-space: nowrap;
+                          text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8), -1px -1px 2px rgba(255, 255, 255, 0.8), 1px -1px 2px rgba(255, 255, 255, 0.8), -1px 1px 2px rgba(255, 255, 255, 0.8);
+                          pointer-events: none;
+                        ">${trail.segmentName}</div>`,
+                        iconSize: [0, 0],
+                        iconAnchor: [0, 0],
+                      })}
+                    />
+                  )}
+                </React.Fragment>
+              );
+            })}
           </MapContainer>
         </div>
 
@@ -1434,29 +1513,10 @@ export default function MainMap({ onNavigate }: MainMapProps) {
           </div>
         )}
 
-        {/* 지역명 라벨 - 지도 위에 오버레이 */}
-        <div className="absolute" style={{ left: '10%', top: '10%', zIndex: 1000 }}>
-          <span className="text-sm text-gray-700 font-semibold drop-shadow-md bg-white/70 px-2 py-1 rounded">북문</span>
-        </div>
-        <div className="absolute" style={{ left: '15%', top: '20%', zIndex: 1000 }}>
-          <span className="text-sm text-gray-700 font-semibold drop-shadow-md bg-white/70 px-2 py-1 rounded">등산로 1</span>
-        </div>
-        <div className="absolute" style={{ left: '60%', top: '25%', zIndex: 1000 }}>
-          <span className="text-sm text-gray-700 font-semibold drop-shadow-md bg-white/70 px-2 py-1 rounded">등산로 2</span>
-        </div>
-        <div className="absolute" style={{ left: '45%', top: '45%', zIndex: 1000 }}>
-          <span className="text-sm text-gray-700 font-semibold drop-shadow-md bg-white/70 px-2 py-1 rounded">공원중앙</span>
-        </div>
-        <div className="absolute" style={{ left: '20%', top: '55%', zIndex: 1000 }}>
-          <span className="text-sm text-gray-700 font-semibold drop-shadow-md bg-white/70 px-2 py-1 rounded">등산로 3</span>
-        </div>
-        <div className="absolute" style={{ left: '75%', top: '75%', zIndex: 1000 }}>
-          <span className="text-sm text-gray-700 font-semibold drop-shadow-md bg-white/70 px-2 py-1 rounded">남문</span>
-        </div>
 
 
-        {/* 사고다발구간 모드 마커 */}
-        {activeView === 'accident-hotspot' && hotspotLocations
+        {/* 위험지도 모드 마커 (사고다발구간) */}
+        {activeView === 'risk-map' && hotspotLocations
           .filter(hotspot => hotspotFilter === 'all' || hotspot.type === hotspotFilter)
           .map((hotspot) => (
             <div 
@@ -3235,8 +3295,8 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         </div>
       )}
 
-      {/* 사고다발구간 호버 팝업 */}
-      {activeView === 'accident-hotspot' && hoveredHotspot && (
+      {/* 위험지도 호버 팝업 (사고다발구간) */}
+      {activeView === 'risk-map' && hoveredHotspot && (
         <div 
           className="absolute bg-white shadow-xl border-2 border-gray-300 p-3 rounded transform -translate-x-1/2 pointer-events-none" 
           style={{ 
@@ -3260,8 +3320,8 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         </div>
       )}
 
-      {/* 구간별 빈도 팝업 (확인용) */}
-      {activeView === 'section-frequency' && (
+      {/* 구간별 빈도 팝업 (위험지도 모드에서 표시) */}
+      {activeView === 'risk-map' && (
         <div className="absolute top-24 right-6 bg-white shadow-xl border-2 border-gray-300 p-3 rounded" style={{ zIndex: 1100 }}>
           <div className="text-xs text-gray-500 mb-1">구간별 빈도</div>
           <div className="text-sm font-bold mb-2">금정산성 코스</div>

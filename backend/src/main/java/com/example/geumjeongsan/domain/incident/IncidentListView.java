@@ -1,8 +1,10 @@
 package com.example.geumjeongsan.domain.incident;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Getter;
 import org.hibernate.annotations.Immutable;
+import org.locationtech.jts.geom.Point;
 
 import java.time.OffsetDateTime;
 
@@ -63,6 +65,25 @@ public class IncidentListView {
 
     @Column(name = "cctv_address_description")
     private String cctvAddressDescription;
+
+    // CCTV 좌표 (PostGIS Point)
+    @JsonIgnore
+    @Column(name = "cctv_geom", columnDefinition = "geometry(Point,4326)")
+    private Point cctvGeom;
+    
+    /**
+     * CCTV 위도 추출
+     */
+    public Double getCctvLatitude() {
+        return cctvGeom != null ? cctvGeom.getY() : null;
+    }
+    
+    /**
+     * CCTV 경도 추출
+     */
+    public Double getCctvLongitude() {
+        return cctvGeom != null ? cctvGeom.getX() : null;
+    }
 
     // AUTO 정보 (최신 1개)
     @Column(name = "detection_confidence")
