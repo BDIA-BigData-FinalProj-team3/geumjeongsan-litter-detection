@@ -6,6 +6,7 @@ import { X, ArrowLeft, Search, ChevronDown, ArrowUpDown, Maximize, Camera, Flame
 import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { cctvList, getCCTVLocation, getOffCCTVCodes, getCCTVByCode } from '../services/common';
 import { getCCTVList, analyzeFallenVideo, type FallenAnalysisResponse } from '../services/api';
+import API_BASE_URL from '../config/api';
 import cctv001DemoVideo from '../assets/cctv-001_20251208T140000Z.mp4';
 // 더미 비디오 import
 import cctv003Video from '../assets/cctv_dummy/cctv-003.mp4';
@@ -41,6 +42,7 @@ interface Event {
   summary?: string; // 요약설명
   clipUrl?: string; // 분석 결과 클립 URL
   frameUrls?: string[]; // 분석 결과 프레임 URL 배열
+  qwenResponse?: any; // Qwen 분석 상세 정보 (상세 페이지에서 사용)
 }
 
 export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CCTVManagementProps) {
@@ -65,6 +67,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showGeminiPopup, setShowGeminiPopup] = useState(false);
   const [analysisEvents, setAnalysisEvents] = useState<Event[]>([]); // 분석 결과로 생성된 이벤트
+  const [isAnalyzingQwen, setIsAnalyzingQwen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   
   // 각 CCTV 썸네일 비디오 ref를 관리하는 Map
@@ -468,14 +471,18 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   // Event를 IncidentDetail로 변환
   const convertEventToIncidentDetail = (event: Event) => {
     const baseDetail = {
+      id: parseInt(event.id.replace(/\D/g, '')) || Date.now(), // 숫자만 추출
       accidentCode: event.id,
       cctvId: selectedCCTV?.id || '',
+      cctvCode: selectedCCTV?.id || '',
+      type: event.type === 'fire' ? '화재' : event.type === 'emergency' ? '응급' : '쓰레기',
       location: event.location,
       time: event.time,
       severity: event.severity || '중',
       status: 'PENDING',
       handler: '미배정',
       detectionBasis: 'AI 자동탐지',
+      isAIDetection: true,
       clipUrl: event.clipUrl,
       frameUrls: event.frameUrls
     };
@@ -500,13 +507,114 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
         note: event.summary || ''
       };
     } else {
+      // Qwen 응답이 있는 경우 상세 정보 사용
+      const qwenResponse = event.qwenResponse;
+      const trashType = qwenResponse?.mainCategory || '일반 쓰레기';
+      const objectAmount = qwenResponse?.objectAmount || event.summary || '';
+      
+      // object_amount에서 개수 추출 (예: "총 1개의 쓰레기가 탐지되었습니다" → "1개")
+      const countMatch = objectAmount.match(/총\s*(\d+)\s*개/);
+      const amount = countMatch ? `${countMatch[1]}개` : '미확인';
+      
       return {
         ...baseDetail,
         type: '쓰레기',
-        trashType: '일반 쓰레기',
-        amount: '중량',
-        note: event.summary || ''
+        trashType: trashType,
+        amount: amount,
+        note: objectAmount,
+        // Qwen 상세 정보 추가
+        detectionConfidenceReason: qwenResponse?.detectionConfidenceReason || '',
+        severityLevelReason: qwenResponse?.severityLevelReason || '',
+        mainCategory: qwenResponse?.mainCategory || '',
+        detectionConfidence: qwenResponse?.detectionConfidence || 0,
+        severityLevel: qwenResponse?.severityLevel || 0
       };
+    }
+  };
+
+  // Handle Qwen frame analysis
+  const handleAnalyzeFrameWithQwen = async () => {
+    if (!selectedCCTV || selectedCCTV.id !== 'CCTV-003' || !videoRef.current) {
+      return;
+    }
+
+    setIsAnalyzingQwen(true);
+    try {
+      const video = videoRef.current;
+      
+      // 현재 프레임을 canvas로 캡처
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      
+      if (!ctx) {
+        throw new Error('Canvas context를 가져올 수 없습니다.');
+      }
+      
+      ctx.drawImage(video, 0, 0);
+      
+      // Canvas를 Blob으로 변환
+      canvas.toBlob(async (blob) => {
+        if (!blob) {
+          setIsAnalyzingQwen(false);
+          return;
+        }
+        
+        try {
+          // FormData로 백엔드에 전송
+          const formData = new FormData();
+          formData.append('image', blob, 'frame.jpg');
+          
+          const response = await fetch(
+            `${API_BASE_URL}/api/cctv/${selectedCCTV.id}/frame/analyze-with-qwen`,
+            {
+              method: 'POST',
+              body: formData
+            }
+          );
+          
+          if (!response.ok) {
+            throw new Error(`API 호출 실패: ${response.status}`);
+          }
+          
+          const result = await response.json();
+          
+          // 백엔드에서 이미 파싱된 데이터를 받음
+          if (result.hasTrash) {
+            const newEvent: Event = {
+              id: `qwen-${Date.now()}`,
+              time: result.time || new Date().toLocaleString('ko-KR'),
+              type: 'trash',
+              confidence: result.confidence || '0%',
+              location: result.location || selectedCCTV.location,
+              severity: result.severity || '하',
+              reportProbability: '높음',
+              summary: result.summary || result.objectAmount || `${selectedCCTV.location}에서 쓰레기가 탐지되었습니다.`,
+              clipUrl: result.overlayImageUrl || null,
+              frameUrls: result.overlayImageUrl ? [result.overlayImageUrl] : [],
+              // Qwen 상세 정보 저장 (상세 페이지에서 사용)
+              qwenResponse: result
+            };
+            
+            setAnalysisEvents(prev => [...prev, newEvent]);
+          } else {
+            // 쓰레기가 없는 경우 알림만 표시
+            alert('쓰레기가 탐지되지 않았습니다.');
+          }
+          
+        } catch (error) {
+          console.error('Qwen 분석 실패:', error);
+          alert('Qwen 분석에 실패했습니다: ' + (error instanceof Error ? error.message : String(error)));
+        } finally {
+          setIsAnalyzingQwen(false);
+        }
+      }, 'image/jpeg', 0.9);
+      
+    } catch (error) {
+      console.error('프레임 캡처 실패:', error);
+      setIsAnalyzingQwen(false);
+      alert('프레임 캡처에 실패했습니다: ' + (error instanceof Error ? error.message : String(error)));
     }
   };
 
@@ -644,8 +752,22 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                       )}
                     </div>
                     <div className="p-4">
-                      <p className="text-lg font-semibold text-gray-900">{selectedCCTV.id}</p>
-                      <p className="text-sm text-gray-600">{selectedCCTV.location}</p>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-lg font-semibold text-gray-900">{selectedCCTV.id}</p>
+                          <p className="text-sm text-gray-600">{selectedCCTV.location}</p>
+                        </div>
+                        {/* CCTV-003에 Qwen 분석 버튼 추가 */}
+                        {selectedCCTV.id === 'CCTV-003' && dummyCCTVIds.includes(selectedCCTV.id) && (
+                          <button
+                            onClick={handleAnalyzeFrameWithQwen}
+                            disabled={isAnalyzingQwen}
+                            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {isAnalyzingQwen ? '분석 중...' : 'Qwen 분석'}
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
 

@@ -49,3 +49,16 @@ weather:
     code: GEUMJEONG_SAN
     nx: 98  # 금정산 격자 X 좌표
     ny: 76  # 금정산 격자 Y 좌표
+
+# AWS S3 설정
+aws:
+  s3:
+    bucket-name: ${S3_BUCKET_NAME:geumjeongsan-admin-data}
+  region: ${AWS_REGION:ap-northeast-2}
+  access-key-id: ${AWS_ACCESS_KEY_ID:}
+  secret-access-key: ${AWS_SECRET_ACCESS_KEY:}
+
+# Qwen API 설정
+qwen:
+  api:
+    url: ${QWEN_API_URL:http://localhost:8001/predict}
