@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import Sidebar from '../components/Sidebar';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import IncidentDetailModal from '../components/IncidentDetailModal';
-import { X, ArrowLeft, Search, ChevronDown, ArrowUpDown, Maximize, Camera, Flame, Trash2, AlertCircle, Download } from 'lucide-react';
+import { X, ArrowLeft, Search, ChevronDown, ArrowUpDown, Maximize, Camera, Flame, Trash2, AlertCircle, Download, Play } from 'lucide-react';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { cctvList, getCCTVLocation, getOffCCTVCodes, getCCTVByCode } from '../services/common';
-import { getCCTVList } from '../services/api';
+import { getCCTVList, analyzeFallenVideo, type FallenAnalysisResponse } from '../services/api';
+import cctv001DemoVideo from '../assets/cctv-001_20251208T140000Z.mp4';
 
 interface CCTVManagementProps {
   onNavigate: (screen: string) => void;
@@ -29,6 +30,8 @@ interface Event {
   severity?: string; // 응급도: '상', '중', '하'
   reportProbability?: string; // 신고가능성지수
   summary?: string; // 요약설명
+  clipUrl?: string; // 분석 결과 클립 URL
+  frameUrls?: string[]; // 분석 결과 프레임 URL 배열
 }
 
 export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CCTVManagementProps) {
@@ -46,6 +49,14 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   const [acknowledgedEvents, setAcknowledgedEvents] = useState<Set<string>>(new Set());
   const [isEditingEvent, setIsEditingEvent] = useState(false);
   const [editedEventDetail, setEditedEventDetail] = useState<any>(null);
+  
+  // Video playback state
+  const [isPlayingVideo, setIsPlayingVideo] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<FallenAnalysisResponse | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [showGeminiPopup, setShowGeminiPopup] = useState(false);
+  const [analysisEvents, setAnalysisEvents] = useState<Event[]>([]); // 분석 결과로 생성된 이벤트
+  const videoRef = useRef<HTMLVideoElement>(null);
   
   // Filter dropdowns
   const [showLocationFilter, setShowLocationFilter] = useState(false);
@@ -68,6 +79,59 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       });
     }
   }, [initialSelectedCCTVId]);
+
+  // CCTV-001이 선택되면 자동으로 재생 + 분석 시작
+  useEffect(() => {
+    if (selectedCCTV && selectedCCTV.id === 'CCTV-001' && !isPlayingVideo) {
+      // 비디오 요소가 렌더링될 시간을 주기 위해 약간의 지연
+      const timer = setTimeout(async () => {
+        // Start video playback
+        setIsPlayingVideo(true);
+        // 비디오 요소가 렌더링된 후 재생
+        setTimeout(() => {
+          if (videoRef.current) {
+            videoRef.current.play().catch(error => {
+              console.error('Video play error:', error);
+            });
+          }
+        }, 0);
+
+        // Trigger analysis
+        setIsAnalyzing(true);
+        try {
+          const result = await analyzeFallenVideo(selectedCCTV.id);
+          setAnalysisResult(result);
+          
+          // 분석 결과를 이벤트로 변환
+          if (result.result && result.result.fallen_events > 0) {
+            const newEvent: Event = {
+              id: `fallen-${Date.now()}`,
+              time: new Date().toLocaleString('ko-KR'),
+              type: 'emergency',
+              confidence: '95%',
+              location: selectedCCTV.location,
+              severity: '상',
+              reportProbability: '높음',
+              summary: `${selectedCCTV.location}에서 낙상 이벤트가 탐지되었습니다.`,
+              clipUrl: result.result.clip_url,
+              frameUrls: result.result.frame_urls || []
+            };
+            setAnalysisEvents(prev => [...prev, newEvent]);
+          }
+          
+          // Check if Gemini call is needed
+          if (result.geminiMessage) {
+            setShowGeminiPopup(true);
+          }
+        } catch (error) {
+          console.error('Failed to analyze video:', error);
+        } finally {
+          setIsAnalyzing(false);
+        }
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [selectedCCTV?.id, isPlayingVideo]); // selectedCCTV.id가 변경될 때마다 실행
 
   // Load CCTV list from backend
   const [backendCCTVs, setBackendCCTVs] = useState<any[]>([]);
@@ -141,7 +205,9 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       });
   };
 
-  const events = selectedCCTV ? getEventsForCCTV(selectedCCTV.id) : [];
+  // 기존 이벤트와 분석 결과 이벤트 합치기
+  const baseEvents = selectedCCTV ? getEventsForCCTV(selectedCCTV.id) : [];
+  const events = [...baseEvents, ...analysisEvents];
 
   // CCTV 현황 데이터 (backend cctvList 기반으로 생성)
   const cctvStatusDataRaw = Array.from({ length: 100 }, (_, i) => {
@@ -316,6 +382,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     if (newEvent) {
       setSelectedEvent(newEvent);
     }
+    // useEffect에서 자동 재생 처리하므로 여기서는 제거
   };
 
   const handleEventAcknowledge = () => {
@@ -336,7 +403,9 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       severity: event.severity || '중',
       status: 'PENDING',
       handler: '미배정',
-      detectionBasis: 'AI 자동탐지'
+      detectionBasis: 'AI 자동탐지',
+      clipUrl: event.clipUrl,
+      frameUrls: event.frameUrls
     };
 
     if (event.type === 'fire') {
@@ -366,6 +435,57 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
         amount: '중량',
         note: event.summary || ''
       };
+    }
+  };
+
+  // Handle video play button click
+  const handlePlayVideo = async () => {
+    if (!selectedCCTV || selectedCCTV.id !== 'CCTV-001') {
+      return; // Only for CCTV-001
+    }
+
+    // Start video playback
+    setIsPlayingVideo(true);
+    // 비디오 요소가 렌더링된 후 재생
+    setTimeout(() => {
+      if (videoRef.current) {
+        videoRef.current.play().catch(error => {
+          console.error('Video play error:', error);
+        });
+      }
+    }, 0);
+
+    // Trigger analysis
+    setIsAnalyzing(true);
+    try {
+      const result = await analyzeFallenVideo(selectedCCTV.id);
+      setAnalysisResult(result);
+      
+      // 분석 결과를 이벤트로 변환
+      if (result.result && result.result.fallen_events > 0) {
+        const newEvent: Event = {
+          id: `fallen-${Date.now()}`,
+          time: new Date().toLocaleString('ko-KR'),
+          type: 'emergency',
+          confidence: '95%',
+          location: selectedCCTV.location,
+          severity: '상',
+          reportProbability: '높음',
+          summary: `${selectedCCTV.location}에서 낙상 이벤트가 탐지되었습니다.`,
+          clipUrl: result.result.clip_url,
+          frameUrls: result.result.frame_urls || []
+        };
+        setAnalysisEvents(prev => [...prev, newEvent]);
+      }
+      
+      // Check if Gemini call is needed
+      if (result.geminiMessage) {
+        setShowGeminiPopup(true);
+      }
+    } catch (error) {
+      console.error('Failed to analyze video:', error);
+    } finally {
+      setIsAnalyzing(false);
     }
   };
 
@@ -416,28 +536,46 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                 <div className="space-y-6">
                   {/* Large CCTV Display */}
                   <div className="bg-white shadow-md" style={{ borderRadius: '0px' }}>
-                    <div className="aspect-video bg-gray-800 flex items-center justify-center relative group">
-                      <span className="text-white">{selectedCCTV.id} - Live Feed</span>
-                      {/* Power status indicator */}
-                      <div className={`absolute top-4 left-4 w-4 h-4 rounded-full ${
-                        cctvStatusData.find(c => c.id === selectedCCTV.id)?.power === 'on' ? 'bg-green-500' : 'bg-gray-400'
-                      }`} style={{ border: '2px solid white' }}></div>
+                    <div className="aspect-video bg-gray-800 flex items-center justify-center relative group overflow-hidden">
+                      {/* 비디오 요소를 항상 렌더링 (CCTV-001일 때만) */}
+                      {selectedCCTV.id === 'CCTV-001' && (
+                        <video
+                          ref={videoRef}
+                          src={cctv001DemoVideo}
+                          controls
+                          muted
+                          className={`w-full h-full object-contain ${isPlayingVideo ? '' : 'hidden'}`}
+                          onEnded={() => setIsPlayingVideo(false)}
+                          onPlay={() => setIsPlayingVideo(true)}
+                        />
+                      )}
                       
-                      {/* Fullscreen button (오른쪽 아래) */}
-                      <button
-                        onClick={() => setShowFullscreen(true)}
-                        className="absolute bottom-4 right-4 p-2 bg-black bg-opacity-50 text-white hover:bg-opacity-70 transition-opacity opacity-0 group-hover:opacity-100"
-                        style={{ borderRadius: '4px' }}
-                      >
-                        <Maximize className="w-5 h-5" />
-                      </button>
+                      {/* Live Feed 화면 (비디오가 재생 중이 아닐 때) */}
+                      {(!isPlayingVideo || selectedCCTV.id !== 'CCTV-001') && (
+                        <>
+                          <span className="text-white">{selectedCCTV.id} - Live Feed</span>
+                          {/* Power status indicator */}
+                          <div className={`absolute top-4 left-4 w-4 h-4 rounded-full ${
+                            cctvStatusData.find(c => c.id === selectedCCTV.id)?.power === 'on' ? 'bg-green-500' : 'bg-gray-400'
+                          }`} style={{ border: '2px solid white' }}></div>
+                          
+                          {/* Fullscreen button (오른쪽 아래) */}
+                          <button
+                            onClick={() => setShowFullscreen(true)}
+                            className="absolute bottom-4 right-4 p-2 bg-black bg-opacity-50 text-white hover:bg-opacity-70 transition-opacity opacity-0 group-hover:opacity-100"
+                            style={{ borderRadius: '4px' }}
+                          >
+                            <Maximize className="w-5 h-5" />
+                          </button>
+                        </>
+                      )}
                     </div>
                     <div className="p-4">
                       <p className="text-lg font-semibold text-gray-900">{selectedCCTV.id}</p>
                       <p className="text-sm text-gray-600">{selectedCCTV.location}</p>
                     </div>
                   </div>
-                  
+
                   {/* Events List - YouTube Style */}
                   <div>
                     <h3 className="text-gray-900 mb-4">이 CCTV의 탐지 이벤트</h3>
@@ -448,6 +586,8 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                           const eventColor = event.type === 'fire' ? 'text-red-500' : event.type === 'emergency' ? 'text-purple-500' : 'text-green-500';
                           const eventBg = event.type === 'fire' ? 'bg-red-50' : event.type === 'emergency' ? 'bg-purple-50' : 'bg-green-50';
                           const eventLabel = event.type === 'fire' ? '화재' : event.type === 'emergency' ? '응급' : '쓰레기';
+                          // 분석 결과에서 온 이벤트는 첫 번째 프레임을 썸네일로 사용
+                          const thumbnailUrl = event.frameUrls && event.frameUrls.length > 0 ? event.frameUrls[0] : null;
                           
                           return (
                             <div
@@ -457,8 +597,16 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                               style={{ borderRadius: '0px' }}
                             >
                               {/* Thumbnail */}
-                              <div className={`aspect-video ${eventBg} flex items-center justify-center relative`}>
-                                <EventIcon className={`w-8 h-8 ${eventColor}`} />
+                              <div className={`aspect-video ${!thumbnailUrl ? eventBg : ''} flex items-center justify-center relative overflow-hidden`}>
+                                {thumbnailUrl ? (
+                                  <img
+                                    src={thumbnailUrl}
+                                    alt="Event thumbnail"
+                                    className="w-full h-full object-cover"
+                                  />
+                                ) : (
+                                  <EventIcon className={`w-8 h-8 ${eventColor}`} />
+                                )}
                                 <div className={`absolute top-2 right-2 px-2 py-0.5 text-xs text-white ${
                                   event.type === 'fire' ? 'bg-red-600' : event.type === 'emergency' ? 'bg-purple-600' : 'bg-green-600'
                                 }`}>
@@ -783,6 +931,27 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
             }));
           }}
         />
+      )}
+
+      {/* Gemini Popup Modal */}
+      {showGeminiPopup && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+          <div className="bg-white p-6 max-w-md w-full mx-4" style={{ borderRadius: '0px' }}>
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Gemini 호출 필요</h3>
+            <p className="text-gray-700 mb-4">
+              Gemini 호출 구현해야함!
+            </p>
+            <div className="flex justify-end">
+              <button
+                onClick={() => setShowGeminiPopup(false)}
+                className="px-4 py-2 bg-gray-800 text-white hover:bg-gray-900 transition-colors"
+                style={{ borderRadius: '0px' }}
+              >
+                확인
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Fullscreen Modal */}

@@ -1,5 +1,5 @@
-import React from 'react';
-import { X, Video, Camera, Map, Edit2, Save } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Video, Camera, Map, Edit2, Save, Play } from 'lucide-react';
 import { MapContainer, TileLayer, Marker } from 'react-leaflet';
 import L from 'leaflet';
 
@@ -38,6 +38,10 @@ interface IncidentDetail {
   severityReason?: string;
   detectedFeatures?: string;
   autoCreatedAt?: string;
+  
+  // 비디오 분석 정보
+  clipUrl?: string;
+  frameUrls?: string[];
   
   // 응급 상세
   patientName?: string;
@@ -83,6 +87,10 @@ export default function IncidentDetailModal({
   onCancel,
   onFieldChange
 }: IncidentDetailModalProps) {
+  const [selectedFrameIndex, setSelectedFrameIndex] = useState<number | null>(null);
+  const [showVideoModal, setShowVideoModal] = useState(false);
+  const [showImageModal, setShowImageModal] = useState(false);
+
   const headerColors = {
     emergency: '#9333EA',
     fire: '#DC2626',
@@ -120,7 +128,7 @@ export default function IncidentDetailModal({
           {/* 좌측 패널 */}
           <div className="flex-1 flex flex-col">
             {/* 지도 영역 */}
-            <div className="border border-gray-300 mb-3" style={{ height: '380px', borderRadius: '0px' }}>
+            <div className="border border-gray-300 mb-3" style={{ height: '380px', borderRadius: '0px', position: 'relative', zIndex: 1 }}>
               <MapContainer
                 center={
                   detail.latitude && detail.longitude 
@@ -129,6 +137,7 @@ export default function IncidentDetailModal({
                 }
                 zoom={detail.latitude && detail.longitude ? 17 : 15}
                 style={{ height: '100%', width: '100%' }}
+
                 zoomControl={false}
                 key={`${detail.latitude || 35.2456}-${detail.longitude || 129.0917}`}  // 좌표 변경 시 지도 재렌더링
               >
@@ -158,18 +167,62 @@ export default function IncidentDetailModal({
             </div>
             
             {/* 영상/이미지 영역 */}
-            <div className="flex gap-3">
-              <div className="flex-1 bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
-                <div className="text-center text-gray-500">
-                  <Video className="w-8 h-8 mx-auto mb-2" />
-                  <p className="text-sm">영상</p>
-                </div>
+            <div className="flex gap-3" style={{ position: 'relative', zIndex: 10 }}>
+              {/* 클립 영상 */}
+              <div 
+                className="flex-1 bg-gray-100 border border-gray-300 relative cursor-pointer overflow-hidden group" 
+                style={{ aspectRatio: '16/9', borderRadius: '0px', position: 'relative', zIndex: 10 }}
+                onClick={() => detail.clipUrl && setShowVideoModal(true)}
+              >
+                {detail.clipUrl ? (
+                  <>
+                    <video
+                      src={detail.clipUrl}
+                      className="w-full h-full object-cover"
+                      muted
+                      playsInline
+                      preload="metadata"
+                    />
+                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-opacity flex items-center justify-center pointer-events-none">
+                      <div className="bg-white bg-opacity-90 rounded-full p-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Play className="w-8 h-8 text-gray-900" fill="currentColor" />
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center text-gray-500 h-full flex items-center justify-center">
+                    <Video className="w-8 h-8 mx-auto mb-2" />
+                    <p className="text-sm">영상</p>
+                  </div>
+                )}
               </div>
-              <div className="flex-1 bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
-                <div className="text-center text-gray-500">
-                  <Camera className="w-8 h-8 mx-auto mb-2" />
-                  <p className="text-sm">이미지</p>
-                </div>
+              
+              {/* 프레임 이미지 (_4만 표시) */}
+              <div className="flex-1 bg-gray-100 border border-gray-300 relative cursor-pointer overflow-hidden group" style={{ borderRadius: '0px', position: 'relative', zIndex: 10 }}>
+                {detail.frameUrls && detail.frameUrls.length > 0 ? (
+                  <div
+                    onClick={() => {
+                      const lastFrameIndex = detail.frameUrls!.length - 1; // _4 프레임 (인덱스 3)
+                      setSelectedFrameIndex(lastFrameIndex);
+                      setShowImageModal(true);
+                    }}
+                    className="w-full h-full"
+                  >
+                    <img
+                      src={detail.frameUrls[detail.frameUrls.length - 1]} // 마지막 프레임 (_4)
+                      alt="Frame 4"
+                      className="w-full h-full object-cover"
+                    />
+                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-opacity flex items-center justify-center">
+                      <Camera className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center text-gray-500 h-full flex items-center justify-center">
+                    <Camera className="w-8 h-8 mx-auto mb-2" />
+                    <p className="text-sm">이미지</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -485,6 +538,91 @@ export default function IncidentDetailModal({
           </div>
         </div>
       </div>
+
+      {/* 비디오 모달 (큰 화면에서 재생) */}
+      {showVideoModal && detail.clipUrl && (
+        <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4" style={{ zIndex: 20000 }} onClick={() => setShowVideoModal(false)}>
+          <div className="w-full max-w-6xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-end mb-2">
+              <button
+                onClick={() => setShowVideoModal(false)}
+                className="text-white hover:text-gray-300 transition-colors"
+              >
+                <X className="w-8 h-8" />
+              </button>
+            </div>
+            <video
+              src={detail.clipUrl}
+              controls
+              playsInline
+              className="w-full h-auto"
+              style={{ maxHeight: '90vh' }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* 이미지 모달 (큰 이미지로 보기) */}
+      {showImageModal && detail.frameUrls && selectedFrameIndex !== null && (
+        <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4" style={{ zIndex: 20000 }} onClick={() => setShowImageModal(false)}>
+          <div className="relative w-full max-w-6xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <div className="flex gap-2">
+                {detail.frameUrls.map((_, index) => (
+                  <button
+                    key={index}
+                    onClick={() => setSelectedFrameIndex(index)}
+                    className={`px-3 py-1 text-sm ${
+                      index === selectedFrameIndex
+                        ? 'bg-white text-black'
+                        : 'bg-gray-700 text-white hover:bg-gray-600'
+                    } transition-colors`}
+                    style={{ borderRadius: '0px' }}
+                  >
+                    {index + 1}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => setShowImageModal(false)}
+                className="text-white hover:text-gray-300 transition-colors"
+              >
+                <X className="w-8 h-8" />
+              </button>
+            </div>
+            <img
+              src={detail.frameUrls[selectedFrameIndex]}
+              alt={`Frame ${selectedFrameIndex + 1}`}
+              className="w-full h-auto"
+              style={{ maxHeight: '85vh', objectFit: 'contain' }}
+            />
+            {detail.frameUrls.length > 1 && (
+              <>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedFrameIndex(prev => prev !== null && prev > 0 ? prev - 1 : detail.frameUrls!.length - 1);
+                  }}
+                  className="absolute left-4 top-1/2 -translate-y-1/2 bg-black bg-opacity-50 text-white p-3 hover:bg-opacity-70 transition-opacity"
+                  style={{ borderRadius: '0px' }}
+                >
+                  ←
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedFrameIndex(prev => prev !== null && prev < detail.frameUrls!.length - 1 ? prev + 1 : 0);
+                  }}
+                  className="absolute right-4 top-1/2 -translate-y-1/2 bg-black bg-opacity-50 text-white p-3 hover:bg-opacity-70 transition-opacity"
+                  style={{ borderRadius: '0px' }}
+                >
+                  →
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

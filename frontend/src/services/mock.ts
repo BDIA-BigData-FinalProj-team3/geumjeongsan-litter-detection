@@ -14,7 +14,6 @@ export interface NotificationItem {
 }
 
 export const mockFireNotifications: NotificationItem[] = [
-  { id: '1', cctvId: 'CCTV-001', location: '등산로 1', time: '2025-11-25 10:15:00', confidence: '95%', timeAgo: '5분 전', timestamp: new Date('2025-11-25 10:15:00').getTime(), type: 'fire' },
   { id: '2', cctvId: 'CCTV-007', location: '등산로 입구 3', time: '2025-11-25 10:00:00', confidence: '92%', timeAgo: '20분 전', timestamp: new Date('2025-11-25 10:00:00').getTime(), type: 'fire' },
 ];
 
@@ -55,10 +54,6 @@ export interface VideoClip {
 
 // Mock video clips by CCTV ID
 export const mockVideoClips: Record<string, VideoClip[]> = {
-  'CCTV-001': [
-    { id: 'video-001-1', cctvId: 'CCTV-001', timestamp: '2025-11-25 10:15:00', duration: 120, type: 'fire', confidence: '95%', fileSize: '24MB' },
-    { id: 'video-001-2', cctvId: 'CCTV-001', timestamp: '2025-11-25 08:30:00', duration: 90, type: 'fire', confidence: '88%', fileSize: '18MB' },
-  ],
   'CCTV-005': [
     { id: 'video-005-1', cctvId: 'CCTV-005', timestamp: '2025-11-25 10:05:00', duration: 150, type: 'emergency', confidence: '92%', fileSize: '30MB' },
     { id: 'video-005-2', cctvId: 'CCTV-005', timestamp: '2025-11-25 07:20:00', duration: 180, type: 'emergency', confidence: '85%', fileSize: '36MB' },
@@ -162,7 +157,6 @@ export const mockInitialActiveEmergencies: EmergencyItem[] = [
 
 export const mockCompletedEmergencies: EmergencyItem[] = [
   { id: 4, accidentCode: 'EMG-004', type: '부상', cctvId: 'CCTV-002', time: '2025-11-25 13:30', responseTime: '2025-11-25 13:42', duration: '12분', status: '처리완료', severity: 'medium', handler: '직원 박영희', location: '등산로 2', detectionBasis: 'AI 자동 탐지: 부상자 감지', patientName: '미상', gender: '미상' },
-  { id: 5, accidentCode: 'EMG-005', type: '심정지', cctvId: 'CCTV-001', time: '2025-11-25 12:30', responseTime: '2025-11-25 12:35', duration: '5분', status: '처리완료', severity: 'high', handler: '119', location: '등산로 1', detectionBasis: 'AI 자동 탐지: 심정지 의심 감지', patientName: '미상', gender: '미상' },
   { id: 6, accidentCode: 'EMG-006', type: '낙상사고', cctvId: 'CCTV-004', time: '2025-11-25 11:30', responseTime: '2025-11-25 11:48', duration: '18분', status: '처리완료', severity: 'low', handler: '직원 이준호', location: '휴게소 1', detectionBasis: 'AI 자동 탐지: 낙상 동작 감지', patientName: '미상', gender: '미상' },
 ];
 
@@ -183,7 +177,6 @@ export interface FireItem {
 }
 
 export const mockInitialActiveFires: FireItem[] = [
-  { id: 1, accidentCode: 'FIRE-001', cctvId: 'CCTV-001', time: '2025-11-25 10:15', status: '진화중', severity: 'high', windSpeed: '15km/h', handler: '119', location: '등산로 1', detectionBasis: 'AI 자동 탐지: 연기 및 화염 감지' },
   { id: 2, accidentCode: 'FIRE-002', cctvId: 'CCTV-007', time: '2025-11-25 10:00', status: '대기중', severity: 'medium', windSpeed: '12km/h', handler: '119', location: '등산로 2', detectionBasis: 'AI 자동 탐지: 연기 감지' },
 ];
 
