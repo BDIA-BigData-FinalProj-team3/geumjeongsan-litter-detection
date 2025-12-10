@@ -9,6 +9,8 @@ import com.example.geumjeongsan.api.dto.FireResponse;
 import com.example.geumjeongsan.api.dto.MapDataResponse;
 import com.example.geumjeongsan.api.dto.MediaFileResponse;
 import com.example.geumjeongsan.domain.cctv.CCTVRepository;
+import com.example.geumjeongsan.domain.cctv.MapCCTV;
+import com.example.geumjeongsan.domain.cctv.MapCCTVRepository;
 import com.example.geumjeongsan.domain.media.MediaFile;
 import com.example.geumjeongsan.domain.media.MediaFileRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -33,6 +35,7 @@ public class IncidentService {
     private final IncidentActionRepository incidentActionRepository;
     private final IncidentManualRepository incidentManualRepository;
     private final CCTVRepository cctvRepository;
+    private final MapCCTVRepository mapCCTVRepository;
     private final MediaFileRepository mediaFileRepository;
     private final IncidentListViewRepository incidentListViewRepository;
     private final EntityManager entityManager;
@@ -44,6 +47,7 @@ public class IncidentService {
                          IncidentActionRepository incidentActionRepository,
                          IncidentManualRepository incidentManualRepository,
                          CCTVRepository cctvRepository,
+                         MapCCTVRepository mapCCTVRepository,
                          MediaFileRepository mediaFileRepository,
                          IncidentListViewRepository incidentListViewRepository,
                          EntityManager entityManager,
@@ -53,6 +57,7 @@ public class IncidentService {
         this.incidentActionRepository = incidentActionRepository;
         this.incidentManualRepository = incidentManualRepository;
         this.cctvRepository = cctvRepository;
+        this.mapCCTVRepository = mapCCTVRepository;
         this.mediaFileRepository = mediaFileRepository;
         this.incidentListViewRepository = incidentListViewRepository;
         this.entityManager = entityManager;
@@ -639,131 +644,75 @@ public class IncidentService {
                 .build();
     }
 
-    // 모든 CCTV 조회
+    // 모든 CCTV 조회 (VIEW 사용)
+    // 
+    // VIEW 확장 SQL (DB에서 실행 필요):
+    // DROP VIEW IF EXISTS view_map_cctv;
+    // CREATE OR REPLACE VIEW view_map_cctv AS
+    // SELECT 
+    //     c.cctv_id,
+    //     c.cctv_code,
+    //     c.cctv_code as name,
+    //     COALESCE(c.cctv_address_description, c.cctv_address) as location_desc,
+    //     c.install_date,
+    //     c.model_name,
+    //     NULL::VARCHAR(20) as resolution,
+    //     c.is_active,
+    //     COALESCE(s.power_status, 'OFF') as power_status,
+    //     c.geom,
+    //     COUNT(i.incident_id) as incident_count,
+    //     MAX(i.detected_at) as last_incident_at,
+    //     MAX(CASE 
+    //         WHEN i.detected_at = (
+    //             SELECT MAX(detected_at) 
+    //             FROM incident 
+    //             WHERE cctv_id = c.cctv_id
+    //         ) 
+    //         THEN i.incident_type 
+    //     END) as last_incident_type
+    // FROM cctv_info c
+    // LEFT JOIN cctv_status s ON c.cctv_id = s.cctv_id
+    // LEFT JOIN incident i ON c.cctv_id = i.cctv_id
+    // GROUP BY 
+    //     c.cctv_id, 
+    //     c.cctv_code, 
+    //     c.cctv_address,
+    //     c.cctv_address_description,
+    //     c.install_date, 
+    //     c.model_name, 
+    //     c.is_active, 
+    //     s.power_status, 
+    //     c.geom;
+    //
     public List<CCTVResponse> getAllCCTV() {
-        try {
-            // PostGIS 함수를 사용하여 경도/위도 추출 시도
-            String sql = "SELECT c.cctv_id, c.cctv_code, c.name, c.location_desc, " +
-                         "c.install_date, c.model_name, c.resolution, c.is_active, c.power_status, " +
-                         "ST_X(c.geom) as longitude, ST_Y(c.geom) as latitude, " +
-                         "COUNT(i.incident_id) as incident_count, " +
-                         "MAX(i.detected_at) as last_incident_at, " +
-                         "MAX(CASE WHEN i.detected_at = (SELECT MAX(detected_at) FROM incident WHERE cctv_id = c.cctv_id) " +
-                         "THEN i.incident_type END) as last_incident_type " +
-                         "FROM cctv c " +
-                         "LEFT JOIN incident i ON c.cctv_id = i.cctv_id " +
-                         "GROUP BY c.cctv_id, c.cctv_code, c.name, c.location_desc, " +
-                         "c.install_date, c.model_name, c.resolution, c.is_active, c.power_status, c.geom " +
-                         "ORDER BY c.cctv_id";
+        List<MapCCTV> viewList = mapCCTVRepository.findAll();
+        
+        return viewList.stream().map(view -> {
+            // geom에서 경도/위도 추출
+            Double longitude = null;
+            Double latitude = null;
+            if (view.getGeomDto() != null) {
+                longitude = view.getGeomDto().x;
+                latitude = view.getGeomDto().y;
+            }
             
-            Query query = entityManager.createNativeQuery(sql);
-            @SuppressWarnings("unchecked")
-            List<Object[]> results = query.getResultList();
-            
-            return results.stream().map(row -> {
-                Long id = ((Number) row[0]).longValue();
-                String cctvCode = (String) row[1];
-                String name = (String) row[2];
-                String locationDesc = (String) row[3];
-                java.sql.Date installDate = (java.sql.Date) row[4];
-                String modelName = (String) row[5];
-                String resolution = (String) row[6];
-                Boolean isActive = (Boolean) row[7];
-                String powerStatus = (String) row[8];
-                Double longitude = row[9] != null ? ((Number) row[9]).doubleValue() : null;
-                Double latitude = row[10] != null ? ((Number) row[10]).doubleValue() : null;
-                Long incidentCount = ((Number) row[11]).longValue();
-                OffsetDateTime lastIncidentAt = null;
-                if (row[12] != null) {
-                    if (row[12] instanceof OffsetDateTime) {
-                        lastIncidentAt = (OffsetDateTime) row[12];
-                    } else if (row[12] instanceof java.time.Instant) {
-                        lastIncidentAt = ((java.time.Instant) row[12]).atOffset(java.time.ZoneOffset.of("+09:00"));
-                    } else if (row[12] instanceof java.sql.Timestamp) {
-                        lastIncidentAt = ((java.sql.Timestamp) row[12]).toInstant().atOffset(java.time.ZoneOffset.of("+09:00"));
-                    }
-                }
-                String lastIncidentType = (String) row[13];
-                
-                return CCTVResponse.builder()
-                        .id(id)
-                        .cctvCode(cctvCode)
-                        .name(name)
-                        .locationDesc(locationDesc)
-                        .installDate(installDate != null ? installDate.toString() : null)
-                        .modelName(modelName)
-                        .resolution(resolution)
-                        .isActive(isActive)
-                        .powerStatus(powerStatus)
-                        .longitude(longitude)
-                        .latitude(latitude)
-                        .incidentCount(incidentCount)
-                        .lastIncidentTime(lastIncidentAt != null ? lastIncidentAt.format(DATE_FORMATTER) : null)
-                        .lastIncidentType(lastIncidentType)
-                        .build();
-            }).collect(Collectors.toList());
-        } catch (Exception e) {
-            // PostGIS 함수가 작동하지 않을 경우 대체 쿼리 (geom 컬럼 제외)
-            System.err.println("PostGIS 함수 사용 실패, 대체 쿼리 사용: " + e.getMessage());
-            e.printStackTrace();
-            
-            String sql = "SELECT c.cctv_id, c.cctv_code, c.name, c.location_desc, " +
-                         "c.install_date, c.model_name, c.resolution, c.is_active, c.power_status, " +
-                         "COUNT(i.incident_id) as incident_count, " +
-                         "MAX(i.detected_at) as last_incident_at, " +
-                         "MAX(CASE WHEN i.detected_at = (SELECT MAX(detected_at) FROM incident WHERE cctv_id = c.cctv_id) " +
-                         "THEN i.incident_type END) as last_incident_type " +
-                         "FROM cctv c " +
-                         "LEFT JOIN incident i ON c.cctv_id = i.cctv_id " +
-                         "GROUP BY c.cctv_id, c.cctv_code, c.name, c.location_desc, " +
-                         "c.install_date, c.model_name, c.resolution, c.is_active, c.power_status " +
-                         "ORDER BY c.cctv_id";
-            
-            Query query = entityManager.createNativeQuery(sql);
-            @SuppressWarnings("unchecked")
-            List<Object[]> results = query.getResultList();
-            
-            return results.stream().map(row -> {
-                Long id = ((Number) row[0]).longValue();
-                String cctvCode = (String) row[1];
-                String name = (String) row[2];
-                String locationDesc = (String) row[3];
-                java.sql.Date installDate = (java.sql.Date) row[4];
-                String modelName = (String) row[5];
-                String resolution = (String) row[6];
-                Boolean isActive = (Boolean) row[7];
-                String powerStatus = (String) row[8];
-                Long incidentCount = ((Number) row[9]).longValue();
-                OffsetDateTime lastIncidentAt = null;
-                if (row[10] != null) {
-                    if (row[10] instanceof OffsetDateTime) {
-                        lastIncidentAt = (OffsetDateTime) row[10];
-                    } else if (row[10] instanceof java.time.Instant) {
-                        lastIncidentAt = ((java.time.Instant) row[10]).atOffset(java.time.ZoneOffset.of("+09:00"));
-                    } else if (row[10] instanceof java.sql.Timestamp) {
-                        lastIncidentAt = ((java.sql.Timestamp) row[10]).toInstant().atOffset(java.time.ZoneOffset.of("+09:00"));
-                    }
-                }
-                String lastIncidentType = (String) row[11];
-                
-                return CCTVResponse.builder()
-                        .id(id)
-                        .cctvCode(cctvCode)
-                        .name(name)
-                        .locationDesc(locationDesc)
-                        .installDate(installDate != null ? installDate.toString() : null)
-                        .modelName(modelName)
-                        .resolution(resolution)
-                        .isActive(isActive)
-                        .powerStatus(powerStatus)
-                        .longitude(null) // PostGIS 사용 불가 시 null
-                        .latitude(null)  // PostGIS 사용 불가 시 null
-                        .incidentCount(incidentCount)
-                        .lastIncidentTime(lastIncidentAt != null ? lastIncidentAt.format(DATE_FORMATTER) : null)
-                        .lastIncidentType(lastIncidentType)
-                        .build();
-            }).collect(Collectors.toList());
-        }
+            return CCTVResponse.builder()
+                    .id(view.getCctvId())
+                    .cctvCode(view.getCctvCode())
+                    .name(view.getName())
+                    .locationDesc(view.getLocationDesc())
+                    .installDate(view.getInstallDate() != null ? view.getInstallDate().toString() : null)
+                    .modelName(view.getModelName())
+                    .resolution(view.getResolution())
+                    .isActive(view.getIsActive())
+                    .powerStatus(view.getPowerStatus())
+                    .longitude(longitude)
+                    .latitude(latitude)
+                    .incidentCount(view.getIncidentCount())
+                    .lastIncidentTime(view.getLastIncidentAt() != null ? view.getLastIncidentAt().format(DATE_FORMATTER) : null)
+                    .lastIncidentType(view.getLastIncidentType())
+                    .build();
+        }).collect(Collectors.toList());
     }
 
     // 활성 CCTV만 조회
@@ -773,55 +722,37 @@ public class IncidentService {
                 .collect(Collectors.toList());
     }
 
-    // CCTV ID로 조회
+    // CCTV ID로 조회 (VIEW 사용)
     public CCTVResponse getCCTVById(Long id) {
-        String sql = "SELECT c.cctv_id, c.cctv_code, c.name, c.location_desc, " +
-                     "c.install_date, c.model_name, c.resolution, c.is_active, c.power_status, " +
-                     "ST_X(c.geom) as longitude, ST_Y(c.geom) as latitude, " +
-                     "COUNT(i.incident_id) as incident_count " +
-                     "FROM cctv c " +
-                     "LEFT JOIN incident i ON c.cctv_id = i.cctv_id " +
-                     "WHERE c.cctv_id = :id " +
-                     "GROUP BY c.cctv_id, c.cctv_code, c.name, c.location_desc, " +
-                     "c.install_date, c.model_name, c.resolution, c.is_active, c.power_status, c.geom";
+        MapCCTV view = mapCCTVRepository.findById(id).orElse(null);
         
-        Query query = entityManager.createNativeQuery(sql);
-        query.setParameter("id", id);
-        
-        @SuppressWarnings("unchecked")
-        List<Object[]> results = query.getResultList();
-        
-        if (results.isEmpty()) {
+        if (view == null) {
             return null;
         }
         
-        Object[] row = results.get(0);
-        Long cctvId = ((Number) row[0]).longValue();
-        String cctvCode = (String) row[1];
-        String name = (String) row[2];
-        String locationDesc = (String) row[3];
-        java.sql.Date installDate = (java.sql.Date) row[4];
-        String modelName = (String) row[5];
-        String resolution = (String) row[6];
-        Boolean isActive = (Boolean) row[7];
-        String powerStatus = (String) row[8];
-        Double longitude = row[9] != null ? ((Number) row[9]).doubleValue() : null;
-        Double latitude = row[10] != null ? ((Number) row[10]).doubleValue() : null;
-        Long incidentCount = ((Number) row[11]).longValue();
+        // geom에서 경도/위도 추출
+        Double longitude = null;
+        Double latitude = null;
+        if (view.getGeomDto() != null) {
+            longitude = view.getGeomDto().x;
+            latitude = view.getGeomDto().y;
+        }
         
         return CCTVResponse.builder()
-                .id(cctvId)
-                .cctvCode(cctvCode)
-                .name(name)
-                .locationDesc(locationDesc)
-                .installDate(installDate != null ? installDate.toString() : null)
-                .modelName(modelName)
-                .resolution(resolution)
-                .isActive(isActive)
-                .powerStatus(powerStatus)
+                .id(view.getCctvId())
+                .cctvCode(view.getCctvCode())
+                .name(view.getName())
+                .locationDesc(view.getLocationDesc())
+                .installDate(view.getInstallDate() != null ? view.getInstallDate().toString() : null)
+                .modelName(view.getModelName())
+                .resolution(view.getResolution())
+                .isActive(view.getIsActive())
+                .powerStatus(view.getPowerStatus())
                 .longitude(longitude)
                 .latitude(latitude)
-                .incidentCount(incidentCount)
+                .incidentCount(view.getIncidentCount())
+                .lastIncidentTime(view.getLastIncidentAt() != null ? view.getLastIncidentAt().format(DATE_FORMATTER) : null)
+                .lastIncidentType(view.getLastIncidentType())
                 .build();
     }
 
@@ -986,7 +917,13 @@ public class IncidentService {
         // view_all_incidents_list에서 CCTV ID로 조회
         List<IncidentListView> viewList = incidentListViewRepository.findByCctvIdOrderByDetectedAtDesc(cctvId);
         
+        System.out.println("🔍 [IncidentService] getCCTVIncidents - CCTV ID: " + cctvId + ", Found " + viewList.size() + " incidents");
+        
         return viewList.stream().map(view -> {
+            // 디버깅: incidentCode 확인
+            String incidentCode = view.getIncidentCode();
+            System.out.println("🔍 [IncidentService] Processing incident - ID: " + view.getIncidentId() + ", Code: " + incidentCode);
+            
             String severity = switch (view.getSeverityLevel()) {
                 case "HIGH" -> "high";
                 case "MEDIUM" -> "medium";
@@ -999,15 +936,21 @@ public class IncidentService {
                 ? view.getDetectedAt().format(DATE_FORMATTER)
                 : "";
             
-            return CCTVIncidentDetailResponse.IncidentDetail.builder()
+            CCTVIncidentDetailResponse.IncidentDetail detail = CCTVIncidentDetailResponse.IncidentDetail.builder()
                     .id(view.getIncidentId())
                     .incidentType(view.getIncidentType())
+                    .incidentCode(incidentCode)  // 실제 DB의 incident_code 사용
                     .detectedAt(detectedAtStr)
                     .detectionModel(view.getDetectionModel())
                     .detectionConfidence(view.getDetectionConfidence())
                     .severity(severity)
                     .status(view.getStatus())
+                    .sourceType(view.getSourceType())
+                    .locationDesc(view.getLocationDesc())
                     .build();
+            
+            System.out.println("✅ [IncidentService] Built detail - ID: " + detail.getId() + ", Code: " + detail.getIncidentCode());
+            return detail;
         }).collect(Collectors.toList());
     }
 

@@ -1450,6 +1450,58 @@ export const getTrails = async () => {
   }
 };
 
+// ============================================
+// MainMap API - 위험지도 히트맵
+// ============================================
+
+/**
+ * 위험지도 히트맵 조회
+ * GET /api/mainmap/risk-map/heatmap
+ * 
+ * @param period - 기간: 'month' | 'week' | 'day' | '30d' | '7d' | 'today'
+ * @param type - 사건 타입: 'all' | 'fire' | 'emergency' | 'trash'
+ * @returns 등산로 구간별/CCTV별 사건 통계
+ */
+export interface RiskMapHeatmapItem {
+  entityType: 'TRAIL_SEGMENT' | 'CCTV';
+  entityId: number;
+  entityName: string;
+  trailName?: string;
+  cctvCode?: string;
+  cctvAddress?: string;
+  geom: {
+    type: 'Point' | 'LineString';
+    coordinates: number[][] | number[][][];  // Point: [[lng, lat]], LineString: [[lng, lat], [lng, lat], ...]
+  };
+  fireCount: number;
+  emergencyCount: number;
+  trashCount: number;
+  totalCount: number;
+}
+
+export const getRiskMapHeatmap = async (
+  period: 'month' | 'week' | 'day' | '30d' | '7d' | 'today' = 'month',
+  type: 'all' | 'fire' | 'emergency' | 'trash' = 'all'
+): Promise<RiskMapHeatmapItem[]> => {
+  try {
+    const params = new URLSearchParams({
+      period,
+      type,
+    });
+    const response = await fetch(`${BACKEND_URL}/api/mainmap/risk-map/heatmap?${params}`);
+    if (!response.ok) {
+      console.warn('⚠️ [RiskMap] Failed to fetch heatmap');
+      return [];
+    }
+    const data = await response.json();
+    console.log('✅ [RiskMap] Loaded heatmap:', data.length);
+    return data;
+  } catch (error) {
+    console.error('❌ [RiskMap] Error fetching heatmap:', error);
+    return [];
+  }
+};
+
 // ==================== CCTV Fallen Analysis API ====================
 /**
  * CCTV 낙상 분석 요청

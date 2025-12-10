@@ -27,6 +27,21 @@ public class MapCCTV {
     @Column(name = "cctv_address")
     private String cctvAddress;
 
+    @Column(name = "name")
+    private String name;
+
+    @Column(name = "location_desc")
+    private String locationDesc;
+
+    @Column(name = "install_date")
+    private java.time.LocalDate installDate;
+
+    @Column(name = "resolution")
+    private String resolution;
+
+    @Column(name = "is_active")
+    private Boolean isActive;
+
     @JsonIgnore // 원본 Point 객체는 JSON 직렬화 제외
     @Column(name = "geom", columnDefinition = "geometry(Point,4326)")
     private Point geom;
@@ -64,5 +79,8 @@ public class MapCCTV {
 
     @Column(name = "last_incident_type")
     private String lastIncidentType;
+
+    @Column(name = "incident_count")
+    private Long incidentCount;
 }
 

@@ -250,6 +250,7 @@ public class EmergencyService {
         incident.setCctvId(cctvId);
         
         incident.setIncidentType("EMERGENCY");
+        incident.setSourceType("MANUAL"); // 수동 등록
         
         // 심각도 변환
         String severityLevel = switch (request.getSeverity()) {
@@ -289,6 +290,19 @@ public class EmergencyService {
         if (saved.getId() == null) {
             throw new IllegalStateException("Incident ID가 생성되지 않았습니다.");
         }
+        
+        // 사고 코드 생성 (E-YYMMDD-001A 또는 E-YYMMDD-001M)
+        LocalDate date = saved.getDetectedAt().toLocalDate();
+        long count = incidentRepository.countByIncidentTypeAndDetectedAtDate("EMERGENCY", date);
+        String sequence = String.format("%03d", count);
+        String suffix = "AUTO".equals(saved.getSourceType()) ? "A" : "M";
+        String incidentCode = String.format("E-%s-%s%s",
+            saved.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd")),
+            sequence,
+            suffix
+        );
+        saved.setIncidentCode(incidentCode);
+        saved = incidentRepository.save(saved);
         
         // EmergencyDetail 저장 (@MapsId를 사용하므로 incident만 설정하면 incidentId가 자동 설정됨)
         EmergencyDetail detail = new EmergencyDetail();
@@ -652,10 +666,16 @@ public class EmergencyService {
         // Incident 저장
         incident = incidentRepository.save(incident);
         
-        // 2. 사고 코드 생성 (E-YYMMDD-XXX)
-        String incidentCode = String.format("E-%s-%03d", 
-            incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd")), 
-            incident.getId() % 1000);
+        // 2. 사고 코드 생성 (E-YYMMDD-001A 또는 E-YYMMDD-001M)
+        LocalDate date = incident.getDetectedAt().toLocalDate();
+        long count = incidentRepository.countByIncidentTypeAndDetectedAtDate("EMERGENCY", date);
+        String sequence = String.format("%03d", count);
+        String suffix = "AUTO".equals(incident.getSourceType()) ? "A" : "M";
+        String incidentCode = String.format("E-%s-%s%s",
+            incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd")),
+            sequence,
+            suffix
+        );
         
         // 사고 코드를 Incident에 저장
         incident.setIncidentCode(incidentCode);

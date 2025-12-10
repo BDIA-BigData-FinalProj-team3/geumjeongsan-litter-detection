@@ -424,10 +424,16 @@ public class TrashService {
         // Incident 저장
         incident = incidentRepository.save(incident);
         
-        // 2. 사고 코드 생성 (T-YYMMDD-XXX)
-        String incidentCode = String.format("T-%s-%03d", 
-            incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd")), 
-            incident.getId() % 1000);
+        // 2. 사고 코드 생성 (T-YYMMDD-001A 또는 T-YYMMDD-001M)
+        LocalDate date = incident.getDetectedAt().toLocalDate();
+        long count = incidentRepository.countByIncidentTypeAndDetectedAtDate("TRASH", date);
+        String sequence = String.format("%03d", count);
+        String suffix = "AUTO".equals(incident.getSourceType()) ? "A" : "M";
+        String incidentCode = String.format("T-%s-%s%s",
+            incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd")),
+            sequence,
+            suffix
+        );
         
         // 사고 코드를 Incident에 저장
         incident.setIncidentCode(incidentCode);

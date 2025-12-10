@@ -1,7 +1,10 @@
 package com.example.geumjeongsan.domain.incident;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDate;
 import java.util.List;
 
 public interface IncidentRepository extends JpaRepository<Incident, Long> {
@@ -14,4 +17,8 @@ public interface IncidentRepository extends JpaRepository<Incident, Long> {
     
     // 사고 유형별 조회
     List<Incident> findByIncidentType(String incidentType);
+    
+    // 같은 날짜, 같은 타입의 사건 개수 조회 (사건번호 일련번호 생성용)
+    @Query("SELECT COUNT(i) FROM Incident i WHERE i.incidentType = :incidentType AND DATE(i.detectedAt) = :date")
+    long countByIncidentTypeAndDetectedAtDate(@Param("incidentType") String incidentType, @Param("date") LocalDate date);
 }

@@ -24,11 +24,14 @@ public class CCTVIncidentDetailResponse {
     public static class IncidentDetail {
         private Long id;
         private String incidentType;  // FIRE, ROCKFALL, TRASH, EMERGENCY
-        private String detectedAt;    // 발생시간
+        private String incidentCode;  // 사건 코드 (예: E-CCTV-091-1) - VIEW 컬럼 그대로
+        private String detectedAt;    // 발생시간 (포맷된 문자열)
         private String detectionModel; // 모델명
         private Double detectionConfidence; // 신뢰도
         private String severity;      // high, medium, low
         private String status;        // PENDING, IN_PROGRESS, RESOLVED
+        private String sourceType;    // AUTO / MANUAL
+        private String locationDesc;  // 발생 위치 설명
     }
 }
 

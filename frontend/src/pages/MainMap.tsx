@@ -15,7 +15,7 @@ import TrashMarkerIcon from '../components/TrashMarkerIcon';
 import CCTVOnMarkerIcon from '../components/CCTVOnMarkerIcon';
 import CCTVOffMarkerIcon from '../components/CCTVOffMarkerIcon';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
-import { getFireNotifications, getEmergencyNotifications, getTrashNotifications, getHelicopterLocations, getHotspots, getCCTVVideoClips, getCCTVMedia, getCCTVList, getActiveIncidents, getIncidentMarkers, getCCTVStatus, getMainMapWeather, getCCTVIncidents, getTrails } from '../services/api';
+import { getFireNotifications, getEmergencyNotifications, getTrashNotifications, getHelicopterLocations, getHotspots, getCCTVVideoClips, getCCTVMedia, getCCTVList, getActiveIncidents, getIncidentMarkers, getCCTVStatus, getMainMapWeather, getCCTVIncidents, getTrails, getRiskMapHeatmap, getFireDetail, getEmergencyDetail, getTrashDetail, type RiskMapHeatmapItem } from '../services/api';
 import type { VideoClip } from '../services/mock';
 import type { CCTVMedia } from '../services/api';
 import type { CCTVMarker as BackendCCTVMarker } from '../services/common';
@@ -30,6 +30,7 @@ import headerLogo from 'figma:asset/14f294982efa79d8462919ccdda7d0c0c674d095.png
 import { MapContainer, TileLayer, Marker, Popup as LeafletPopup, Polyline, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import ReactDOMServer from 'react-dom/server';
 
 interface MainMapProps {
   onNavigate: (screen: string) => void;
@@ -66,9 +67,13 @@ interface CCTVPopup {
 interface DetectionPopup {
   marker: MapCCTVMarker;
   incidents: Array<{
+    id: number;
     type: 'fire' | 'emergency' | 'trash';
     time: string;
     confidence: string;
+    incidentCode?: string;
+    sourceType?: string;
+    locationDesc?: string;
   }>;
 }
 
@@ -207,7 +212,69 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const [activeFilters, setActiveFilters] = useState<Set<'fire' | 'emergency' | 'trash'>>(new Set(['fire', 'emergency', 'trash']));
   const [hotspotFilter, setHotspotFilter] = useState<'all' | 'fire' | 'emergency' | 'trash'>('all');
-  const [hoveredHotspot, setHoveredHotspot] = useState<{ cctvId: string; location: string; count: number; type: 'fire' | 'emergency' | 'trash'; x: number; y: number } | null>(null);
+  
+  // 위험지도 관련 state
+  const [riskMapPeriod, setRiskMapPeriod] = useState<'30d' | '7d' | 'today'>('30d');
+  const [riskMapType, setRiskMapType] = useState<'all' | 'fire' | 'emergency' | 'trash'>('all');
+  const [riskMapHeatmap, setRiskMapHeatmap] = useState<RiskMapHeatmapItem[]>([]);
+  const [hoveredTrailSegment, setHoveredTrailSegment] = useState<{
+    entityId: number;
+    entityName: string;
+    trailName?: string;
+    fireCount: number;
+    emergencyCount: number;
+    trashCount: number;
+    x: number;
+    y: number;
+  } | null>(null);
+  const trailHeatmapMap = React.useMemo(() => {
+    const map = new Map<number, RiskMapHeatmapItem>();
+    riskMapHeatmap.forEach(item => {
+      if (item.entityType === 'TRAIL_SEGMENT') {
+        map.set(item.entityId, item);
+      }
+    });
+    return map;
+  }, [riskMapHeatmap]);
+  const [hoveredHotspot, setHoveredHotspot] = useState<{ 
+    cctvId: string; 
+    location: string; 
+    fireCount: number;
+    emergencyCount: number;
+    trashCount: number;
+    x: number; 
+    y: number;
+  } | null>(null);
+  
+  // 공통: 백엔드에서 내려오는 [lng, lat] 배열을 Leaflet용 [lat, lng]로 변환
+  const toLeafletPositions = (coords: number[][]) =>
+    coords.map(([lng, lat]) => [lat, lng] as [number, number]);
+  
+  // 기간별 히트맵 색상 함수
+  const getHeatmapColorByPeriod = (count: number, period: string) => {
+    if (period === '30d') {
+      // 최근 30일: 0~2 파랑, 3~7 초록, 8~12 노랑, 13~17 주황, 18+ 빨강
+      if (count === 0 || count <= 2) return '#3B82F6'; // 파랑
+      if (count <= 7) return '#10B981'; // 초록
+      if (count <= 12) return '#FBBF24'; // 노랑
+      if (count <= 17) return '#F97316'; // 주황
+      return '#EF4444'; // 빨강 (18+)
+    } else if (period === '7d') {
+      // 최근 7일: 0 파랑, 1~4 초록, 5~8 노랑, 9~12 주황, 13+ 빨강
+      if (count === 0) return '#3B82F6'; // 파랑
+      if (count <= 4) return '#10B981'; // 초록
+      if (count <= 8) return '#FBBF24'; // 노랑
+      if (count <= 12) return '#F97316'; // 주황
+      return '#EF4444'; // 빨강 (13+)
+    } else {
+      // 당일: 0 파랑, 1~3 초록, 4~6 노랑, 7~9 주황, 10+ 빨강
+      if (count === 0) return '#3B82F6'; // 파랑
+      if (count <= 3) return '#10B981'; // 초록
+      if (count <= 6) return '#FBBF24'; // 노랑
+      if (count <= 9) return '#F97316'; // 주황
+      return '#EF4444'; // 빨강 (10+)
+    }
+  };
   const [hoveredTrailId, setHoveredTrailId] = useState<number | null>(null);
   const [selectedCCTV, setSelectedCCTV] = useState<CCTVPopup | null>(null);
   const [selectedDetection, setSelectedDetection] = useState<DetectionPopup | null>(null);
@@ -232,6 +299,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   const [videoDetailPopup, setVideoDetailPopup] = useState<{
     cctvId: string;
     incidentId?: string;
+    incidentCode?: string;
     location: string;
     time: string;
     confidence: string;
@@ -518,37 +586,45 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         }
 
         // ✅ VIEW 데이터를 맵 마커 형식으로 변환 (그룹화 불필요!)
-        const markersWithIncidents = incidentMarkers.map((marker: any) => {
-          // PostGIS geometry 파싱 (GeomDto format: { x, y })
-          const longitude = marker.geom?.x || 0;  // ✅ 직접 x 접근
-          const latitude = marker.geom?.y || 0;   // ✅ 직접 y 접근
-          
-          // 위도/경도 → 백분율 변환 (금정산 범위 기준)
-          const x = ((longitude - 129.0) / (129.1 - 129.0)) * 100;
-          const y = ((35.3 - latitude) / (35.3 - 35.2)) * 100;
-          
-          console.log(`📍 [Marker] ${marker.cctvCode}: (${longitude}, ${latitude}) -> (${x.toFixed(2)}%, ${y.toFixed(2)}%)`);
-          
-          return {
-            id: marker.cctvCode,
-            cctvId: marker.cctvId,
-            cctvCode: marker.cctvCode,
-            location: marker.cctvAddress || '위치 미상',
-            x: x,
-            y: y,
-            geom: {
-              x: longitude,
-              y: latitude,
-            },
-            power: 'on' as const,
-            healthStatus: 'NORMAL' as const,
-            incidents: {
-              fire: marker.fireCount || 0,
-              emergency: marker.emergencyCount || 0,
-              trash: marker.trashCount || 0,
-            },
-          };
-        });
+        // 사건이 있는 마커만 필터링 (unresolvedCount > 0 또는 사건 개수 합 > 0)
+        const markersWithIncidents = incidentMarkers
+          .filter((marker: any) => {
+            const hasIncidents = 
+              (marker.unresolvedCount && marker.unresolvedCount > 0) ||
+              ((marker.fireCount || 0) + (marker.emergencyCount || 0) + (marker.trashCount || 0) > 0);
+            return hasIncidents;
+          })
+          .map((marker: any) => {
+            // PostGIS geometry 파싱 (GeomDto format: { x, y })
+            const longitude = marker.geom?.x || 0;  // ✅ 직접 x 접근
+            const latitude = marker.geom?.y || 0;   // ✅ 직접 y 접근
+            
+            // 위도/경도 → 백분율 변환 (금정산 범위 기준)
+            const x = ((longitude - 129.0) / (129.1 - 129.0)) * 100;
+            const y = ((35.3 - latitude) / (35.3 - 35.2)) * 100;
+            
+            console.log(`📍 [Marker] ${marker.cctvCode}: (${longitude}, ${latitude}) -> (${x.toFixed(2)}%, ${y.toFixed(2)}%)`);
+            
+            return {
+              id: marker.cctvCode,
+              cctvId: marker.cctvId,
+              cctvCode: marker.cctvCode,
+              location: marker.cctvAddress || '위치 미상',
+              x: x,
+              y: y,
+              geom: {
+                x: longitude,
+                y: latitude,
+              },
+              power: 'on' as const,
+              healthStatus: 'NORMAL' as const,
+              incidents: {
+                fire: marker.fireCount || 0,
+                emergency: marker.emergencyCount || 0,
+                trash: marker.trashCount || 0,
+              },
+            };
+          });
         
         console.log("🗺️ [MainMap] Final Map Markers:", markersWithIncidents);
         setCctvMarkers(markersWithIncidents);
@@ -643,33 +719,41 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             return;
           }
           
-          const markersWithIncidents = incidentMarkers.map((marker: any) => {
-            const longitude = marker.geom?.x || 0;
-            const latitude = marker.geom?.y || 0;
-            
-            const x = ((longitude - 129.0) / (129.1 - 129.0)) * 100;
-            const y = ((35.3 - latitude) / (35.3 - 35.2)) * 100;
-            
-            return {
-              id: marker.cctvCode,
-              cctvId: marker.cctvId,
-              cctvCode: marker.cctvCode,
-              location: marker.cctvAddress || '위치 미상',
-              x: x,
-              y: y,
-              geom: {
-                x: longitude,
-                y: latitude,
-              },
-              power: 'on' as const,
-              healthStatus: 'NORMAL' as const,
-              incidents: {
-                fire: marker.fireCount || 0,
-                emergency: marker.emergencyCount || 0,
-                trash: marker.trashCount || 0,
-              },
-            };
-          });
+          // 사건이 있는 마커만 필터링 (unresolvedCount > 0 또는 사건 개수 합 > 0)
+          const markersWithIncidents = incidentMarkers
+            .filter((marker: any) => {
+              const hasIncidents = 
+                (marker.unresolvedCount && marker.unresolvedCount > 0) ||
+                ((marker.fireCount || 0) + (marker.emergencyCount || 0) + (marker.trashCount || 0) > 0);
+              return hasIncidents;
+            })
+            .map((marker: any) => {
+              const longitude = marker.geom?.x || 0;
+              const latitude = marker.geom?.y || 0;
+              
+              const x = ((longitude - 129.0) / (129.1 - 129.0)) * 100;
+              const y = ((35.3 - latitude) / (35.3 - 35.2)) * 100;
+              
+              return {
+                id: marker.cctvCode,
+                cctvId: marker.cctvId,
+                cctvCode: marker.cctvCode,
+                location: marker.cctvAddress || '위치 미상',
+                x: x,
+                y: y,
+                geom: {
+                  x: longitude,
+                  y: latitude,
+                },
+                power: 'on' as const,
+                healthStatus: 'NORMAL' as const,
+                incidents: {
+                  fire: marker.fireCount || 0,
+                  emergency: marker.emergencyCount || 0,
+                  trash: marker.trashCount || 0,
+                },
+              };
+            });
           
           console.log("🗺️ [MainMap] Incident Markers Reloaded:", markersWithIncidents);
           setCctvMarkers(markersWithIncidents);
@@ -682,7 +766,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     loadViewData();
   }, [activeView]);
 
-  // 사고다발구간 데이터 로드
+  // 사고다발구간 데이터 로드 (기존)
   useEffect(() => {
     const loadHotspots = async () => {
       if (activeView === 'risk-map') {
@@ -704,6 +788,51 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     
     loadHotspots();
   }, [activeView]);
+
+  // 위험지도 히트맵 데이터 로드
+  useEffect(() => {
+    const loadRiskMapHeatmap = async () => {
+      if (activeView === 'risk-map') {
+        try {
+          console.log('🔥 [RiskMap] Loading heatmap data...', { period: riskMapPeriod, type: riskMapType });
+          const data = await getRiskMapHeatmap(riskMapPeriod, riskMapType);
+          console.log('✅ [RiskMap] Loaded heatmap:', data.length, 'items');
+          console.log('📊 [RiskMap] Data breakdown:', {
+            trailSegments: data.filter(d => d.entityType === 'TRAIL_SEGMENT').length,
+            cctv: data.filter(d => d.entityType === 'CCTV').length,
+            withFire: data.filter(d => (d.fireCount || 0) > 0).length,
+            withEmergency: data.filter(d => (d.emergencyCount || 0) > 0).length,
+            withTrash: data.filter(d => (d.trashCount || 0) > 0).length,
+          });
+          
+          // 데이터 샘플 로깅 (첫 번째 항목)
+          if (data.length > 0) {
+            const sample = data[0];
+            console.log('📋 [RiskMap] Sample data:', {
+              entityType: sample.entityType,
+              entityId: sample.entityId,
+              entityName: sample.entityName,
+              geom: sample.geom,
+              fireCount: sample.fireCount,
+              emergencyCount: sample.emergencyCount,
+              trashCount: sample.trashCount,
+              totalCount: sample.totalCount,
+            });
+          }
+          
+          setRiskMapHeatmap(data);
+        } catch (error) {
+          console.error('❌ [RiskMap] Error loading heatmap:', error);
+          setRiskMapHeatmap([]);
+        }
+      } else {
+        // 위험지도 모드가 아닐 때는 데이터 초기화
+        setRiskMapHeatmap([]);
+      }
+    };
+    
+    loadRiskMapHeatmap();
+  }, [activeView, riskMapPeriod, riskMapType]);
 
   const getPriorityIncident = (incidents: MapCCTVMarker['incidents']) => {
     if (incidents.fire) return { type: 'fire' as const, count: incidents.fire };
@@ -770,14 +899,35 @@ export default function MainMap({ onNavigate }: MainMapProps) {
       const x = event.clientX || (event.currentTarget ? event.currentTarget.getBoundingClientRect().left + event.currentTarget.getBoundingClientRect().width / 2 : 0);
       const y = event.clientY || (event.currentTarget ? event.currentTarget.getBoundingClientRect().top : 0);
       setSelectedCCTV({ cctv: marker, x, y });
-    } else if (activeView === 'detections') {
-      // 실제 API에서 CCTV별 사건 목록 가져오기
-      try {
-        const cctvIncidents = await getCCTVIncidents(marker.cctvId);
+    } else if (activeView === 'detections' || activeView === 'risk-map') {
+      // 즉시 팝업 표시 (로딩 상태)
+      setSelectedDetection({ marker: marker, incidents: [] });
+      
+      // 백그라운드에서 API 호출 (비동기)
+      getCCTVIncidents(marker.cctvId).then((cctvIncidents) => {
+        // 디버깅: API 응답 확인
+        console.log('🔍 [MainMap] API Response:', cctvIncidents);
+        console.log('🔍 [MainMap] First incident:', cctvIncidents[0]);
         
         // 백엔드 응답 형식을 프론트엔드 형식으로 변환
-        const incidents: Array<{ type: 'fire' | 'emergency' | 'trash'; time: string; confidence: string; }> = 
+        const incidents: Array<{ 
+          id: number;
+          type: 'fire' | 'emergency' | 'trash'; 
+          time: string; 
+          confidence: string;
+          incidentCode?: string;
+          sourceType?: string;
+          locationDesc?: string;
+        }> = 
           cctvIncidents.map((incident: any) => {
+            // 디버깅: 각 incident 확인
+            console.log('🔍 [MainMap] Processing incident:', {
+              id: incident.id,
+              incidentCode: incident.incidentCode,
+              incidentType: incident.incidentType,
+              allKeys: Object.keys(incident)
+            });
+            
             // incidentType을 소문자로 변환 (FIRE -> fire, EMERGENCY -> emergency, TRASH -> trash)
             const type = incident.incidentType?.toLowerCase() || 'fire';
             
@@ -790,17 +940,24 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               : '0%';
             
             return {
+              id: incident.id,
               type: type as 'fire' | 'emergency' | 'trash',
               time: time,
-              confidence: confidence
+              confidence: confidence,
+              incidentCode: incident.incidentCode, // 실제 DB의 incident_code
+              sourceType: incident.sourceType,
+              locationDesc: incident.locationDesc
             };
           });
         
+        console.log('✅ [MainMap] Processed incidents:', incidents);
+        
+        // 팝업 업데이트 (데이터 로드 완료)
         setSelectedDetection({ marker: marker, incidents: incidents });
-      } catch (error) {
+      }).catch((error) => {
         console.error('❌ [MainMap] Failed to load incidents:', error);
         setSelectedDetection({ marker: marker, incidents: [] });
-      }
+      });
     }
   };
 
@@ -1128,6 +1285,70 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         />
       </div>
 
+      {/* 위험지도 필터 UI (기간 선택, 타입 선택) */}
+      {activeView === 'risk-map' && (
+        <div 
+          className="fixed bg-white shadow-lg border border-gray-200 p-4 transition-all duration-300" 
+          style={{ 
+            borderRadius: '8px', 
+            minWidth: '280px',
+            top: '80px',
+            left: sidebarOpen ? '268px' : '24px',
+            zIndex: 1000
+          }}
+        >
+          <div className="mb-4">
+            <label className="block text-sm font-semibold text-gray-700 mb-2">기간 선택</label>
+            <div className="flex flex-wrap gap-2">
+              {(['30d', '7d', 'today'] as const).map((period) => (
+                <button
+                  key={period}
+                  onClick={() => setRiskMapPeriod(period)}
+                  className={`px-3 py-1.5 text-xs rounded-md transition-colors ${
+                    riskMapPeriod === period
+                      ? 'bg-blue-600 text-white font-semibold'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  {period === '30d' ? '최근 30일' : 
+                   period === '7d' ? '최근 7일' : 
+                   '당일'}
+                </button>
+              ))}
+            </div>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">사건 타입</label>
+            <div className="flex gap-2">
+              {(['all', 'fire', 'emergency', 'trash'] as const).map((type) => (
+                <button
+                  key={type}
+                  onClick={() => setRiskMapType(type)}
+                  className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors flex items-center justify-center gap-1.5 ${
+                    riskMapType === type
+                      ? type === 'all' ? 'bg-gradient-to-r from-red-400 via-yellow-400 to-green-400 text-white font-semibold' :
+                        type === 'fire' ? 'bg-red-500 text-white font-semibold' :
+                        type === 'emergency' ? 'bg-orange-500 text-white font-semibold' :
+                        'bg-green-500 text-white font-semibold'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  }`}
+                >
+                  {type === 'all' && <div className="w-2 h-2 rounded-full bg-white"></div>}
+                  {type === 'fire' && <Flame className="w-3 h-3" />}
+                  {type === 'emergency' && <HeartPulse className="w-3 h-3" />}
+                  {type === 'trash' && <Trash2 className="w-3 h-3" />}
+                  {type === 'all' ? '전체' : 
+                   type === 'fire' ? '화재' : 
+                   type === 'emergency' ? '응급' : 
+                   '쓰레기'}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 필터 드롭다운 - fixed positioning으로 최상위 레이어에 배치 */}
       {showFilterDropdown && (
         <div 
@@ -1368,11 +1589,11 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             })}
             
             {/* 등산로 렌더링 */}
-            {trails.map((trail) => {
+            {activeView !== 'risk-map' && trails.map((trail) => {
               if (!trail.geom || !trail.geom.coordinates) return null;
               
               // [[lng, lat], ...] → [[lat, lng], ...] 로 변환 (Leaflet 형식)
-              const positions = trail.geom.coordinates.map((coord: number[]) => [coord[1], coord[0]]);
+              const positions = toLeafletPositions(trail.geom.coordinates as number[][]);
               
               // 등산로 중앙 좌표 계산 (라벨 표시 위치 - 경로 위)
               const totalLength = positions.length;
@@ -1396,6 +1617,22 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                       },
                       mouseout: () => {
                         setHoveredTrailId(null);
+                      },
+                      click: (e) => {
+                        e.originalEvent.stopPropagation();
+                        const latlng = e.target.getBounds().getCenter();
+                        const x = ((latlng.lng - 129.0) / (129.1 - 129.0)) * 100;
+                        const y = ((35.3 - latlng.lat) / (35.3 - 35.2)) * 100;
+                        setHoveredTrailSegment({
+                          entityId: trail.segmentId as number,
+                          entityName: trail.segmentName,
+                          trailName: trail.trailNameKor,
+                          fireCount: 0,
+                          emergencyCount: 0,
+                          trashCount: 0,
+                          x,
+                          y,
+                        });
                       },
                     }}
                   >
@@ -1434,6 +1671,275 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                 </React.Fragment>
               );
             })}
+
+            {/* 위험지도 모드: 등산로 히트맵 렌더링 (기본 등산로 + 히트맵 통계 결합) */}
+            {activeView === 'risk-map' && trails.map((trail) => {
+              if (!trail.geom || !trail.geom.coordinates) return null;
+
+              const positions = toLeafletPositions(trail.geom.coordinates as number[][]);
+              if (positions.length === 0) return null;
+
+              // 등산로 중앙 좌표 계산 (라벨 위치)
+              const totalLength = positions.length;
+              const midIndex = Math.floor(totalLength / 2);
+              const centerPosition = positions[midIndex] as [number, number];
+
+              // 해당 구간에 대한 위험지도 통계 찾기
+              const stats = trailHeatmapMap.get(trail.segmentId as number);
+              const getCountByType = () => {
+                if (!stats) return 0;
+                if (riskMapType === 'fire') return stats.fireCount || 0;
+                if (riskMapType === 'emergency') return stats.emergencyCount || 0;
+                if (riskMapType === 'trash') return stats.trashCount || 0;
+                return stats.totalCount || 0;
+              };
+
+              const displayCount = getCountByType();
+              const color = getHeatmapColorByPeriod(displayCount, riskMapPeriod);
+              const isHovered = hoveredTrailSegment?.entityId === (trail.segmentId as number);
+
+              return (
+                <React.Fragment key={`risk-map-trail-${trail.segmentId}`}>
+                  {/* 그라데이션 효과를 위한 그림자 레이어 */}
+                  <Polyline
+                    positions={positions}
+                    pathOptions={{
+                      color: '#000000',
+                      weight: isHovered ? 10 : 8,
+                      opacity: 0.15,
+                    }}
+                  />
+                  {/* 메인 라인 */}
+                  <Polyline
+                    positions={positions}
+                    pathOptions={{
+                      color,
+                      weight: isHovered ? 7 : 5.5,
+                      opacity: isHovered ? 1.0 : 0.85,
+                    }}
+                    eventHandlers={{
+                      mouseover: (e) => {
+                        const latlng = e.target.getBounds().getCenter();
+                        const x = ((latlng.lng - 129.0) / (129.1 - 129.0)) * 100;
+                        const y = ((35.3 - latlng.lat) / (35.3 - 35.2)) * 100;
+                        setHoveredTrailSegment({
+                          entityId: trail.segmentId,
+                          entityName: trail.segmentName,
+                          trailName: trail.trailNameKor,
+                          fireCount: stats?.fireCount || 0,
+                          emergencyCount: stats?.emergencyCount || 0,
+                          trashCount: stats?.trashCount || 0,
+                          x,
+                          y,
+                        });
+                      },
+                      mouseout: () => {
+                        setHoveredTrailSegment(null);
+                      },
+                      click: (e) => {
+                        e.originalEvent.stopPropagation();
+                        const latlng = e.target.getBounds().getCenter();
+                        const x = ((latlng.lng - 129.0) / (129.1 - 129.0)) * 100;
+                        const y = ((35.3 - latlng.lat) / (35.3 - 35.2)) * 100;
+                        setHoveredTrailSegment({
+                          entityId: trail.segmentId,
+                          entityName: trail.segmentName,
+                          trailName: trail.trailNameKor,
+                          fireCount: stats?.fireCount || 0,
+                          emergencyCount: stats?.emergencyCount || 0,
+                          trashCount: stats?.trashCount || 0,
+                          x,
+                          y,
+                        });
+                      },
+                    }}
+                  />
+                  {/* 라벨 표시 */}
+                  {zoomLevel >= 14.5 && trail.segmentName && (
+                    <Marker
+                      position={centerPosition}
+                      icon={L.divIcon({
+                        className: 'trail-label-marker',
+                        html: `<div style="
+                          font-size: 11px;
+                          font-weight: bold;
+                          color: #000000;
+                          white-space: nowrap;
+                          text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8), -1px -1px 2px rgba(255, 255, 255, 0.8), 1px -1px 2px rgba(255, 255, 255, 0.8), -1px 1px 2px rgba(255, 255, 255, 0.8);
+                          pointer-events: none;
+                        ">${trail.segmentName}</div>`,
+                        iconSize: [0, 0],
+                        iconAnchor: [0, 0],
+                      })}
+                    />
+                  )}
+                </React.Fragment>
+              );
+            })}
+
+          
+          {/* 위험지도 모드: CCTV 사고다발 구간 마커 (Top 3/Top 5) - 지도 좌표 기반 Marker로 렌더링 */}
+          {activeView === 'risk-map' && (() => {
+            // 아직 히트맵 데이터가 없으면 아무것도 렌더링하지 않음 (불필요한 경고/로그 방지)
+            if (!riskMapHeatmap || riskMapHeatmap.length === 0) {
+              return null;
+            }
+
+            // CCTV 마커만 필터링
+            const cctvItems = riskMapHeatmap.filter(item => 
+              item.entityType === 'CCTV' && 
+              item.geom && 
+              item.geom.type === 'Point' && 
+              item.geom.coordinates
+            );
+            
+            // Top 3/Top 5 계산
+            let topHotspots: typeof cctvItems = [];
+            
+            if (riskMapType === 'all') {
+              // 전체 선택: 각 유형별 top 3씩
+              const fireTop3 = [...cctvItems]
+                .filter(item => (item.fireCount || 0) > 0)
+                .sort((a, b) => (b.fireCount || 0) - (a.fireCount || 0))
+                .slice(0, 3);
+              
+              const emergencyTop3 = [...cctvItems]
+                .filter(item => (item.emergencyCount || 0) > 0)
+                .sort((a, b) => (b.emergencyCount || 0) - (a.emergencyCount || 0))
+                .slice(0, 3);
+              
+              const trashTop3 = [...cctvItems]
+                .filter(item => (item.trashCount || 0) > 0)
+                .sort((a, b) => (b.trashCount || 0) - (a.trashCount || 0))
+                .slice(0, 3);
+              
+              console.log('🔍 [RiskMap] Filtered by type:', {
+                fireTop3: fireTop3.length,
+                emergencyTop3: emergencyTop3.length,
+                trashTop3: trashTop3.length,
+              });
+              
+              // 중복 제거 (같은 CCTV가 여러 타입에 포함될 수 있음)
+              const allHotspots = [...fireTop3, ...emergencyTop3, ...trashTop3];
+              const uniqueMap = new Map();
+              allHotspots.forEach(item => {
+                const existing = uniqueMap.get(item.entityId);
+                if (!existing || (item.totalCount || 0) > (existing.totalCount || 0)) {
+                  uniqueMap.set(item.entityId, item);
+                }
+              });
+              topHotspots = Array.from(uniqueMap.values());
+            } else {
+              // 타입 선택: 해당 타입 top 5
+              const typeKey = riskMapType === 'fire' ? 'fireCount' : 
+                              riskMapType === 'emergency' ? 'emergencyCount' : 'trashCount';
+              
+              const filtered = [...cctvItems].filter(item => {
+                const count = Number(item[typeKey]) || 0;
+                return count > 0;
+              });
+              
+              console.log('🔍 [RiskMap] Filtered by', typeKey, ':', filtered.length, 'items');
+              
+              topHotspots = filtered
+                .sort((a, b) => {
+                  const aCount = Number(a[typeKey]) || 0;
+                  const bCount = Number(b[typeKey]) || 0;
+                  return bCount - aCount;
+                })
+                .slice(0, 5);
+            }
+            
+            if (topHotspots.length === 0) {
+              return null;
+            }
+                
+            return topHotspots.map((item, index) => {
+              // Point도 항상 [[lng, lat]] 형식으로 내려오므로 첫 번째 좌표 사용
+              const [lng, lat] = (item.geom.coordinates as number[][])[0];
+              
+              // 선택한 타입에 따라 아이콘 결정
+              const incidentType = riskMapType === 'all' 
+                ? ((item.fireCount || 0) > 0 ? 'fire' : 
+                   (item.emergencyCount || 0) > 0 ? 'emergency' : 'trash')
+                : riskMapType; // 화재/응급/쓰레기 선택 시 해당 타입만
+              
+              // MapCCTVMarker 형식으로 변환 (Leaflet Marker 클릭 시 사용)
+              const markerData: MapCCTVMarker = {
+                id: item.cctvCode || item.entityName,
+                cctvId: item.entityId,
+                cctvCode: item.cctvCode || item.entityName,
+                location: item.cctvAddress || item.entityName,
+                x: 0,
+                y: 0,
+                geom: {
+                  x: lng,
+                  y: lat,
+                },
+                power: 'on' as const,
+                healthStatus: 'NORMAL' as const,
+                incidents: {
+                  fire: item.fireCount || 0,
+                  emergency: item.emergencyCount || 0,
+                  trash: item.trashCount || 0,
+                },
+              };
+
+              // 원래 사용하던 SVG 아이콘(화재/응급/쓰레기)을 그대로 사용하되,
+              // Leaflet Marker용 divIcon으로 변환하여 지도 좌표에 고정
+              let iconHtml = '';
+              if (incidentType === 'fire') {
+                iconHtml = ReactDOMServer.renderToString(
+                  <HotspotFireIcon style={{ width: '48px', height: '56px' }} />
+                );
+              } else if (incidentType === 'emergency') {
+                iconHtml = ReactDOMServer.renderToString(
+                  <HotspotEmergencyIcon style={{ width: '48px', height: '56px' }} />
+                );
+              } else {
+                iconHtml = ReactDOMServer.renderToString(
+                  <HotspotTrashIcon style={{ width: '48px', height: '56px' }} />
+                );
+              }
+
+              const icon = L.divIcon({
+                className: 'risk-hotspot-marker',
+                html: iconHtml,
+                iconSize: [48, 56],
+                iconAnchor: [24, 56],
+              });
+
+              return (
+                <Marker
+                  key={`risk-map-cctv-${item.entityType}-${item.entityId}-${index}`}
+                  position={[lat, lng]}
+                  icon={icon}
+                  eventHandlers={{
+                    click: (e) => {
+                      handleMarkerClick(markerData, e);
+                    },
+                    mouseover: (e) => {
+                      const clientX = (e.originalEvent as MouseEvent).clientX;
+                      const clientY = (e.originalEvent as MouseEvent).clientY;
+                      setHoveredHotspot({
+                        cctvId: item.cctvCode || item.entityName,
+                        location: item.cctvAddress || item.entityName,
+                        fireCount: item.fireCount || 0,
+                        emergencyCount: item.emergencyCount || 0,
+                        trashCount: item.trashCount || 0,
+                        x: clientX,
+                        y: clientY,
+                      });
+                    },
+                    mouseout: () => {
+                      setHoveredHotspot(null);
+                    },
+                  }}
+                />
+              );
+            });
+          })()}
+          
           </MapContainer>
         </div>
 
@@ -1515,32 +2021,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
 
 
 
-        {/* 위험지도 모드 마커 (사고다발구간) */}
-        {activeView === 'risk-map' && hotspotLocations
-          .filter(hotspot => hotspotFilter === 'all' || hotspot.type === hotspotFilter)
-          .map((hotspot) => (
-            <div 
-              key={`hotspot-${hotspot.cctvId}`}
-              className="absolute transform -translate-x-1/2 -translate-y-full cursor-pointer hover:scale-110 transition-all"
-              style={{ 
-                left: `${hotspot.x}%`, 
-                top: `${hotspot.y}%`,
-                zIndex: 1050,
-              }}
-              onMouseEnter={() => setHoveredHotspot({ cctvId: hotspot.cctvId, location: hotspot.location, count: hotspot.count, type: hotspot.type, x: hotspot.x, y: hotspot.y })}
-              onMouseLeave={() => setHoveredHotspot(null)}
-            >
-              {hotspot.type === 'fire' && (
-                <HotspotFireIcon style={{ width: '48px', height: '56px' }} />
-              )}
-              {hotspot.type === 'emergency' && (
-                <HotspotEmergencyIcon style={{ width: '48px', height: '56px' }} />
-              )}
-              {hotspot.type === 'trash' && (
-                <HotspotTrashIcon style={{ width: '48px', height: '56px' }} />
-              )}
-            </div>
-          ))}
+        {/* 위험지도 모드 마커는 riskMapHeatmap으로 통합 (중복 제거) */}
 
 
 
@@ -1642,7 +2123,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             <div className="grid grid-cols-2 gap-3 mb-3 pb-3 border-b border-gray-200">
               <div>
                 <p className="text-xs text-gray-500">CCTV ID</p>
-                <p className="text-sm text-gray-900 font-medium">{selectedCCTV.cctv.id}</p>
+                <p className="text-sm text-gray-900 font-medium">{selectedCCTV.cctv.cctvCode || selectedCCTV.cctv.id}</p>
               </div>
               <div>
                 <p className="text-xs text-gray-500">전원 상태</p>
@@ -1681,7 +2162,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                 <div className="space-y-3">
                   {cctvMediaList.slice(0, 3).map((media, index) => {
                     // TODO: 실제 사건 정보는 API에서 가져와야 함
-                    const mockIncidentId = `INC-2024-${1000 + index}`;
+                    // media에 incident_id나 incident_code가 있다면 사용, 없으면 표시하지 않음
                     const mockIncidentType = index === 0 ? 'fire' : index === 1 ? 'emergency' : 'trash';
                     const mockIncidentStatus = index === 0 ? '대기중' : index === 1 ? '진행중' : '대기중';
                     
@@ -1702,9 +2183,11 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                         <div className="flex gap-3 mb-3">
                           {/* 왼쪽: 사건 정보 */}
                           <div className="flex-1 space-y-2">
-                            <div>
-                              <p className="text-sm font-medium text-gray-900">사건 ID: {mockIncidentId}</p>
-                            </div>
+                            {media.incidentCode && (
+                              <div>
+                                <p className="text-sm font-medium text-gray-900">사건 ID: {media.incidentCode}</p>
+                              </div>
+                            )}
                             <div>
                               <span className={`inline-block px-2 py-1 text-xs font-medium ${config.color}`} style={{ borderRadius: '0px' }}>
                                 {config.label}
@@ -1731,8 +2214,9 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                             onClick={() => {
                               // 영상 상세보기 팝업 열기
                               setVideoDetailPopup({
-                                cctvId: selectedCCTV?.cctv.id || 'CCTV-001',
-                                incidentId: mockIncidentId,
+                                cctvId: selectedCCTV?.cctv.cctvCode || selectedCCTV?.cctv.id || 'CCTV-001',
+                                incidentId: media.incidentId?.toString(),
+                                incidentCode: media.incidentCode,
                                 location: selectedCCTV?.cctv.location || '위치 정보 없음',
                                 time: media.timestamp,
                                 confidence: '85%',
@@ -1760,13 +2244,52 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                         {/* 하단: 버튼 그룹 */}
                         <div className="flex gap-2">
                           <button
-                            onClick={() => {
+                            onClick={async () => {
                               // 사건 상세정보 팝업 열기
+                              // media에 incidentId가 있으면 실제 DB에서 가져오기
+                              if ((media as any).incidentId) {
+                                const incidentId = typeof (media as any).incidentId === 'string' 
+                                  ? parseInt((media as any).incidentId) 
+                                  : (media as any).incidentId;
+                                
+                                try {
+                                  let detailData;
+                                  if (mockIncidentType === 'fire') {
+                                    detailData = await getFireDetail(incidentId);
+                                  } else if (mockIncidentType === 'emergency') {
+                                    detailData = await getEmergencyDetail(incidentId);
+                                  } else {
+                                    detailData = await getTrashDetail(incidentId);
+                                  }
+                                  
+                                  if (detailData) {
+                                    setIncidentDetailPopup({
+                                      type: mockIncidentType as 'fire' | 'emergency' | 'trash',
+                                      detail: {
+                                        accidentCode: detailData.accidentCode || (media as any).incidentCode || `INC-${incidentId}`,
+                                        cctvId: detailData.cctvCode || detailData.cctvId || selectedCCTV?.cctv.cctvCode || selectedCCTV?.cctv.id || 'CCTV-001',
+                                        location: detailData.location || selectedCCTV?.cctv.location || '위치 정보 없음',
+                                        detectedAt: detailData.time || media.timestamp,
+                                        confidence: detailData.confidence || '85%',
+                                        status: detailData.status || mockIncidentStatus,
+                                        processor: detailData.handler || '담당자',
+                                        modelName: detailData.modelName || 'FireDetect-v2',
+                                        modelVersion: detailData.modelVersion || '2.1.0'
+                                      } as any
+                                    });
+                                    return;
+                                  }
+                                } catch (error) {
+                                  console.error('❌ [MainMap] Failed to load incident detail:', error);
+                                }
+                              }
+                              
+                              // incidentId가 없거나 API 호출 실패 시 임시 데이터 사용
                               setIncidentDetailPopup({
                                 type: mockIncidentType as 'fire' | 'emergency' | 'trash',
                                 detail: {
-                                  accidentCode: mockIncidentId,
-                                  cctvId: selectedCCTV?.cctv.id || 'CCTV-001',
+                                  accidentCode: (media as any).incidentCode || '정보 없음',
+                                  cctvId: selectedCCTV?.cctv.cctvCode || selectedCCTV?.cctv.id || 'CCTV-001',
                                   location: selectedCCTV?.cctv.location || '위치 정보 없음',
                                   detectedAt: media.timestamp,
                                   confidence: '85%',
@@ -1869,11 +2392,9 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                   const now = new Date();
                   const diffMinutes = (now.getTime() - incidentTime.getTime()) / (1000 * 60);
                   const isNew = diffMinutes < 10;
-                  // Mock 사건 ID 생성
-                  const incidentId = `${incident.type.toUpperCase().charAt(0)}-${selectedDetection.marker.id}-${index + 1}`;
                   
                   return (
-                    <div key={index} className="p-3 border border-gray-200 relative" style={{ borderRadius: '0px' }}>
+                    <div key={incident.id || index} className="p-3 border border-gray-200 relative" style={{ borderRadius: '0px' }}>
                       {/* NEW 배지 */}
                       {isNew && (
                         <div className="absolute -top-2 -right-2 bg-red-500 text-white px-2 py-0.5 text-xs font-bold" style={{ borderRadius: '0px' }}>
@@ -1890,13 +2411,21 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                             {incident.type === 'trash' && <Trash2 className="w-3 h-3" />}
                             {getIncidentLabel(incident.type)}
                           </span>
+                          {incident.sourceType === 'MANUAL' && (
+                            <span className="px-2 py-1 text-xs bg-gray-200 text-gray-700" style={{ borderRadius: '0px' }}>
+                              수동등록
+                            </span>
+                          )}
                         </div>
                         <span className="text-xs text-gray-500">{incident.time}</span>
                       </div>
                       
                       {/* 사건 ID - 유형 아래로 이동 */}
                       <div className="mb-2">
-                        <p className="text-xs text-gray-500">사건 ID: {incidentId}</p>
+                        <p className="text-xs text-gray-500">사건 ID: {incident.incidentCode || `INC-${incident.id}`}</p>
+                        {incident.locationDesc && (
+                          <p className="text-xs text-gray-500">위치: {incident.locationDesc}</p>
+                        )}
                       </div>
                       
                       <div className="flex items-center justify-between mb-2">
@@ -1910,7 +2439,9 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                           console.log('자세히보기 clicked:', incident.type);
                           setVideoDetailPopup({
                             cctvId: selectedDetection.marker.id,
-                            location: selectedDetection.marker.location,
+                            incidentId: incident.id.toString(),
+                            incidentCode: incident.incidentCode,
+                            location: incident.locationDesc || selectedDetection.marker.location,
                             time: incident.time,
                             confidence: incident.confidence,
                             type: incident.type
@@ -2085,7 +2616,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                 </div>
                 <div>
                   <p className="text-xs text-gray-500 mb-1">사건 ID</p>
-                  <p className="text-sm text-gray-900">{videoDetailPopup.type.toUpperCase().charAt(0)}-{videoDetailPopup.cctvId}-{new Date(videoDetailPopup.time).getTime().toString().slice(-4)}</p>
+                  <p className="text-sm text-gray-900">{videoDetailPopup.incidentCode || (videoDetailPopup.incidentId ? `INC-${videoDetailPopup.incidentId}` : '사건 ID 없음')}</p>
                 </div>
                 <div>
                   <p className="text-xs text-gray-500 mb-1">위치</p>
@@ -2148,53 +2679,83 @@ export default function MainMap({ onNavigate }: MainMapProps) {
 
             {/* 사건 상세보기 버튼 */}
             <button 
-              onClick={() => {
-                // 각 타입별로 상세보기 팝업 띄우기
-                if (videoDetailPopup.type === 'fire') {
-                  // 화재 상세 정보 (목 데이터)
-                  const fireDetail: FireDetail = {
-                    id: Date.now(),
-                    accidentCode: `F-${videoDetailPopup.cctvId}-${new Date().getTime()}`,
-                    cctvId: videoDetailPopup.cctvId,
-                    time: videoDetailPopup.time,
-                    status: '대기중',
-                    severity: 'high',
-                    windSpeed: '15 m/s',
-                    handler: '미배정',
-                    location: videoDetailPopup.location,
-                    detectionBasis: 'AI 자동 탐지',
-                  };
-                  setIncidentDetailPopup({ type: 'fire', detail: fireDetail });
-                } else if (videoDetailPopup.type === 'emergency') {
-                  // 응급 상세 정보 (목 데이터)
-                  const emergencyDetail: EmergencyDetail = {
-                    id: Date.now(),
-                    accidentCode: `E-${videoDetailPopup.cctvId}-${new Date().getTime()}`,
-                    type: '응급',
-                    cctvId: videoDetailPopup.cctvId,
-                    time: videoDetailPopup.time,
-                    status: '대기중',
-                    severity: 'high',
-                    handler: '미배정',
-                    location: videoDetailPopup.location,
-                    detectionBasis: 'AI 자동 탐지',
-                  };
-                  setIncidentDetailPopup({ type: 'emergency', detail: emergencyDetail });
-                } else {
-                  // 쓰레기 상세 정보 (목 데이터)
-                  const trashDetail: TrashDetail = {
-                    id: Date.now(),
-                    accidentCode: `T-${videoDetailPopup.cctvId}-${new Date().getTime()}`,
-                    cctvId: videoDetailPopup.cctvId,
-                    time: videoDetailPopup.time,
-                    status: '미처리',
-                    severity: 'medium',
-                    type: '무단투기',
-                    handler: '미배정',
-                    location: videoDetailPopup.location,
-                    detectionBasis: 'AI 자동 탐지',
-                  };
-                  setIncidentDetailPopup({ type: 'trash', detail: trashDetail });
+              onClick={async () => {
+                // 실제 DB에서 상세 정보 가져오기
+                if (!videoDetailPopup.incidentId) {
+                  alert('사건 ID가 없습니다.');
+                  return;
+                }
+                
+                const incidentId = parseInt(videoDetailPopup.incidentId);
+                
+                try {
+                  if (videoDetailPopup.type === 'fire') {
+                    // 화재 상세 정보 API 호출
+                    const detailData = await getFireDetail(incidentId);
+                    if (!detailData) {
+                      alert('사건 정보를 가져올 수 없습니다.');
+                      return;
+                    }
+                    
+                    const fireDetail: FireDetail = {
+                      id: detailData.id,
+                      accidentCode: detailData.accidentCode || videoDetailPopup.incidentCode || `INC-${incidentId}`,
+                      cctvId: detailData.cctvCode || detailData.cctvId || videoDetailPopup.cctvId,
+                      time: detailData.time || videoDetailPopup.time,
+                      status: detailData.status || '대기중',
+                      severity: detailData.severity === '상' ? 'high' : detailData.severity === '중' ? 'medium' : 'low',
+                      windSpeed: detailData.windSpeed || detailData.windInfo || '정보 없음',
+                      handler: detailData.handler || '미배정',
+                      location: detailData.location || videoDetailPopup.location,
+                      detectionBasis: detailData.detectionBasis || 'AI 자동 탐지',
+                    };
+                    setIncidentDetailPopup({ type: 'fire', detail: fireDetail });
+                  } else if (videoDetailPopup.type === 'emergency') {
+                    // 응급 상세 정보 API 호출
+                    const detailData = await getEmergencyDetail(incidentId);
+                    if (!detailData) {
+                      alert('사건 정보를 가져올 수 없습니다.');
+                      return;
+                    }
+                    
+                    const emergencyDetail: EmergencyDetail = {
+                      id: detailData.id,
+                      accidentCode: detailData.accidentCode || videoDetailPopup.incidentCode || `INC-${incidentId}`,
+                      type: detailData.type || '응급',
+                      cctvId: detailData.cctvCode || detailData.cctvId || videoDetailPopup.cctvId,
+                      time: detailData.time || videoDetailPopup.time,
+                      status: detailData.status || '대기중',
+                      severity: detailData.severity === '상' ? 'high' : detailData.severity === '중' ? 'medium' : 'low',
+                      handler: detailData.handler || '미배정',
+                      location: detailData.location || videoDetailPopup.location,
+                      detectionBasis: detailData.detectionBasis || 'AI 자동 탐지',
+                    };
+                    setIncidentDetailPopup({ type: 'emergency', detail: emergencyDetail });
+                  } else {
+                    // 쓰레기 상세 정보 API 호출
+                    const detailData = await getTrashDetail(incidentId);
+                    if (!detailData) {
+                      alert('사건 정보를 가져올 수 없습니다.');
+                      return;
+                    }
+                    
+                    const trashDetail: TrashDetail = {
+                      id: detailData.id,
+                      accidentCode: detailData.accidentCode || videoDetailPopup.incidentCode || `INC-${incidentId}`,
+                      cctvId: detailData.cctvCode || detailData.cctvId || videoDetailPopup.cctvId,
+                      time: detailData.time || videoDetailPopup.time,
+                      status: detailData.status || '미처리',
+                      severity: detailData.severity === '상' ? 'high' : detailData.severity === '중' ? 'medium' : 'low',
+                      type: detailData.trashType || '무단투기',
+                      handler: detailData.handler || '미배정',
+                      location: detailData.location || videoDetailPopup.location,
+                      detectionBasis: detailData.detectionBasis || 'AI 자동 탐지',
+                    };
+                    setIncidentDetailPopup({ type: 'trash', detail: trashDetail });
+                  }
+                } catch (error) {
+                  console.error('❌ [MainMap] Failed to load incident detail:', error);
+                  alert('사건 정보를 가져오는 중 오류가 발생했습니다.');
                 }
               }}
               className="w-full px-4 py-3 mb-2 text-white transition-colors flex items-center justify-center gap-2" 
@@ -3300,20 +3861,24 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         <div 
           className="absolute bg-white shadow-xl border-2 border-gray-300 p-3 rounded transform -translate-x-1/2 pointer-events-none" 
           style={{ 
-            left: `${hoveredHotspot.x}%`, 
-            top: `${hoveredHotspot.y - 8}%`,
+            left: `${hoveredHotspot.x}px`, 
+            top: `${hoveredHotspot.y - 8}px`,
             zIndex: 1200 
           }}
         >
           <div className="text-xs text-gray-500 mb-1">사고다발구간</div>
-          <div className="text-sm font-bold whitespace-nowrap">{hoveredHotspot.cctvId} {hoveredHotspot.location}</div>
-          <div className="flex gap-2 mt-2 text-sm">
-            <span>
-              {hoveredHotspot.type === 'fire' ? '🔥 화재' : 
-               hoveredHotspot.type === 'emergency' ? '🚑 응급' : 
-               '🗑️ 쓰레기'}
-            </span>
-            <b>{hoveredHotspot.count}건</b>
+          <div className="text-sm font-bold mb-2">{hoveredHotspot.cctvId}</div>
+          <div className="text-xs text-gray-600 mb-2">{hoveredHotspot.location}</div>
+          <div className="text-xs space-y-1">
+            {hoveredHotspot.fireCount > 0 && (
+              <div>🔥 화재 <b>{hoveredHotspot.fireCount}건</b></div>
+            )}
+            {hoveredHotspot.emergencyCount > 0 && (
+              <div>🚑 응급 <b>{hoveredHotspot.emergencyCount}건</b></div>
+            )}
+            {hoveredHotspot.trashCount > 0 && (
+              <div>🗑️ 쓰레기 <b>{hoveredHotspot.trashCount}건</b></div>
+            )}
           </div>
           {/* 아래 화살표 */}
           <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-8 border-l-transparent border-r-8 border-r-transparent border-t-8 border-t-white"></div>
@@ -3321,15 +3886,111 @@ export default function MainMap({ onNavigate }: MainMapProps) {
       )}
 
       {/* 구간별 빈도 팝업 (위험지도 모드에서 표시) */}
-      {activeView === 'risk-map' && (
-        <div className="absolute top-24 right-6 bg-white shadow-xl border-2 border-gray-300 p-3 rounded" style={{ zIndex: 1100 }}>
-          <div className="text-xs text-gray-500 mb-1">구간별 빈도</div>
-          <div className="text-sm font-bold mb-2">금정산성 코스</div>
-          <div className="text-xs space-y-1">
-            <div>🔥 화재 <b>2건</b></div>
-            <div>🚑 응급 <b>8건</b></div>
-            <div>🗑️ 쓰레기 <b>35건</b></div>
+      {/* 위험지도 범례 (줌 컨트롤 왼쪽) - 기간별로 다르게 표시 */}
+      {activeView === 'risk-map' && (() => {
+        const getLegendItems = () => {
+          if (riskMapPeriod === '30d') {
+            return [
+              { color: '#EF4444', label: '18+ 건' },
+              { color: '#F97316', label: '13-17 건' },
+              { color: '#FBBF24', label: '8-12 건' },
+              { color: '#10B981', label: '3-7 건' },
+              { color: '#3B82F6', label: '0-2 건' },
+            ];
+          } else if (riskMapPeriod === '7d') {
+            return [
+              { color: '#EF4444', label: '13+ 건' },
+              { color: '#F97316', label: '9-12 건' },
+              { color: '#FBBF24', label: '5-8 건' },
+              { color: '#10B981', label: '1-4 건' },
+              { color: '#3B82F6', label: '0 건' },
+            ];
+          } else {
+            return [
+              { color: '#EF4444', label: '10+ 건' },
+              { color: '#F97316', label: '7-9 건' },
+              { color: '#FBBF24', label: '4-6 건' },
+              { color: '#10B981', label: '1-3 건' },
+              { color: '#3B82F6', label: '0 건' },
+            ];
+          }
+        };
+        
+        const legendItems = getLegendItems();
+        const hexToRgba = (hex: string, alpha: number) => {
+          const r = parseInt(hex.slice(1, 3), 16);
+          const g = parseInt(hex.slice(3, 5), 16);
+          const b = parseInt(hex.slice(5, 7), 16);
+          return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+        };
+        
+        return (
+          <div 
+            className="absolute bg-white shadow-lg border border-gray-300 p-3 rounded-lg"
+            style={{ 
+              top: '10px', 
+              right: '60px',
+              zIndex: 1000,
+              minWidth: '140px'
+            }}
+          >
+            <div className="text-xs font-bold text-gray-700 mb-2">사건 빈도</div>
+            <div className="space-y-1.5">
+              {legendItems.map((item, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <div className="w-8 h-1 rounded-full" style={{ 
+                    background: `linear-gradient(to right, ${item.color}, ${hexToRgba(item.color, 0.7)})`,
+                    boxShadow: `0 0 4px ${hexToRgba(item.color, 0.5)}`
+                  }}></div>
+                  <span className="text-xs text-gray-700">{item.label}</span>
+                </div>
+              ))}
+            </div>
           </div>
+        );
+      })()}
+
+      {activeView === 'risk-map' && hoveredTrailSegment && (
+        <div 
+          className="absolute bg-white shadow-xl border-2 border-gray-300 p-3 rounded transform -translate-x-1/2 pointer-events-none" 
+          style={{ 
+            left: `${hoveredTrailSegment.x}%`, 
+            top: `${hoveredTrailSegment.y - 8}%`,
+            zIndex: 1200 
+          }}
+        >
+          <div className="text-xs text-gray-500 mb-1">구간별 빈도</div>
+          <div className="text-sm font-bold mb-2">{hoveredTrailSegment.trailName || hoveredTrailSegment.entityName}</div>
+          <div className="text-xs space-y-1">
+            {riskMapType === 'all' ? (
+              // 전체 선택 시: 모든 타입 표시
+              <>
+                {hoveredTrailSegment.fireCount > 0 && (
+                  <div>🔥 화재 <b>{hoveredTrailSegment.fireCount}건</b></div>
+                )}
+                {hoveredTrailSegment.emergencyCount > 0 && (
+                  <div>🚑 응급 <b>{hoveredTrailSegment.emergencyCount}건</b></div>
+                )}
+                {hoveredTrailSegment.trashCount > 0 && (
+                  <div>🗑️ 쓰레기 <b>{hoveredTrailSegment.trashCount}건</b></div>
+                )}
+                {hoveredTrailSegment.fireCount === 0 && hoveredTrailSegment.emergencyCount === 0 && hoveredTrailSegment.trashCount === 0 && (
+                  <div className="text-gray-400">사건 없음</div>
+                )}
+              </>
+            ) : riskMapType === 'fire' ? (
+              // 화재 선택 시: 화재만
+              <div>🔥 화재 <b>{hoveredTrailSegment.fireCount}건</b></div>
+            ) : riskMapType === 'emergency' ? (
+              // 응급 선택 시: 응급만
+              <div>🚑 응급 <b>{hoveredTrailSegment.emergencyCount}건</b></div>
+            ) : (
+              // 쓰레기 선택 시: 쓰레기만
+              <div>🗑️ 쓰레기 <b>{hoveredTrailSegment.trashCount}건</b></div>
+            )}
+          </div>
+          {/* 아래 화살표 */}
+          <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-8 border-l-transparent border-r-8 border-r-transparent border-t-8 border-t-white"></div>
         </div>
       )}
 
