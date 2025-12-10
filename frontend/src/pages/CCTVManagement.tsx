@@ -870,25 +870,9 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                               }}
                             />
                           ) : cctv.detecting && EventIcon ? (
-                            /* 이벤트 발생 시 바운딩 박스 썸네일 표시 */
+                            /* 이벤트 발생 시 썸네일 표시 */
                             <div className="w-full h-full relative flex items-center justify-center">
-                              <span className="text-white text-sm">{cctv.id} - 이벤트 탐지</span>
-                              {/* 바운딩 박스 효과 */}
-                              <div className="absolute inset-0 border-4 border-red-500 opacity-75" style={{ 
-                                top: '20%', 
-                                left: '25%', 
-                                right: '25%', 
-                                bottom: '30%' 
-                              }}>
-                                <div className="absolute -top-6 left-0 bg-red-500 text-white text-xs px-2 py-1">
-                                  {cctv.latestEvent?.type === 'fire' ? '화재' : 
-                                   cctv.latestEvent?.type === 'emergency' ? '응급' : '쓰레기'}
-                                </div>
-                              </div>
-                              {/* 이벤트 아이콘 */}
-                              <div className="absolute top-2 left-2 bg-red-500 p-1.5 rounded">
-                                <EventIcon className="w-4 h-4 text-white" />
-                              </div>
+                              <span className="text-white text-sm">{cctv.id}</span>
                             </div>
                           ) : (
                             /* 정상 CCTV 화면 */
@@ -904,11 +888,6 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                             {cctv.detecting ? `탐지: ${cctv.detectionTime}` : `감지: ${cctv.time}`}
                           </p>
                           <p className="text-sm text-gray-900 font-medium">{cctv.id}</p>
-                          {cctv.detecting && (
-                            <span className="inline-block mt-1 text-xs px-2 py-0.5 bg-red-100 text-red-700">
-                              🔴 실시간 탐지 중
-                            </span>
-                          )}
                         </div>
                       </div>
                     );
