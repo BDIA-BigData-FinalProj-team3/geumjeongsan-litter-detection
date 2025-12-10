@@ -7,6 +7,15 @@ import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { cctvList, getCCTVLocation, getOffCCTVCodes, getCCTVByCode } from '../services/common';
 import { getCCTVList, analyzeFallenVideo, type FallenAnalysisResponse } from '../services/api';
 import cctv001DemoVideo from '../assets/cctv-001_20251208T140000Z.mp4';
+// 더미 비디오 import
+import cctv003Video from '../assets/cctv_dummy/cctv-003.mp4';
+import cctv004Video from '../assets/cctv_dummy/cctv-004.mp4';
+import cctv005Video from '../assets/cctv_dummy/cctv-005.mp4';
+import cctv006Video from '../assets/cctv_dummy/cctv-006.mp4';
+import cctv007Video from '../assets/cctv_dummy/cctv-007.mp4';
+import cctv008Video from '../assets/cctv_dummy/cctv-008.mp4';
+import cctv009Video from '../assets/cctv_dummy/cctv-009.mp4';
+import cctv010Video from '../assets/cctv_dummy/cctv-010.mp4';
 
 interface CCTVManagementProps {
   onNavigate: (screen: string) => void;
@@ -58,6 +67,12 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   const [analysisEvents, setAnalysisEvents] = useState<Event[]>([]); // 분석 결과로 생성된 이벤트
   const videoRef = useRef<HTMLVideoElement>(null);
   
+  // 각 CCTV 썸네일 비디오 ref를 관리하는 Map
+  const thumbnailVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
+  
+  // 각 CCTV의 현재 프레임 인덱스를 관리하는 Map
+  const thumbnailFrameIndices = useRef<Map<string, number>>(new Map());
+  
   // Filter dropdowns
   const [showLocationFilter, setShowLocationFilter] = useState(false);
   const [showStatusFilter, setShowStatusFilter] = useState(false);
@@ -65,6 +80,22 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   const [selectedLocations, setSelectedLocations] = useState<string[]>([]);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
   const [selectedPowers, setSelectedPowers] = useState<string[]>([]);
+
+  // CCTV ID에 맞는 비디오 매핑
+  const cctvVideoMap: Record<string, string> = {
+    'CCTV-001': cctv001DemoVideo,
+    'CCTV-003': cctv003Video,
+    'CCTV-004': cctv004Video,
+    'CCTV-005': cctv005Video,
+    'CCTV-006': cctv006Video,
+    'CCTV-007': cctv007Video,
+    'CCTV-008': cctv008Video,
+    'CCTV-009': cctv009Video,
+    'CCTV-010': cctv010Video,
+  };
+
+  // 더미 비디오가 있는 CCTV ID 목록
+  const dummyCCTVIds = ['CCTV-001', 'CCTV-003', 'CCTV-004', 'CCTV-005', 'CCTV-006', 'CCTV-007', 'CCTV-008', 'CCTV-009', 'CCTV-010'];
 
   // Set initial selected CCTV if provided
   useEffect(() => {
@@ -80,9 +111,9 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     }
   }, [initialSelectedCCTVId]);
 
-  // CCTV-001이 선택되면 자동으로 재생 + 분석 시작
+  // 더미 비디오가 있는 CCTV가 선택되면 자동으로 재생
   useEffect(() => {
-    if (selectedCCTV && selectedCCTV.id === 'CCTV-001' && !isPlayingVideo) {
+    if (selectedCCTV && dummyCCTVIds.includes(selectedCCTV.id) && !isPlayingVideo) {
       // 비디오 요소가 렌더링될 시간을 주기 위해 약간의 지연
       const timer = setTimeout(async () => {
         // Start video playback
@@ -96,42 +127,83 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
           }
         }, 0);
 
-        // Trigger analysis
-        setIsAnalyzing(true);
-        try {
-          const result = await analyzeFallenVideo(selectedCCTV.id);
-          setAnalysisResult(result);
-          
-          // 분석 결과를 이벤트로 변환
-          if (result.result && result.result.fallen_events > 0) {
-            const newEvent: Event = {
-              id: `fallen-${Date.now()}`,
-              time: new Date().toLocaleString('ko-KR'),
-              type: 'emergency',
-              confidence: '95%',
-              location: selectedCCTV.location,
-              severity: '상',
-              reportProbability: '높음',
-              summary: `${selectedCCTV.location}에서 낙상 이벤트가 탐지되었습니다.`,
-              clipUrl: result.result.clip_url,
-              frameUrls: result.result.frame_urls || []
-            };
-            setAnalysisEvents(prev => [...prev, newEvent]);
+        // CCTV-001만 분석 시작
+        if (selectedCCTV.id === 'CCTV-001') {
+          // Trigger analysis
+          setIsAnalyzing(true);
+          try {
+            const result = await analyzeFallenVideo(selectedCCTV.id);
+            setAnalysisResult(result);
+            
+            // 분석 결과를 이벤트로 변환
+            if (result.result && result.result.fallen_events > 0) {
+              const newEvent: Event = {
+                id: `fallen-${Date.now()}`,
+                time: new Date().toLocaleString('ko-KR'),
+                type: 'emergency',
+                confidence: '95%',
+                location: selectedCCTV.location,
+                severity: '상',
+                reportProbability: '높음',
+                summary: `${selectedCCTV.location}에서 낙상 이벤트가 탐지되었습니다.`,
+                clipUrl: result.result.clip_url,
+                frameUrls: result.result.frame_urls || []
+              };
+              setAnalysisEvents(prev => [...prev, newEvent]);
+            }
+            
+            // Check if Gemini call is needed
+            if (result.geminiMessage) {
+              setShowGeminiPopup(true);
+            }
+          } catch (error) {
+            console.error('Failed to analyze video:', error);
+          } finally {
+            setIsAnalyzing(false);
           }
-          
-          // Check if Gemini call is needed
-          if (result.geminiMessage) {
-            setShowGeminiPopup(true);
-          }
-        } catch (error) {
-          console.error('Failed to analyze video:', error);
-        } finally {
-          setIsAnalyzing(false);
         }
       }, 200);
       return () => clearTimeout(timer);
     }
   }, [selectedCCTV?.id, isPlayingVideo]); // selectedCCTV.id가 변경될 때마다 실행
+
+  // 썸네일 비디오를 0.5초마다 7프레임씩 건너뛰며 업데이트
+  useEffect(() => {
+    const interval = setInterval(() => {
+      thumbnailVideoRefs.current.forEach((video, cctvId) => {
+        if (video && video.readyState >= 2) { // HAVE_CURRENT_DATA 이상
+          // 비디오의 FPS 추정 (기본값 30fps)
+          const fps = 30; // 일반적인 FPS
+          const frameDuration = 1 / fps; // 한 프레임의 시간 (초)
+          
+          // 현재 프레임 인덱스 가져오기 (없으면 0으로 초기화)
+          let currentFrameIndex = thumbnailFrameIndices.current.get(cctvId) || 0;
+          
+          // 7프레임씩 건너뛰기
+          currentFrameIndex += 4;
+          
+          // 해당 프레임의 시간 계산
+          const targetTime = currentFrameIndex * frameDuration;
+          
+          // 비디오 duration 확인
+          if (video.duration && !isNaN(video.duration)) {
+            // 비디오 끝을 넘어가면 처음으로 리셋
+            if (targetTime >= video.duration) {
+              currentFrameIndex = 0;
+              video.currentTime = 0;
+            } else {
+              video.currentTime = targetTime;
+            }
+            
+            // 프레임 인덱스 업데이트
+            thumbnailFrameIndices.current.set(cctvId, currentFrameIndex);
+          }
+        }
+      });
+    }, 500); // 0.5초마다 실행
+
+    return () => clearInterval(interval);
+  }, []);
 
   // Load CCTV list from backend
   const [backendCCTVs, setBackendCCTVs] = useState<any[]>([]);
@@ -537,21 +609,22 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                   {/* Large CCTV Display */}
                   <div className="bg-white shadow-md" style={{ borderRadius: '0px' }}>
                     <div className="aspect-video bg-gray-800 flex items-center justify-center relative group overflow-hidden">
-                      {/* 비디오 요소를 항상 렌더링 (CCTV-001일 때만) */}
-                      {selectedCCTV.id === 'CCTV-001' && (
+                      {/* 비디오 요소를 항상 렌더링 (더미 비디오가 있는 CCTV일 때) */}
+                      {dummyCCTVIds.includes(selectedCCTV.id) && (
                         <video
                           ref={videoRef}
-                          src={cctv001DemoVideo}
+                          src={cctvVideoMap[selectedCCTV.id]}
                           controls
                           muted
+                          loop
+                          autoPlay
                           className={`w-full h-full object-contain ${isPlayingVideo ? '' : 'hidden'}`}
-                          onEnded={() => setIsPlayingVideo(false)}
                           onPlay={() => setIsPlayingVideo(true)}
                         />
                       )}
                       
                       {/* Live Feed 화면 (비디오가 재생 중이 아닐 때) */}
-                      {(!isPlayingVideo || selectedCCTV.id !== 'CCTV-001') && (
+                      {(!isPlayingVideo || !dummyCCTVIds.includes(selectedCCTV.id)) && (
                         <>
                           <span className="text-white">{selectedCCTV.id} - Live Feed</span>
                           {/* Power status indicator */}
@@ -648,8 +721,33 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                         }`}
                         style={{ borderRadius: '0px' }}
                       >
-                        <div className="aspect-video bg-gray-800 flex items-center justify-center relative">
-                          {cctv.detecting && EventIcon ? (
+                        <div className="aspect-video bg-gray-800 flex items-center justify-center relative overflow-hidden">
+                          {/* 더미 비디오가 있는 CCTV는 비디오 썸네일 표시 */}
+                          {dummyCCTVIds.includes(cctv.id) && cctvVideoMap[cctv.id] ? (
+                            <video
+                              ref={(el) => {
+                                if (el) {
+                                  thumbnailVideoRefs.current.set(cctv.id, el);
+                                } else {
+                                  thumbnailVideoRefs.current.delete(cctv.id);
+                                }
+                              }}
+                              src={cctvVideoMap[cctv.id]}
+                              className="w-full h-full object-cover"
+                              muted
+                              playsInline
+                              preload="metadata"
+                              onLoadedMetadata={(e) => {
+                                // 첫 프레임 설정 (프레임 인덱스 0)
+                                const video = e.currentTarget;
+                                video.currentTime = 0;
+                                // 비디오를 일시정지 상태로 유지 (재생하지 않음)
+                                video.pause();
+                                // 프레임 인덱스 초기화
+                                thumbnailFrameIndices.current.set(cctv.id, 0);
+                              }}
+                            />
+                          ) : cctv.detecting && EventIcon ? (
                             /* 이벤트 발생 시 바운딩 박스 썸네일 표시 */
                             <div className="w-full h-full relative flex items-center justify-center">
                               <span className="text-white text-sm">{cctv.id} - 이벤트 탐지</span>
@@ -675,7 +773,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                             <span className="text-white text-sm">{cctv.id}</span>
                           )}
                           {/* Power status indicator */}
-                          <div className={`absolute top-2 right-2 w-3 h-3 rounded-full ${
+                          <div className={`absolute top-2 right-2 w-3 h-3 rounded-full z-10 ${
                             cctvStatusData.find(c => c.id === cctv.id)?.power === 'on' ? 'bg-green-400' : 'bg-gray-400'
                           }`} style={{ border: '1px solid white' }}></div>
                         </div>
