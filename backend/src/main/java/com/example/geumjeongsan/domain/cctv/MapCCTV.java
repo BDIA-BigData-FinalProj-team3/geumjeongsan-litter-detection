@@ -14,7 +14,7 @@ import java.time.OffsetDateTime;
 @Entity
 @Getter
 @Immutable // View는 읽기 전용
-@Table(name = "view_map_cctv") // DB View 이름과 정확히 일치해야 함
+@Table(name = "view_cctv_management") // DB View 이름과 정확히 일치해야 함
 public class MapCCTV {
 
     @Id
@@ -73,6 +73,9 @@ public class MapCCTV {
 
     @Column(name = "health_status")
     private String healthStatus;
+
+    @Column(name = "last_heartbeat")
+    private OffsetDateTime lastHeartbeat;
 
     @Column(name = "last_incident_at")
     private OffsetDateTime lastIncidentAt;

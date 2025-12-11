@@ -73,13 +73,13 @@ import BACKEND_URL from '../config/api';
  */
 export const getCCTVList = async (): Promise<CCTVMarker[]> => {
   try {
-    // 1. Attempt to fetch from real Backend API
-    const response = await fetch(`${BACKEND_URL}/api/map/cctvs`);
+    // 1. Attempt to fetch from real Backend API (view_cctv_management)
+    const response = await fetch(`${BACKEND_URL}/api/cctv`);
     
     if (response.ok) {
       const data = await response.json();
       
-      // Transform Backend Data (MapCCTV) -> Frontend Model (CCTVMarker)
+      // Transform Backend Data (view_cctv_management) -> Frontend Model (CCTVMarker)
       const realData: CCTVMarker[] = data.map((item: any) => {
         // Handle Geometry parsing (supports GeoJSON or simple x/y object)
         let lng = 129.0; // Default fallback
@@ -93,25 +93,30 @@ export const getCCTVList = async (): Promise<CCTVMarker[]> => {
             lng = item.geom.x;
             lat = item.geom.y;
           }
+        } else if (item.longitude && item.latitude) {
+          lng = item.longitude;
+          lat = item.latitude;
         }
 
         return {
-          id: item.cctvId,
+          id: item.id || item.cctvId,
           cctvCode: item.cctvCode,
-          name: item.cctvAddress || item.cctvCode,
-          locationDesc: item.cctvAddress || '',
-          
-          // Fields not in View (Use defaults)
-          installDate: '2024-01-15', 
-          resolution: '1920x1080', 
-          isActive: true, // Filtered by WHERE is_active=TRUE in View
-          
-          powerStatus: (item.powerStatus || 'off').toLowerCase() === 'on' ? 'on' : 'off',
+          name: item.name || item.cctvCode,
+          locationDesc: item.locationDesc || item.cctvAddress || '',
+          cctvAddress: item.cctvAddress,
+          installDate: item.installDate || '2024-01-15',
+          modelName: item.modelName,
+          resolution: item.resolution || '1920x1080',
+          isActive: item.isActive !== undefined ? item.isActive : true,
+          powerStatus: item.powerStatus 
+            ? (String(item.powerStatus).toLowerCase().trim() === 'on' ? 'on' : 'off')
+            : 'off',
+          healthStatus: item.healthStatus,
+          lastHeartbeat: item.lastHeartbeat,
           longitude: lng,
           latitude: lat,
-          
-          incidentCount: 0, // Will be updated by incidents API separately
-          lastIncidentTime: item.lastIncidentAt,
+          incidentCount: item.incidentCount || 0,
+          lastIncidentTime: item.lastIncidentTime || item.lastIncidentAt,
           lastIncidentType: item.lastIncidentType
         };
       });

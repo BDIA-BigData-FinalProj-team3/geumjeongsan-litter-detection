@@ -7,11 +7,14 @@ export interface CCTVMarker {
   cctvCode: string;
   name: string;
   locationDesc: string;
+  cctvAddress?: string;
   installDate: string;
   modelName: string;
   resolution: string;
   isActive: boolean;
   powerStatus: "on" | "off";
+  healthStatus?: string;
+  lastHeartbeat?: string;
   longitude: number;
   latitude: number;
   incidentCount?: number;
