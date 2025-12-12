@@ -207,7 +207,11 @@ export default function LoginScreen({ onNavigate }: LoginScreenProps) {
                   }}
                   onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
                   className="w-full px-4 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent pr-10"
-                  style={{ borderRadius: '0px' }}
+                  style={{ 
+                    borderRadius: '0px',
+                    fontFamily: showPassword ? '' : 'system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans KR", sans-serif',
+                    fontWeight: showPassword ? '' : 400
+                  }}
                 />
                 <button
                   type="button"

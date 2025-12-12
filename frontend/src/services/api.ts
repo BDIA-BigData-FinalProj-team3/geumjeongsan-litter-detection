@@ -420,9 +420,22 @@ export const getDailyStats = async () => {
  *     cctvOn: 25, cctvOff: 1.3 }
  * ]
  */
-export const getAllMonthlyData = async () => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/dashboard/monthly-data').then(res => res.json());
+export const getAllMonthlyData = async (start?: string, end?: string) => {
+  try {
+    let url = `${BACKEND_URL}/api/dashboard/monthly-data`;
+    if (start && end) {
+      url += `?start=${start}&end=${end}`;
+    }
+    const response = await fetch(url);
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ [Dashboard] Loaded monthly data:', data);
+      return data;
+    }
+  } catch (error) {
+    console.error('❌ [Dashboard] Failed to fetch monthly data:', error);
+  }
+  // Fallback to mock data
   return Promise.resolve(mockAllMonthlyData);
 };
 
@@ -431,7 +444,7 @@ export const getAllMonthlyData = async () => {
  * Returns response time trends with month-over-month changes
  * 
  * Backend integration:
- * - Fetch from /api/dashboard/avg-response-time
+ * - Fetch from /api/dashboard/avg-response-time?start=YYYY-MM&end=YYYY-MM
  * - Calculate average from completed incidents
  * - Compare with previous month
  * - isIncrease: true (증가, 빨간색 표시), false (감소, 파란색 표시)
@@ -443,9 +456,13 @@ export const getAllMonthlyData = async () => {
  *   { type: '쓰레기', time: 32, change: 2, isIncrease: true }   // 전월 대비 2% 증가
  * ]
  */
-export const getAvgResponseTime = async () => {
+export const getAvgResponseTime = async (start?: string, end?: string) => {
   try {
-    const response = await fetch(`${BACKEND_URL}/api/dashboard/avg-response-time`);
+    let url = `${BACKEND_URL}/api/dashboard/avg-response-time`;
+    if (start && end) {
+      url += `?start=${start}&end=${end}`;
+    }
+    const response = await fetch(url);
     if (response.ok) {
       const data = await response.json();
       console.log('✅ [Dashboard] Loaded avg response time:', data);
@@ -461,6 +478,263 @@ export const getAvgResponseTime = async () => {
     { type: '화재', time: 0, change: 0, isIncrease: false },
     { type: '쓰레기', time: 0, change: 0, isIncrease: false }
   ];
+};
+
+/**
+ * Get AI model accuracy by incident type
+ * Returns detection and correct counts for each type
+ * 
+ * Backend integration:
+ * - Fetch from /api/dashboard/ai-accuracy?start=YYYY-MM&end=YYYY-MM
+ * - Calculate accuracy from AI detections vs confirmed incidents
+ * 
+ * Response format:
+ * [
+ *   { type: '화재', detected: 120, correct: 110 },
+ *   { type: '응급', detected: 85, correct: 75 },
+ *   { type: '쓰레기', detected: 200, correct: 175 }
+ * ]
+ */
+export const getAiAccuracy = async (start?: string, end?: string) => {
+  try {
+    let url = `${BACKEND_URL}/api/dashboard/ai-accuracy`;
+    if (start && end) {
+      url += `?start=${start}&end=${end}`;
+    }
+    const response = await fetch(url);
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ [Dashboard] Loaded AI accuracy:', data);
+      return data;
+    }
+  } catch (error) {
+    console.error('❌ [Dashboard] Failed to fetch AI accuracy:', error);
+  }
+  
+  // 에러 시 기본값 반환 (기존 하드코딩 값)
+  return [
+    { type: '화재', detected: 120, correct: 110 },
+    { type: '응급', detected: 85, correct: 75 },
+    { type: '쓰레기', detected: 200, correct: 175 }
+  ];
+};
+
+// ==================== Statistics API (NEW VIEW 기반) ====================
+/**
+ * 통계 페이지용 사고 통계 조회
+ * VIEW: view_stats_daily_incident_type
+ * 
+ * @param unit - 기간 단위 ('DAY' | 'MONTH' | 'YEAR')
+ * @param from - 시작 날짜 (ISO DATE 형식: 'YYYY-MM-DD')
+ * @param to - 종료 날짜 (ISO DATE 형식: 'YYYY-MM-DD')
+ * 
+ * Response format:
+ * {
+ *   trend: [
+ *     { period: '2025-01-01', total: 100, trash: 50, fire: 30, emergency: 20 }
+ *   ],
+ *   typeSummary: [
+ *     { incidentType: 'TRASH', totalIncidents: 50, autoIncidents: 40, resolvedIncidents: 45, unresolvedIncidents: 5 }
+ *   ],
+ *   completionSummary: { resolved: 90, unresolved: 10 }
+ * }
+ */
+export interface IncidentTrendPoint {
+  period: string; // ISO date
+  total: number;
+  trash: number;
+  fire: number;
+  emergency: number;
+}
+
+export interface IncidentTypeSummary {
+  period: string; // ISO date
+  incidentType: string; // "TRASH" | "FIRE" | "EMERGENCY" | "ETC"
+  totalIncidents: number;
+  autoIncidents: number;
+  resolvedIncidents: number;
+  unresolvedIncidents: number;
+}
+
+export interface CompletionSummary {
+  resolved: number;
+  unresolved: number;
+}
+
+export interface StatsOverviewResponse {
+  trend: IncidentTrendPoint[];
+  typeSummary: IncidentTypeSummary[];
+  completionSummary: CompletionSummary;
+}
+
+export const getIncidentStats = async (
+  unit: 'DAY' | 'MONTH' | 'YEAR',
+  from: string,
+  to: string
+): Promise<StatsOverviewResponse> => {
+  try {
+    const url = `${BACKEND_URL}/api/stats/incidents?unit=${unit}&from=${from}&to=${to}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch incident stats: ${response.status}`);
+    }
+    const data = await response.json();
+    console.log('✅ [Stats] Loaded incident stats:', data);
+    return data;
+  } catch (error) {
+    console.error('❌ [Stats] Failed to fetch incident stats:', error);
+    // 에러 시 기본값 반환
+    return {
+      trend: [],
+      typeSummary: [],
+      completionSummary: { resolved: 0, unresolved: 0 }
+    };
+  }
+};
+
+/**
+ * CCTV 가동률 조회
+ * VIEW: view_stats_daily_cctv_uptime
+ * 
+ * @param unit - 기간 단위 ('DAY' | 'MONTH' | 'YEAR')
+ * @param from - 시작 날짜 (ISO DATE 형식: 'YYYY-MM-DD')
+ * @param to - 종료 날짜 (ISO DATE 형식: 'YYYY-MM-DD')
+ * 
+ * Response format:
+ * [
+ *   { period: '2025-01-01', onSamples: 100, offSamples: 5, uptimePct: 95.0 }
+ * ]
+ */
+export interface CctvUptimePoint {
+  period: string;     // ISO date 'YYYY-MM-DD'
+  onSamples: number;
+  offSamples: number;
+  uptimePct: number;  // 0~100
+}
+
+export const getCctvUptime = async (
+  unit: 'DAY' | 'MONTH' | 'YEAR',
+  from: string,
+  to: string
+): Promise<CctvUptimePoint[]> => {
+  try {
+    const url = `${BACKEND_URL}/api/stats/cctv-uptime?unit=${unit}&from=${from}&to=${to}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch CCTV uptime: ${response.status}`);
+    }
+    const data = await response.json();
+    console.log('✅ [Stats] Loaded CCTV uptime:', data);
+    return data;
+  } catch (error) {
+    console.error('❌ [Stats] Failed to fetch CCTV uptime:', error);
+    // 에러 시 기본값 반환
+    return [];
+  }
+};
+
+/**
+ * AI 모델 정확도 / 오탐률 조회
+ * VIEW: view_stats_model_accuracy_daily
+ * 
+ * @param unit - 기간 단위 ('DAY' | 'MONTH' | 'YEAR')
+ * @param from - 시작 날짜 (ISO DATE 형식: 'YYYY-MM-DD')
+ * @param to - 종료 날짜 (ISO DATE 형식: 'YYYY-MM-DD')
+ * 
+ * Response format:
+ * [
+ *   {
+ *     period: '2025-01-01',
+ *     incidentType: 'FIRE',
+ *     detectionModel: 'yolo-v8',
+ *     totalAutoIncidents: 120,
+ *     trueIncidents: 110,
+ *     falseIncidents: 10,
+ *     accuracyPct: 91.7,
+ *     falseRatePct: 8.3
+ *   }
+ * ]
+ */
+export interface ModelAccuracyPoint {
+  period: string;        // ISO date 'YYYY-MM-DD'
+  incidentType: string;  // 'EMERGENCY' | 'FIRE' | 'TRASH' | ...
+  detectionModel: string;
+  totalAutoIncidents: number;
+  trueIncidents: number;
+  falseIncidents: number;
+  accuracyPct: number;
+  falseRatePct: number;
+}
+
+export const getModelAccuracy = async (
+  unit: 'DAY' | 'MONTH' | 'YEAR',
+  from: string,
+  to: string
+): Promise<ModelAccuracyPoint[]> => {
+  try {
+    const url = `${BACKEND_URL}/api/stats/model-accuracy?unit=${unit}&from=${from}&to=${to}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch model accuracy: ${response.status}`);
+    }
+    const data = await response.json();
+    console.log('✅ [Stats] Loaded model accuracy:', data);
+    return data;
+  } catch (error) {
+    console.error('❌ [Stats] Failed to fetch model accuracy:', error);
+    // 에러 시 기본값 반환
+    return [];
+  }
+};
+
+/**
+ * 평균 대응시간 조회
+ * VIEW: view_stats_daily_response_time
+ * 
+ * @param unit - 기간 단위 ('DAY' | 'MONTH' | 'YEAR')
+ * @param from - 시작 날짜 (ISO DATE 형식: 'YYYY-MM-DD')
+ * @param to - 종료 날짜 (ISO DATE 형식: 'YYYY-MM-DD')
+ * 
+ * Response format:
+ * {
+ *   items: [
+ *     { type: '전체', time: 25, change: 5, isIncrease: false },
+ *     { type: '응급', time: 21, change: 2, isIncrease: false },
+ *     { type: '화재', time: 19, change: 5, isIncrease: true },
+ *     { type: '쓰레기', time: 32, change: 2, isIncrease: true }
+ *   ]
+ * }
+ */
+export interface ResponseTimeItem {
+  type: string;      // '전체' | '응급' | '화재' | '쓰레기'
+  time: number;      // 평균 대응시간 (분)
+  change: number;    // 전월/전년 대비 % (절대값)
+  isIncrease: boolean; // true=증가(악화), false=감소(개선)
+}
+
+export interface ResponseTimeOverview {
+  items: ResponseTimeItem[];
+}
+
+export const getResponseTime = async (
+  unit: 'DAY' | 'MONTH' | 'YEAR',
+  from: string,
+  to: string
+): Promise<ResponseTimeOverview> => {
+  try {
+    const url = `${BACKEND_URL}/api/stats/response-time?unit=${unit}&from=${from}&to=${to}`;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch response time: ${response.status}`);
+    }
+    const data = await response.json();
+    console.log('✅ [Stats] Loaded response time:', data);
+    return data;
+  } catch (error) {
+    console.error('❌ [Stats] Failed to fetch response time:', error);
+    // 에러 시 기본값 반환
+    return { items: [] };
+  }
 };
 
 // ==================== EmergencyDashboard API ====================

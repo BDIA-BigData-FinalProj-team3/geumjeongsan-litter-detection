@@ -491,6 +491,12 @@
     font-weight: var(--font-weight-normal);
     line-height: 1.5;
   }
+
+  /* 비밀번호 입력 필드에 시스템 폰트 적용 (마스킹 문자 표시를 위해) */
+  input[type="password"] {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, Arial, "Noto Sans KR", sans-serif !important;
+    font-weight: 400 !important;
+  }
 }
 
 @layer utilities {
