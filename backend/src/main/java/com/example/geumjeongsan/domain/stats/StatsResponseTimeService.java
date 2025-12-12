@@ -38,7 +38,8 @@ public class StatsResponseTimeService {
                     new ResponseTimeItemDto("전체", 0, 0, false),
                     new ResponseTimeItemDto("응급", 0, 0, false),
                     new ResponseTimeItemDto("화재", 0, 0, false),
-                    new ResponseTimeItemDto("쓰레기", 0, 0, false)
+                    new ResponseTimeItemDto("쓰레기", 0, 0, false),
+                    new ResponseTimeItemDto("낙석", 0, 0, false)
             ));
         }
 
@@ -99,11 +100,12 @@ public class StatsResponseTimeService {
 
         items.add(new ResponseTimeItemDto("전체", currentTimeMin, change, isIncrease));
 
-        // 4-2) 유형별 (응급, 화재, 쓰레기)
+        // 4-2) 유형별 (응급, 화재, 쓰레기, 낙석)
         Map<String, String> typeLabelMap = Map.of(
                 "EMERGENCY", "응급",
                 "FIRE", "화재",
-                "TRASH", "쓰레기"
+                "TRASH", "쓰레기",
+                "ROCKFALL", "낙석"
         );
 
         for (Map.Entry<String, String> entry : typeLabelMap.entrySet()) {

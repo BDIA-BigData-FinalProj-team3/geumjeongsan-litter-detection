@@ -5,6 +5,7 @@ interface YearRangePickerProps {
   endYear: number;
   onStartYearChange: (year: number) => void;
   onEndYearChange: (year: number) => void;
+  maxYears?: number;
 }
 
 export default function YearRangePicker({
@@ -12,6 +13,7 @@ export default function YearRangePicker({
   endYear,
   onStartYearChange,
   onEndYearChange,
+  maxYears = 10,
 }: YearRangePickerProps) {
   const currentYear = new Date().getFullYear();
   
@@ -20,6 +22,8 @@ export default function YearRangePicker({
     { length: currentYear - 2020 + 1 },
     (_, i) => 2020 + i
   );
+
+  const maxEndYear = startYear + (maxYears - 1);
 
   return (
     <div className="space-y-3">
@@ -58,13 +62,13 @@ export default function YearRangePicker({
             <button
               key={`end-${year}`}
               onClick={() => onEndYearChange(year)}
-              disabled={year < startYear}
+              disabled={year < startYear || year > maxEndYear}
               className={`
                 px-3 py-1.5 text-sm font-medium rounded border transition-all
                 ${
                   endYear === year
                     ? 'bg-blue-600 text-white border-blue-600'
-                    : year < startYear
+                    : year < startYear || year > maxEndYear
                     ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed'
                     : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                 }

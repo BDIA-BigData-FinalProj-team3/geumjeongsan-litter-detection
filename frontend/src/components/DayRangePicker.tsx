@@ -4,12 +4,14 @@ interface DayRangePickerProps {
   startDate: Date;
   endDate: Date;
   onRangeChange: (start: Date, end: Date) => void;
+  maxDays?: number; // 최대 N일(포함)
 }
 
 export default function DayRangePicker({
   startDate,
   endDate,
   onRangeChange,
+  maxDays = 15,
 }: DayRangePickerProps) {
   // 시작일과 종료일의 연/월 상태
   const [startYearMonth, setStartYearMonth] = useState({
@@ -48,24 +50,68 @@ export default function DayRangePicker({
     return `${y}-${m}-${d}`;
   };
 
+  // 날짜를 하루 시작으로 정규화
+  const startOfDay = (d: Date) => {
+    const x = new Date(d);
+    x.setHours(0, 0, 0, 0);
+    return x;
+  };
+
+  // 날짜 차이 계산 (포함 기준: 같은 날 = 1일)
+  const diffDaysInclusive = (a: Date, b: Date) => {
+    const ms = startOfDay(b).getTime() - startOfDay(a).getTime();
+    return Math.floor(ms / 86400000) + 1;
+  };
+
+  // 날짜에 일수 추가
+  const addDays = (d: Date, days: number) => {
+    const x = new Date(d);
+    x.setDate(x.getDate() + days);
+    return x;
+  };
+
+  // 오늘 이후 날짜 제한
+  const clampToToday = (d: Date) => {
+    const t = new Date();
+    t.setHours(23, 59, 59, 999);
+    return d > t ? t : d;
+  };
+
   // 시작일 선택
   const handleStartDateChange = (day: number) => {
     const newStart = new Date(startYearMonth.year, startYearMonth.month - 1, day);
+    let newEnd = endDate;
+
     if (newStart > endDate) {
-      onRangeChange(newStart, newStart);
-    } else {
-      onRangeChange(newStart, endDate);
+      newEnd = newStart;
+    } else if (diffDaysInclusive(newStart, endDate) > maxDays) {
+      // 최대 15일(포함) 보정
+      newEnd = addDays(newStart, maxDays - 1);
+      newEnd = clampToToday(newEnd);
     }
+
+    onRangeChange(newStart, newEnd);
+    setEndYearMonth({ year: newEnd.getFullYear(), month: newEnd.getMonth() + 1 });
   };
 
   // 종료일 선택
   const handleEndDateChange = (day: number) => {
-    const newEnd = new Date(endYearMonth.year, endYearMonth.month - 1, day);
-    if (newEnd < startDate) {
-      onRangeChange(newEnd, newEnd);
-    } else {
-      onRangeChange(startDate, newEnd);
+    const candidateEnd = new Date(endYearMonth.year, endYearMonth.month - 1, day);
+    let newStart = startDate;
+    let newEnd = candidateEnd;
+
+    if (candidateEnd < startDate) {
+      newStart = candidateEnd;
+      newEnd = candidateEnd;
+    } else if (diffDaysInclusive(startDate, candidateEnd) > maxDays) {
+      // 최대 15일(포함) 보정
+      newEnd = addDays(startDate, maxDays - 1);
+      newEnd = clampToToday(newEnd);
     }
+
+    onRangeChange(newStart, newEnd);
+    setStartYearMonth({ year: newStart.getFullYear(), month: newStart.getMonth() + 1 });
+    setEndYearMonth({ year: newEnd.getFullYear(), month: newEnd.getMonth() + 1 });
   };
 
   // 연/월 네비게이션 (시작)

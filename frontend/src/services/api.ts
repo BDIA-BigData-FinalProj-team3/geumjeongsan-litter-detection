@@ -862,10 +862,23 @@ export const getCompletedRockfalls = async (): Promise<RockfallItem[]> => {
  * - Aggregate all incident types
  * - Calculate resolution rates
  * - Include CCTV operational statistics
+ * 
+ * @param month - 월 문자열 (YYYY-MM 형식, 예: '2025-11')
  */
-export const getMonthlyStats = async () => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/reports/monthly-stats?month=2025-11').then(res => res.json());
+export const getMonthlyStats = async (month?: string) => {
+  try {
+    if (month) {
+      const response = await fetch(`${BACKEND_URL}/api/reports/monthly-stats?month=${month}`);
+      if (response.ok) {
+        const data = await response.json();
+        console.log('✅ [MonthlyReport] Loaded monthly stats:', data);
+        return data;
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ [MonthlyReport] Failed to fetch monthly stats, using mock data:', error);
+  }
+  // Fallback to mock data
   return Promise.resolve(mockMonthlyStats);
 };
 
@@ -876,11 +889,47 @@ export const getMonthlyStats = async () => {
  * - Fetch from /api/reports/major-incidents?month=YYYY-MM
  * - Filter by severity level
  * - Include only significant events
+ * 
+ * @param month - 월 문자열 (YYYY-MM 형식, 예: '2025-11')
  */
-export const getMajorIncidents = async (): Promise<MajorIncident[]> => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/reports/major-incidents?month=2025-11').then(res => res.json());
+export const getMajorIncidents = async (month?: string): Promise<MajorIncident[]> => {
+  try {
+    if (month) {
+      const response = await fetch(`${BACKEND_URL}/api/reports/major-incidents?month=${month}`);
+      if (response.ok) {
+        const data = await response.json();
+        console.log('✅ [MonthlyReport] Loaded major incidents:', data);
+        return data;
+      }
+    }
+  } catch (error) {
+    console.warn('⚠️ [MonthlyReport] Failed to fetch major incidents, using mock data:', error);
+  }
+  // Fallback to mock data
   return Promise.resolve(mockMajorIncidents);
+};
+
+/**
+ * Get available report months (YYYY-MM format)
+ * 
+ * Backend integration:
+ * - Fetch from /api/reports/available-months
+ * - Returns array of available months in descending order (newest first)
+ * 
+ * @returns Array of month strings (e.g., ['2025-12', '2025-11', ...])
+ */
+export const getAvailableReportMonths = async (): Promise<string[]> => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/reports/available-months`);
+    if (response.ok) {
+      const data = await response.json();
+      // 기대: ['2025-12','2025-11',...]
+      return Array.isArray(data) ? data : [];
+    }
+  } catch (e) {
+    console.warn('⚠️ [MonthlyReport] Failed to load available months:', e);
+  }
+  return [];
 };
 
 // ==================== CCTVManagement API ====================

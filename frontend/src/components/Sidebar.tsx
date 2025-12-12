@@ -102,6 +102,7 @@ export default function Sidebar({ onNavigate, currentPath, onClose }: SidebarPro
         { path: 'emergency-dashboard', label: '응급', badge: emergencyCount, badgeColor: '#99332E' },
         { path: 'fire-dashboard', label: '화재', badge: fireCount, badgeColor: '#FF5A5A' },
         { path: 'trash-dashboard', label: '쓰레기', badge: trashCount, badgeColor: '#576F93' },
+        { path: 'rockfall-dashboard', label: '낙석', badge: 0, badgeColor: '#8E8665' },
       ],
     },
     { path: 'cctv-management', label: 'CCTV 관리', icon: Camera, subItems: [] },
@@ -209,28 +210,27 @@ export default function Sidebar({ onNavigate, currentPath, onClose }: SidebarPro
                         <button
                           key={subIndex}
                           onClick={() => handleNavigate(subItem.path)}
-                          className={`w-full flex items-center justify-between px-6 py-2 pl-14 transition-colors ${
+                          className={`w-full flex items-center justify-between px-6 py-3 pl-14 transition-colors ${
                             activePath === subItem.path
                               ? 'text-white'
                               : 'text-slate-400 hover:bg-slate-800'
                           }`}
                           style={activePath === subItem.path ? { backgroundColor: 'rgba(255,255,255,0.1)' } : {}}
                         >
-                          <span className="text-sm">{subItem.label}</span>
-                          {subItem.badge !== undefined && subItem.badge > 0 && (
-                            <span
-                              className="flex items-center justify-center text-xs text-white rounded-full"
-                              style={{ 
-                                width: '30px', 
-                                height: '30px', 
-                                backgroundColor: subItem.badgeColor,
-                                fontFamily: 'NanumSquareBold, NanumSquare, sans-serif',
-                                fontWeight: 700
-                              }}
-                            >
-                              {subItem.badge}
-                            </span>
-                          )}
+                          <span className="flex-1 text-left" style={{ fontSize: 'inherit', lineHeight: 'inherit' }}>{subItem.label}</span>
+                          <span
+                            className="flex items-center justify-center text-xs text-white rounded-full flex-shrink-0"
+                            style={{ 
+                              width: '30px', 
+                              height: '30px', 
+                              backgroundColor: (subItem.badge !== undefined && subItem.badge > 0) ? subItem.badgeColor : 'transparent',
+                              fontFamily: 'NanumSquareBold, NanumSquare, sans-serif',
+                              fontWeight: 700,
+                              marginLeft: '8px'
+                            }}
+                          >
+                            {(subItem.badge !== undefined && subItem.badge > 0) ? subItem.badge : ''}
+                          </span>
                         </button>
                       ))}
                     </div>

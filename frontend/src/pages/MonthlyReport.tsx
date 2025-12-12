@@ -3,8 +3,21 @@ import { FileText, Download, Printer, Calendar, ChevronLeft, ChevronRight, Plus,
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import Sidebar from '../components/Sidebar';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
-import { getMonthlyStats, getMajorIncidents } from '../services/api';
+import { getMonthlyStats, getMajorIncidents, getAvailableReportMonths } from '../services/api';
 import { getCurrentUser } from '../services/auth';
+import { mockMonthlyStats } from '../services/mock';
+import {
+  safePct,
+  labelIncidentType,
+  labelIncidentStatus,
+  labelSeverity,
+  labelSourceType,
+  normalizeIncidentType,
+  normalizeIncidentStatus,
+  normalizeSeverity,
+  normalizeSourceType,
+  normalizeDateToInput,
+} from '../utils/incidentMapper';
 
 interface MonthlyReportProps {
   onNavigate: (screen: string) => void;
@@ -18,23 +31,17 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   // 현재 달의 1일로 초기화
   const [selectedMonth, setSelectedMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
+  // 년/월 분리 선택을 위한 state
+  const [selectedYear, setSelectedYear] = useState(today.getFullYear());
+  const [selectedMonthNum, setSelectedMonthNum] = useState(today.getMonth() + 1); // 1-12
   const [showPreview, setShowPreview] = useState(true);
   const [operationAnalysis, setOperationAnalysis] = useState('');
   const [improvements, setImprovements] = useState('');
   const [conclusion, setConclusion] = useState('');
   const [majorIncidents, setMajorIncidents] = useState<any[]>([]);
-  const [monthlyStats, setMonthlyStats] = useState<any>(null);
+  const [monthlyStats, setMonthlyStats] = useState<any>(mockMonthlyStats);
 
-  // AI 탐지 vs 신고 요약 (더미 데이터)
-  const aiDetectionSummary = {
-    aiTotal: 120,
-    manualTotal: 30,
-  } as const;
-  const aiTotal = aiDetectionSummary.aiTotal;
-  const manualTotal = aiDetectionSummary.manualTotal;
-  const total = aiTotal + manualTotal;
-  const aiPercent = total > 0 ? Math.round((aiTotal / total) * 100) : 0;
-  const manualPercent = 100 - aiPercent;
+  // AI 탐지 vs 신고 요약 (백엔드에서 받은 데이터 사용)
 
   // AI 정확도 요약 (더미 데이터)
   const aiAccuracySummary = [
@@ -60,52 +67,188 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
   const [editingMemoId, setEditingMemoId] = useState<number | null>(null);
   const [memoText, setMemoText] = useState('');
 
-  // 로그인 사용자 정보 (localStorage의 user 사용)
-  const currentUser = getCurrentUser();
-  const writerName = currentUser?.name ?? '관리자';
-  const writerDept = currentUser?.dept ?? '환경관리과';
-  const writerPhone = currentUser?.phone ?? '051-XXX-XXXX';
+  // 가능한 월 목록 상태
+  const [availableMonths, setAvailableMonths] = useState<string[]>([]);
+
+  // 로그인 사용자 정보 state
+  const [writerName, setWriterName] = useState('관리자');
+  const [writerDept, setWriterDept] = useState('환경관리과');
+  const [writerPhone, setWriterPhone] = useState('010-0000-0000');
+
+  // 사용자 정보 로드
+  useEffect(() => {
+    const currentUser = getCurrentUser();
+    console.log('🔍 [MonthlyReport] getCurrentUser() result:', currentUser);
+    
+    if (currentUser) {
+      console.log('✅ [MonthlyReport] User data found:', {
+        name: currentUser.name,
+        dept: currentUser.dept,
+        phone: currentUser.phone,
+      });
+      
+      setWriterName(currentUser.name || '관리자');
+      setWriterDept(currentUser.dept || '환경관리과');
+      setWriterPhone(currentUser.phone || '010-0000-0000');
+    } else {
+      console.warn('⚠️ [MonthlyReport] No user data in localStorage');
+    }
+  }, []); // 컴포넌트 마운트 시 1회 실행
 
   // 현재 달(미래 월 선택 제한용)
   const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1);
 
-  // API에서 데이터 로드
+  // API에서 데이터 로드 (월 변경 시 재로딩)
   useEffect(() => {
     const loadReportData = async () => {
+      // 선택된 월을 YYYY-MM 형식으로 변환
+      const year = selectedMonth.getFullYear();
+      const month = String(selectedMonth.getMonth() + 1).padStart(2, '0');
+      const monthStr = `${year}-${month}`;
+
       const [stats, incidents] = await Promise.all([
-        getMonthlyStats(),
-        getMajorIncidents(),
+        getMonthlyStats(monthStr),
+        getMajorIncidents(monthStr),
       ]);
       setMonthlyStats(stats);
-      setMajorIncidents(incidents);
+
+      // ✅ 핵심: 백엔드/목업이 어떤 포맷으로 오든 내부 state는 ENUM으로 통일
+      const normalizedIncidents = (incidents || []).map((x: any) => ({
+        id: x.id ?? x.incident_id ?? Date.now() + Math.random(),
+        incidentId: String(x.incidentId ?? x.incident_id ?? ''),
+        date: normalizeDateToInput(x.date ?? x.detectedAt ?? x.detected_at) || new Date().toISOString().slice(0, 10),
+        type: normalizeIncidentType(x.type ?? x.incidentType ?? x.incident_type),
+        location: String(x.location ?? x.locationDesc ?? x.location_desc ?? ''),
+        severity: normalizeSeverity(x.severity ?? x.severityLevel ?? x.severity_level),
+        status: normalizeIncidentStatus(x.status),
+        responseTime: String(x.responseTime ?? ''),
+        memo: String(x.memo ?? ''),
+        origin: normalizeSourceType(x.origin ?? x.sourceType ?? x.source_type),
+      }));
+
+      setMajorIncidents(normalizedIncidents);
     };
     
     loadReportData();
-  }, []);
+  }, [selectedMonth]);
+
+  // 최초 1회: 가능한 월 목록 로드
+  useEffect(() => {
+    const loadMonths = async () => {
+      const months = await getAvailableReportMonths();
+      setAvailableMonths(months);
+
+      // 선택된 월이 목록에 없으면: 가장 최신 월로 맞춤(보통 months[0]이 최신)
+      if (months.length > 0) {
+        const currentYm = `${selectedMonth.getFullYear()}-${String(selectedMonth.getMonth() + 1).padStart(2, '0')}`;
+        if (!months.includes(currentYm)) {
+          const [y, m] = months[0].split('-').map(Number);
+          setSelectedMonth(new Date(y, m - 1, 1));
+        }
+      }
+    };
+    loadMonths();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 최초 1회만 실행
+
+  // 현재 선택된 월의 YYYY-MM 형식
+  const currentMonthStr = `${selectedMonth.getFullYear()}-${String(selectedMonth.getMonth() + 1).padStart(2, '0')}`;
+
+  // 사용 가능한 년도 목록 추출
+  const availableYears: number[] = availableMonths.length > 0
+    ? (() => {
+        const years = availableMonths.map(ym => Number(ym.slice(0, 4)));
+        const uniqueYears = Array.from(new Set<number>(years));
+        return uniqueYears.sort((a, b) => b - a); // 최신순
+      })()
+    : [selectedYear];
+
+  // 선택된 년도에서 가능한 월 목록
+  const availableMonthsInYear = availableMonths.length > 0
+    ? availableMonths
+        .filter(ym => ym.startsWith(String(selectedYear)))
+        .map(ym => Number(ym.slice(5, 7)))
+    : [];
+
+  // 현재 날짜 기준으로 미래 월 필터링
+  const isFutureMonth = (year: number, month: number): boolean => {
+    const currentYear = today.getFullYear();
+    const currentMonth = today.getMonth() + 1;
+    if (year > currentYear) return true;
+    if (year === currentYear && month > currentMonth) return true;
+    return false;
+  };
+
+  // 년도 목록: 최신 5개만 (2025, 2024, 2023, 2022, 2021)
+  const displayYears = availableYears.length > 0
+    ? availableYears.slice(0, 5) // 최신 5개만
+    : [selectedYear];
+
+  // 월 목록: 현재 월 기준 역순으로 정렬 (12, 11, 10, 9, 8, ... 1)
+  const allMonths = [12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]; // 역순
+
+  // availableMonths 기준으로 이전/다음 월 가능 여부 계산
+  const currentMonthIndex = availableMonths.indexOf(currentMonthStr);
+  const canGoPrevious = availableMonths.length > 0
+    ? currentMonthIndex < availableMonths.length - 1  // availableMonths 기준으로 더 오래된 월이 있으면
+    : true; // availableMonths 없으면 항상 true (과거로는 무제한 이동 가능)
+  const canGoNext = availableMonths.length > 0
+    ? currentMonthIndex > 0  // availableMonths 기준으로 더 최신 월이 있으면
+    : false; // availableMonths 없으면 isNextDisabled 로직 사용
 
   const handlePreviousMonth = () => {
-    const newDate = new Date(selectedMonth);
-    newDate.setMonth(newDate.getMonth() - 1);
-    setSelectedMonth(newDate);
+    if (availableMonths.length > 0) {
+      const currentIndex = availableMonths.indexOf(currentMonthStr);
+      if (currentIndex < availableMonths.length - 1) {
+        // 더 오래된 월로 이동
+        const [y, m] = availableMonths[currentIndex + 1].split('-').map(Number);
+        setSelectedYear(y);
+        setSelectedMonthNum(m);
+      }
+    } else {
+      // availableMonths가 없으면 기존 로직
+      if (selectedMonthNum === 1) {
+        // 1월이면 전년 12월로
+        setSelectedYear(selectedYear - 1);
+        setSelectedMonthNum(12);
+      } else {
+        setSelectedMonthNum(selectedMonthNum - 1);
+      }
+    }
   };
 
   const handleNextMonth = () => {
-    const newDate = new Date(selectedMonth);
-    newDate.setMonth(newDate.getMonth() + 1);
-
-    // 새로 이동하려는 달의 1일
-    const nextMonthStart = new Date(newDate.getFullYear(), newDate.getMonth(), 1);
-
-    // 현재 달 이후면 이동 막기
-    if (nextMonthStart > currentMonthStart) {
-      return;
+    if (availableMonths.length > 0) {
+      const currentIndex = availableMonths.indexOf(currentMonthStr);
+      if (currentIndex > 0) {
+        // 더 최신 월로 이동
+        const [y, m] = availableMonths[currentIndex - 1].split('-').map(Number);
+        setSelectedYear(y);
+        setSelectedMonthNum(m);
+      }
+    } else {
+      // availableMonths가 없으면 기존 로직
+      if (selectedMonthNum === 12) {
+        // 12월이면 다음년 1월로
+        const nextYear = selectedYear + 1;
+        const nextMonthStart = new Date(nextYear, 0, 1);
+        if (nextMonthStart > currentMonthStart) {
+          return; // 미래 월은 선택 불가
+        }
+        setSelectedYear(nextYear);
+        setSelectedMonthNum(1);
+      } else {
+        setSelectedMonthNum(selectedMonthNum + 1);
+      }
     }
-
-    setSelectedMonth(newDate);
   };
 
-  // 다음 달 버튼 비활성화 여부
+  // 다음 달 버튼 비활성화 여부 (기존 로직 + availableMonths 체크)
   const isNextDisabled = (() => {
+    if (availableMonths.length > 0) {
+      return !canGoNext; // availableMonths 기준으로 더 최신 월이 없으면 비활성화
+    }
+    // availableMonths가 없으면 기존 로직 사용
     const nextMonthStart = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 1);
     return nextMonthStart > currentMonthStart;
   })();
@@ -135,23 +278,37 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
 
   const monthStr = `${selectedMonth.getFullYear()}년 ${selectedMonth.getMonth() + 1}월`;
 
-  // monthlyStats는 위의 useEffect에서 로드됨
-  if (!monthlyStats) {
-    return <div>Loading...</div>;
-  }
+  // 낙석 데이터가 없을 때도 UI가 안 깨지게 기본값
+  const rockfallStats = monthlyStats.rockfall ?? {
+    total: 0,
+    resolved: 0,
+    pending: 0,
+    avgResponseTime: '-',
+  };
+
+  // AI 탐지 vs 신고 통계 (백엔드에서 받은 데이터)
+  const aiDetection = monthlyStats.aiDetection ?? {
+    aiTotal: 0,
+    manualTotal: 0,
+  };
+  const aiTotal = aiDetection.aiTotal ?? 0;
+  const manualTotal = aiDetection.manualTotal ?? 0;
+  const total = aiTotal + manualTotal;
+  const aiPercent = total > 0 ? Math.round((aiTotal / total) * 100) : 0;
+  const manualPercent = 100 - aiPercent;
 
   const handleAddIncident = () => {
     const newIncident = {
       id: Date.now(),
       incidentId: '',
       date: new Date().toISOString().split('T')[0],
-      type: '화재',
+      type: 'FIRE',          // ✅ ENUM으로
       location: '',
-      severity: '중',
-      status: '완료',
+      severity: 'MEDIUM',    // ✅ ENUM으로
+      status: 'RESOLVED',    // ✅ ENUM으로
       responseTime: '',
       memo: '',
-      origin: '신고' // 기본값: 사람이 수기로 등록한 사건
+      origin: 'MANUAL',      // ✅ ENUM으로
     };
     setMajorIncidents([...majorIncidents, newIncident]);
   };
@@ -187,7 +344,7 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
   };
 
   // 검색 실행
-  const handleSearch = () => {
+  const handleSearch = (filters = searchFilters) => {
     // 선택된 월의 시작일과 종료일 계산
     const monthStart = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1);
     const monthEnd = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0);
@@ -195,24 +352,25 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
     const monthEndStr = monthEnd.toISOString().slice(0, 10);
 
     // TODO: 실제 API 호출로 사건 검색
-    // 지금은 더미 데이터
+    // 지금은 더미 데이터 (ENUM 형식으로 통일)
     const dummyResults = [
-      { id: 1, incidentId: 'INC-001', date: '2025-01-15', type: '화재', location: '금정산 정상', severity: '상', status: '처리완료' },
-      { id: 2, incidentId: 'INC-002', date: '2025-01-16', type: '쓰레기', location: '금정산 중턱', severity: '중', status: '대기중' },
-      { id: 3, incidentId: 'INC-003', date: '2025-01-17', type: '응급', location: '금정산 하단', severity: '하', status: '처리완료' },
-      { id: 4, incidentId: 'INC-004', date: '2025-01-18', type: '낙석', location: '금정산 상단', severity: '상', status: '진행중' },
-      { id: 5, incidentId: 'INC-005', date: '2025-01-19', type: '화재', location: '금정산 하단', severity: '중', status: '처리완료' },
-      { id: 6, incidentId: 'INC-006', date: '2025-01-20', type: '쓰레기', location: '금정산 정상', severity: '하', status: '대기중' },
+      { id: 1, incidentId: 'INC-001', date: '2025-01-15', type: 'FIRE', location: '금정산 정상', severity: 'HIGH', status: 'RESOLVED' },
+      { id: 2, incidentId: 'INC-002', date: '2025-01-16', type: 'TRASH', location: '금정산 중턱', severity: 'MEDIUM', status: 'PENDING' },
+      { id: 3, incidentId: 'INC-003', date: '2025-01-17', type: 'EMERGENCY', location: '금정산 하단', severity: 'LOW', status: 'RESOLVED' },
+      { id: 4, incidentId: 'INC-004', date: '2025-01-18', type: 'ROCKFALL', location: '금정산 상단', severity: 'HIGH', status: 'IN_PROGRESS' },
+      { id: 5, incidentId: 'INC-005', date: '2025-01-19', type: 'FIRE', location: '금정산 하단', severity: 'MEDIUM', status: 'RESOLVED' },
+      { id: 6, incidentId: 'INC-006', date: '2025-01-20', type: 'TRASH', location: '금정산 정상', severity: 'LOW', status: 'PENDING' },
     ].filter(item => {
       // 선택된 월의 날짜 범위 내에서만 검색
       if (item.date < monthStartStr || item.date > monthEndStr) return false;
       
-      if (searchFilters.incidentId && !item.incidentId.includes(searchFilters.incidentId)) return false;
-      if (searchFilters.date && item.date !== searchFilters.date) return false;
-      if (searchFilters.type && item.type !== searchFilters.type) return false;
-      if (searchFilters.location && !item.location.includes(searchFilters.location)) return false;
-      if (searchFilters.severity && item.severity !== searchFilters.severity) return false;
-      if (searchFilters.status && item.status !== searchFilters.status) return false;
+      // 필터 비교 시 ENUM으로 정규화하여 비교
+      if (filters.incidentId && !item.incidentId.includes(filters.incidentId)) return false;
+      if (filters.date && item.date !== filters.date) return false;
+      if (filters.type && normalizeIncidentType(item.type) !== normalizeIncidentType(filters.type)) return false;
+      if (filters.location && !item.location.includes(filters.location)) return false;
+      if (filters.severity && normalizeSeverity(item.severity) !== normalizeSeverity(filters.severity)) return false;
+      if (filters.status && normalizeIncidentStatus(item.status) !== normalizeIncidentStatus(filters.status)) return false;
       return true;
     });
 
@@ -223,12 +381,13 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
   const handleSelectSearchResult = (result: any) => {
     if (!targetIncidentId) return;
 
+    // 검색 결과를 ENUM으로 정규화하여 저장
     handleIncidentChange(targetIncidentId, 'incidentId', result.incidentId);
     handleIncidentChange(targetIncidentId, 'date', result.date);
-    handleIncidentChange(targetIncidentId, 'type', result.type);
+    handleIncidentChange(targetIncidentId, 'type', normalizeIncidentType(result.type));
     handleIncidentChange(targetIncidentId, 'location', result.location);
-    handleIncidentChange(targetIncidentId, 'severity', result.severity);
-    handleIncidentChange(targetIncidentId, 'status', result.status);
+    handleIncidentChange(targetIncidentId, 'severity', normalizeSeverity(result.severity));
+    handleIncidentChange(targetIncidentId, 'status', normalizeIncidentStatus(result.status));
     setShowSearchModal(false);
     setTargetIncidentId(null);
   };
@@ -288,14 +447,59 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                 <div className="flex items-center gap-2">
                   <button 
                     onClick={handlePreviousMonth}
-                    className="p-2 hover:bg-gray-100 transition-colors"
+                    disabled={!canGoPrevious}
+                    className="p-2 hover:bg-gray-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     style={{ borderRadius: '0px' }}
                   >
                     <ChevronLeft className="w-5 h-5 text-gray-700" />
                   </button>
                   <div className="flex items-center gap-2 px-4 py-2 bg-emerald-50 border border-emerald-200" style={{ borderRadius: '9999px' }}>
                     <Calendar className="w-4 h-4 text-emerald-600" />
-                    <span className="text-gray-900 text-sm">{monthStr}</span>
+                    {/* 년 선택 */}
+                    <select
+                      className="bg-transparent text-gray-900 text-sm outline-none cursor-pointer"
+                      value={selectedYear}
+                      onChange={(e) => {
+                        const year = Number(e.target.value);
+                        setSelectedYear(year);
+                        // 년도 변경 시 해당 년도에서 사용 가능한 첫 번째 월로 자동 설정
+                        const monthsInYear = availableMonths
+                          .filter(ym => ym.startsWith(String(year)))
+                          .map(ym => Number(ym.slice(5, 7)));
+                        if (monthsInYear.length > 0 && !monthsInYear.includes(selectedMonthNum)) {
+                          setSelectedMonthNum(monthsInYear[0]);
+                        }
+                      }}
+                    >
+                      {displayYears.map(year => (
+                        <option key={year} value={year}>{year}년</option>
+                      ))}
+                    </select>
+                    {/* 월 선택 */}
+                    <select
+                      className="bg-transparent text-gray-900 text-sm outline-none cursor-pointer disabled:opacity-50"
+                      value={selectedMonthNum}
+                      onChange={(e) => setSelectedMonthNum(Number(e.target.value))}
+                    >
+                      {allMonths.map(m => {
+                        const monthStr = `${selectedYear}-${String(m).padStart(2, '0')}`;
+                        const hasData = availableMonths.length === 0 || 
+                          availableMonths.includes(monthStr);
+                        const isFuture = isFutureMonth(selectedYear, m);
+                        const isAvailable = hasData && !isFuture;
+                        
+                        return (
+                          <option 
+                            key={m} 
+                            value={m}
+                            disabled={!isAvailable}
+                            style={{ color: isAvailable ? 'inherit' : '#9CA3AF' }}
+                          >
+                            {m}월
+                          </option>
+                        );
+                      })}
+                    </select>
                   </div>
                   {!isNextDisabled && (
                     <button 
@@ -400,7 +604,7 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                           </ResponsiveContainer>
                           <div className="absolute inset-0 flex items-center justify-center">
                             <span className="text-gray-900 font-bold text-sm">
-                              {Math.round((monthlyStats.fire.resolved / monthlyStats.fire.total) * 100)}%
+                              {safePct(monthlyStats.fire.resolved, monthlyStats.fire.total)}%
                             </span>
                           </div>
                         </div>
@@ -440,7 +644,7 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                           </ResponsiveContainer>
                           <div className="absolute inset-0 flex items-center justify-center">
                             <span className="text-gray-900 font-bold text-sm">
-                              {Math.round((monthlyStats.trash.resolved / monthlyStats.trash.total) * 100)}%
+                              {safePct(monthlyStats.trash.resolved, monthlyStats.trash.total)}%
                             </span>
                           </div>
                         </div>
@@ -481,7 +685,7 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                           </ResponsiveContainer>
                           <div className="absolute inset-0 flex items-center justify-center">
                             <span className="text-gray-900 font-bold text-sm">
-                              {Math.round((monthlyStats.emergency.resolved / monthlyStats.emergency.total) * 100)}%
+                              {safePct(monthlyStats.emergency.resolved, monthlyStats.emergency.total)}%
                             </span>
                           </div>
                         </div>
@@ -522,6 +726,48 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                           <div className="absolute inset-0 flex items-center justify-center">
                             <span className="text-gray-900 font-bold text-sm">
                               {Math.round((monthlyStats.cctv.operational / monthlyStats.cctv.total) * 100)}%
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 낙석 사건 카드 */}
+                  <div className="grid grid-cols-2 gap-4 mt-4">
+                    <div className="bg-blue-50 border-l-4 border-blue-400 p-4 col-span-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <p className="text-sm text-gray-600 mb-1">낙석 사건</p>
+                          <p className="text-gray-900 mb-2" style={{ fontSize: '16px', fontWeight: '600' }}>
+                            처리완료 {rockfallStats.resolved}/{rockfallStats.total}건
+                          </p>
+                          <p className="text-xs text-gray-500">처리완료율</p>
+                        </div>
+                        <div className="relative" style={{ width: '100px', height: '100px' }}>
+                          <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                              <Pie
+                                data={[
+                                  { name: '완료', value: rockfallStats.resolved },
+                                  { name: '미완료', value: rockfallStats.pending },
+                                ]}
+                                cx="50%"
+                                cy="50%"
+                                innerRadius={30}
+                                outerRadius={40}
+                                dataKey="value"
+                                startAngle={90}
+                                endAngle={-270}
+                              >
+                                <Cell fill="#60a5fa" />
+                                <Cell fill="#dbeafe" />
+                              </Pie>
+                            </PieChart>
+                          </ResponsiveContainer>
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="text-gray-900 font-bold text-sm">
+                              {safePct(rockfallStats.resolved, rockfallStats.total)}%
                             </span>
                           </div>
                         </div>
@@ -631,6 +877,13 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                           <td className="py-3 px-4 text-center text-orange-600">{monthlyStats.emergency.pending}</td>
                           <td className="py-3 px-4 text-center text-gray-900">{monthlyStats.emergency.avgResponseTime}</td>
                         </tr>
+                        <tr className="border-b border-gray-200">
+                          <td className="py-3 px-4 text-gray-900">낙석</td>
+                          <td className="py-3 px-4 text-center text-gray-900">{rockfallStats.total}</td>
+                          <td className="py-3 px-4 text-center text-green-600">{rockfallStats.resolved}</td>
+                          <td className="py-3 px-4 text-center text-orange-600">{rockfallStats.pending}</td>
+                          <td className="py-3 px-4 text-center text-gray-900">{rockfallStats.avgResponseTime}</td>
+                        </tr>
                       </tbody>
                     </table>
                   </div>
@@ -713,7 +966,7 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                             {/* 유형 */}
                             <td className="py-3 px-4">
                               <span className="print-only text-sm text-gray-900">
-                                {incident.type}
+                                {labelIncidentType(incident.type)}
                               </span>
                               <select
                                 value={incident.type}
@@ -721,11 +974,10 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                                 className="screen-only w-full px-2 py-1 border border-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm text-gray-900"
                                 style={{ borderRadius: '0px' }}
                               >
-                                <option value="">선택</option>
-                                <option value="화재">화재</option>
-                                <option value="응급">응급</option>
-                                <option value="쓰레기">쓰레기</option>
-                                <option value="낙석">낙석</option>
+                                <option value="FIRE">화재</option>
+                                <option value="TRASH">쓰레기</option>
+                                <option value="EMERGENCY">응급</option>
+                                <option value="ROCKFALL">낙석</option>
                               </select>
                             </td>
 
@@ -747,7 +999,7 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                             {/* 심각도 */}
                             <td className="py-3 px-4">
                               <span className="print-only text-sm text-gray-900">
-                                {incident.severity}
+                                {labelSeverity(incident.severity)}
                               </span>
                               <select
                                 value={incident.severity}
@@ -755,9 +1007,9 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                                 className="screen-only w-full px-2 py-1 border border-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm text-gray-900"
                                 style={{ borderRadius: '0px' }}
                               >
-                                <option value="상">상</option>
-                                <option value="중">중</option>
-                                <option value="하">하</option>
+                                <option value="HIGH">상</option>
+                                <option value="MEDIUM">중</option>
+                                <option value="LOW">하</option>
                               </select>
                             </td>
 
@@ -779,7 +1031,7 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                             {/* 상태 */}
                             <td className="py-3 px-4">
                               <span className="print-only text-sm text-gray-900">
-                                {incident.status}
+                                {labelIncidentStatus(incident.status)}
                               </span>
                               <select
                                 value={incident.status}
@@ -787,26 +1039,26 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                                 className="screen-only w-full px-2 py-1 border border-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm text-gray-900"
                                 style={{ borderRadius: '0px' }}
                               >
-                                <option value="완료">완료</option>
-                                <option value="진행중">진행중</option>
-                                <option value="대기">대기</option>
+                                <option value="RESOLVED">처리완료</option>
+                                <option value="IN_PROGRESS">진행중</option>
+                                <option value="PENDING">대기중</option>
                               </select>
                             </td>
 
                             {/* 발생경로 */}
                             <td className="py-3 px-4">
                               <span className="print-only text-sm text-gray-900">
-                                {incident.origin || '신고'}
+                                {labelSourceType(incident.origin || 'MANUAL')}
                               </span>
                               <select
-                                value={incident.origin || '신고'}
+                                value={incident.origin || 'MANUAL'}
                                 onChange={(e) => handleIncidentChange(incident.id, 'origin', e.target.value)}
                                 className="screen-only w-full px-2 py-1 border border-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm text-gray-900"
                                 style={{ borderRadius: '0px' }}
                               >
-                                <option value="AI">AI</option>
-                                <option value="신고">신고</option>
-                                <option value="혼합">혼합</option>
+                                <option value="AUTO">AI</option>
+                                <option value="MANUAL">신고</option>
+                                <option value="MIXED">혼합</option>
                               </select>
                             </td>
 
@@ -971,7 +1223,11 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                 type="text"
                 placeholder="사건ID"
                 value={searchFilters.incidentId}
-                onChange={(e) => setSearchFilters({ ...searchFilters, incidentId: e.target.value })}
+                onChange={(e) => {
+                  const next = { ...searchFilters, incidentId: e.target.value };
+                  setSearchFilters(next);
+                  handleSearch(next);
+                }}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                 className="px-3 py-2 border border-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
                 style={{ borderRadius: '0px' }}
@@ -980,7 +1236,11 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                 type="date"
                 placeholder="발생일시"
                 value={searchFilters.date}
-                onChange={(e) => setSearchFilters({ ...searchFilters, date: e.target.value })}
+                onChange={(e) => {
+                  const next = { ...searchFilters, date: e.target.value };
+                  setSearchFilters(next);
+                  handleSearch(next);
+                }}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                 min={new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1).toISOString().slice(0, 10)}
                 max={new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0).toISOString().slice(0, 10)}
@@ -989,49 +1249,65 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
               />
               <select
                 value={searchFilters.type}
-                onChange={(e) => setSearchFilters({ ...searchFilters, type: e.target.value })}
+                onChange={(e) => {
+                  const next = { ...searchFilters, type: e.target.value };
+                  setSearchFilters(next);
+                  handleSearch(next);
+                }}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                 className="px-3 py-2 border border-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
                 style={{ borderRadius: '0px' }}
               >
                 <option value="">유형</option>
-                <option value="화재">화재</option>
-                <option value="쓰레기">쓰레기</option>
-                <option value="응급">응급</option>
-                <option value="낙석">낙석</option>
+                <option value="FIRE">화재</option>
+                <option value="TRASH">쓰레기</option>
+                <option value="EMERGENCY">응급</option>
+                <option value="ROCKFALL">낙석</option>
               </select>
               <input
                 type="text"
                 placeholder="위치"
                 value={searchFilters.location}
-                onChange={(e) => setSearchFilters({ ...searchFilters, location: e.target.value })}
+                onChange={(e) => {
+                  const next = { ...searchFilters, location: e.target.value };
+                  setSearchFilters(next);
+                  handleSearch(next);
+                }}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                 className="px-3 py-2 border border-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
                 style={{ borderRadius: '0px' }}
               />
               <select
                 value={searchFilters.severity}
-                onChange={(e) => setSearchFilters({ ...searchFilters, severity: e.target.value })}
+                onChange={(e) => {
+                  const next = { ...searchFilters, severity: e.target.value };
+                  setSearchFilters(next);
+                  handleSearch(next);
+                }}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                 className="px-3 py-2 border border-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
                 style={{ borderRadius: '0px' }}
               >
                 <option value="">심각도</option>
-                <option value="상">상</option>
-                <option value="중">중</option>
-                <option value="하">하</option>
+                <option value="HIGH">상</option>
+                <option value="MEDIUM">중</option>
+                <option value="LOW">하</option>
               </select>
               <select
                 value={searchFilters.status}
-                onChange={(e) => setSearchFilters({ ...searchFilters, status: e.target.value })}
+                onChange={(e) => {
+                  const next = { ...searchFilters, status: e.target.value };
+                  setSearchFilters(next);
+                  handleSearch(next);
+                }}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                 className="px-3 py-2 border border-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
                 style={{ borderRadius: '0px' }}
               >
                 <option value="">상태</option>
-                <option value="처리완료">처리완료</option>
-                <option value="대기중">대기중</option>
-                <option value="진행중">진행중</option>
+                <option value="RESOLVED">처리완료</option>
+                <option value="PENDING">대기중</option>
+                <option value="IN_PROGRESS">진행중</option>
               </select>
             </div>
 
@@ -1075,9 +1351,13 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                     <div className="flex items-center justify-between">
                       <div>
                         <div className="font-semibold text-sm text-gray-900">{result.incidentId}</div>
-                        <div className="text-xs text-gray-600">{result.date} | {result.type} | {result.location}</div>
+                        <div className="text-xs text-gray-600">
+                          {result.date} | {labelIncidentType(result.type)} | {result.location}
+                        </div>
                       </div>
-                      <div className="text-xs text-gray-500">{result.severity} | {result.status}</div>
+                      <div className="text-xs text-gray-500">
+                        {labelSeverity(result.severity)} | {labelIncidentStatus(result.status)}
+                      </div>
                     </div>
                   </div>
                 ))
