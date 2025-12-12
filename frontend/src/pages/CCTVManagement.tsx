@@ -108,7 +108,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   
   // 라이브 스트림 CCTV ID (CCTV-011)
   const liveStreamCCTVId = 'CCTV-011';
-  const HLS_STREAM_URL = `${INGEST_HLS_URL}/cctv-001.m3u8`;
+  const HLS_STREAM_URL = `${INGEST_HLS_URL}/cctv-011.m3u8`;
 
   // Set initial selected CCTV if provided
   useEffect(() => {
