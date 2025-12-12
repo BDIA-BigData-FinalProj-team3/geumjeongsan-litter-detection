@@ -34,6 +34,7 @@ jobs:
           npm run build
         env:
           VITE_BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          VITE_INGEST_HLS_URL: ${{ secrets.INGEST_HLS_URL }}
 
       # 5. AWS 인증 설정
       - name: Configure AWS credentials

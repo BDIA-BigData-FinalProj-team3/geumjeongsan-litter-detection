@@ -6,7 +6,8 @@ import { X, ArrowLeft, Search, ChevronDown, ArrowUpDown, Maximize, Camera, Flame
 import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { cctvList, getCCTVLocation, getOffCCTVCodes, getCCTVByCode } from '../services/common';
 import { getCCTVList, analyzeFallenVideo, type FallenAnalysisResponse } from '../services/api';
-import API_BASE_URL from '../config/api';
+import API_BASE_URL, { INGEST_HLS_URL } from '../config/api';
+import Hls from 'hls.js';
 import cctv001DemoVideo from '../assets/cctv-001_20251208T140000Z.mp4';
 // 더미 비디오 import
 import cctv003Video from '../assets/cctv_dummy/cctv-003.mp4';
@@ -73,6 +74,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   const [cctvIncidents, setCctvIncidents] = useState<any[]>([]); // DB에서 가져온 실제 사건 목록
   const [isAnalyzingQwen, setIsAnalyzingQwen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
   
   // 각 CCTV 썸네일 비디오 ref를 관리하는 Map
   const thumbnailVideoRefs = useRef<Map<string, HTMLVideoElement>>(new Map());
@@ -103,6 +105,10 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
 
   // 더미 비디오가 있는 CCTV ID 목록
   const dummyCCTVIds = ['CCTV-001', 'CCTV-003', 'CCTV-004', 'CCTV-005', 'CCTV-006', 'CCTV-007', 'CCTV-008', 'CCTV-009', 'CCTV-010'];
+  
+  // 라이브 스트림 CCTV ID (CCTV-011)
+  const liveStreamCCTVId = 'CCTV-011';
+  const HLS_STREAM_URL = `${INGEST_HLS_URL}/cctv-001.m3u8`;
 
   // Set initial selected CCTV if provided
   useEffect(() => {
@@ -173,6 +179,72 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       return () => clearTimeout(timer);
     }
   }, [selectedCCTV?.id, isPlayingVideo]); // selectedCCTV.id가 변경될 때마다 실행
+
+  // CCTV-011 선택 시 HLS 스트림 시작
+  useEffect(() => {
+    if (selectedCCTV && selectedCCTV.id === liveStreamCCTVId && videoRef.current) {
+      setIsPlayingVideo(true);
+      
+      // HLS 지원 확인
+      if (Hls.isSupported()) {
+        // 기존 HLS 인스턴스 정리
+        if (hlsRef.current) {
+          hlsRef.current.destroy();
+        }
+        
+        // 새 HLS 인스턴스 생성
+        const hls = new Hls({
+          enableWorker: true,
+          lowLatencyMode: true,
+          backBufferLength: 90,
+        });
+        
+        hlsRef.current = hls;
+        hls.loadSource(HLS_STREAM_URL);
+        hls.attachMedia(videoRef.current);
+        
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          videoRef.current?.play().catch(error => {
+            console.error('HLS play error:', error);
+          });
+        });
+        
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          console.error('HLS error:', data);
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                console.log('Network error, trying to recover...');
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                console.log('Media error, trying to recover...');
+                hls.recoverMediaError();
+                break;
+              default:
+                console.log('Fatal error, destroying HLS instance');
+                hls.destroy();
+                break;
+            }
+          }
+        });
+      } else if (videoRef.current.canPlayType('application/vnd.apple.mpegurl')) {
+        // Safari 네이티브 HLS 지원
+        videoRef.current.src = HLS_STREAM_URL;
+        videoRef.current.play().catch(error => {
+          console.error('Native HLS play error:', error);
+        });
+      }
+    }
+    
+    // Cleanup
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  }, [selectedCCTV?.id]);
 
   // 썸네일 비디오를 0.5초마다 7프레임씩 건너뛰며 업데이트
   useEffect(() => {
@@ -869,22 +941,30 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                       overflow: 'hidden',
                       maxHeight: sidebarOpen ? 'none' : '60vh'
                     }}>
-                      {/* 비디오 요소를 항상 렌더링 (더미 비디오가 있는 CCTV일 때) */}
-                      {dummyCCTVIds.includes(selectedCCTV.id) && (
+                      {/* 비디오 요소 - 더미 비디오 또는 HLS 스트림 */}
+                      {(dummyCCTVIds.includes(selectedCCTV.id) || selectedCCTV.id === liveStreamCCTVId) && (
                         <video
                           ref={videoRef}
-                          src={cctvVideoMap[selectedCCTV.id]}
+                          src={dummyCCTVIds.includes(selectedCCTV.id) ? cctvVideoMap[selectedCCTV.id] : undefined}
                           controls
-                          muted
-                          loop
+                          muted={selectedCCTV.id !== liveStreamCCTVId}
+                          loop={dummyCCTVIds.includes(selectedCCTV.id)}
                           autoPlay
                           className={`w-full h-full object-contain ${isPlayingVideo ? '' : 'hidden'}`}
                           onPlay={() => setIsPlayingVideo(true)}
                         />
                       )}
                       
+                      {/* 라이브 스트림 표시 배지 */}
+                      {selectedCCTV.id === liveStreamCCTVId && isPlayingVideo && (
+                        <div className="absolute top-4 left-4 bg-red-600 px-3 py-1 flex items-center gap-2 z-10" style={{ borderRadius: '4px' }}>
+                          <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
+                          <span className="text-white text-sm font-semibold">LIVE</span>
+                        </div>
+                      )}
+                      
                       {/* Live Feed 화면 (비디오가 재생 중이 아닐 때) */}
-                      {(!isPlayingVideo || !dummyCCTVIds.includes(selectedCCTV.id)) && (
+                      {(!isPlayingVideo || (!dummyCCTVIds.includes(selectedCCTV.id) && selectedCCTV.id !== liveStreamCCTVId)) && (
                         <>
                           <span className="text-white">{selectedCCTV.id} - Live Feed</span>
                           {/* Power status indicator */}
