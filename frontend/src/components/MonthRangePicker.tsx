@@ -7,6 +7,7 @@ interface MonthRangePickerProps {
   endMonth: number;
   onStartChange: (year: number, month: number) => void;
   onEndChange: (year: number, month: number) => void;
+  maxMonths?: number; // 최대 N개월(포함)
 }
 
 export default function MonthRangePicker({
@@ -16,6 +17,7 @@ export default function MonthRangePicker({
   endMonth,
   onStartChange,
   onEndChange,
+  maxMonths = 12,
 }: MonthRangePickerProps) {
   const [startYearLocal, setStartYearLocal] = useState(startYear);
   const [endYearLocal, setEndYearLocal] = useState(endYear);
@@ -36,6 +38,66 @@ export default function MonthRangePicker({
     if (year > currentYear) return true;
     if (year === currentYear && month > currentMonth) return true;
     return false;
+  };
+
+  // 월 차이 계산 (포함 기준: 같은 달 = 0, 다음 달 = 1)
+  const diffMonths = (sy: number, sm: number, ey: number, em: number) => {
+    return (ey - sy) * 12 + (em - sm);
+  };
+
+  // 월 추가
+  const addMonths = (sy: number, sm: number, delta: number) => {
+    const base = sy * 12 + (sm - 1);
+    const total = base + delta;
+    const y = Math.floor(total / 12);
+    const m = (total % 12) + 1;
+    return { year: y, month: m };
+  };
+
+  // 오늘 이후 날짜 제한
+  const clampToToday = (y: number, m: number) => {
+    if (y > currentYear) return { year: currentYear, month: currentMonth };
+    if (y === currentYear && m > currentMonth) return { year: currentYear, month: currentMonth };
+    return { year: y, month: m };
+  };
+
+  // 시작 기간 선택 핸들러
+  const handleStartSelect = (y: number, m: number) => {
+    let nextEndY = endYear;
+    let nextEndM = endMonth;
+
+    // start > end 이면 end를 start로
+    if (diffMonths(y, m, endYear, endMonth) < 0) {
+      nextEndY = y;
+      nextEndM = m;
+    }
+
+    // 최대 12개월(포함) 보정: diff <= 11
+    const maxDiff = maxMonths - 1;
+    if (diffMonths(y, m, nextEndY, nextEndM) > maxDiff) {
+      const maxEnd = addMonths(y, m, maxDiff);
+      const clamped = clampToToday(maxEnd.year, maxEnd.month);
+      nextEndY = clamped.year;
+      nextEndM = clamped.month;
+    }
+
+    onStartChange(y, m);
+    if (nextEndY !== endYear || nextEndM !== endMonth) {
+      onEndChange(nextEndY, nextEndM);
+    }
+  };
+
+  // 종료 기간 선택 핸들러
+  const handleEndSelect = (y: number, m: number) => {
+    // end < start 금지 + maxMonths 초과 금지
+    const maxDiff = maxMonths - 1;
+    if (diffMonths(startYear, startMonth, y, m) > maxDiff) {
+      const maxEnd = addMonths(startYear, startMonth, maxDiff);
+      const clamped = clampToToday(maxEnd.year, maxEnd.month);
+      onEndChange(clamped.year, clamped.month);
+      return;
+    }
+    onEndChange(y, m);
   };
 
   return (
@@ -74,7 +136,7 @@ export default function MonthRangePicker({
             return (
               <button
                 key={`start-${month}`}
-                onClick={() => !disabled && onStartChange(startYearLocal, month)}
+                onClick={() => !disabled && handleStartSelect(startYearLocal, month)}
                 disabled={disabled}
                 className={`
                   px-2 py-1.5 text-xs font-medium rounded border transition-all
@@ -122,16 +184,18 @@ export default function MonthRangePicker({
         {/* 월 그리드 */}
         <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
           {months.map((month) => {
+            const overMax = diffMonths(startYear, startMonth, endYearLocal, month) > (maxMonths - 1);
             const disabled = 
               isDisabled(endYearLocal, month) ||
               (endYearLocal === startYear && month < startMonth) ||
-              endYearLocal < startYear;
+              endYearLocal < startYear ||
+              overMax;
             const selected = endYearLocal === endYear && month === endMonth;
             
             return (
               <button
                 key={`end-${month}`}
-                onClick={() => !disabled && onEndChange(endYearLocal, month)}
+                onClick={() => !disabled && handleEndSelect(endYearLocal, month)}
                 disabled={disabled}
                 className={`
                   px-2 py-1.5 text-xs font-medium rounded border transition-all

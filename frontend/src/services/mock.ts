@@ -271,7 +271,9 @@ export const mockMonthlyStats = {
   fire: { total: 12, resolved: 11, pending: 1, avgResponseTime: '4.2분' },
   trash: { total: 156, resolved: 142, pending: 14, avgResponseTime: '12.5분' },
   cctv: { total: 100, operational: 95, maintenance: 5 },
-  emergency: { total: 7, resolved: 7, pending: 0, avgResponseTime: '3.1분' }
+  emergency: { total: 7, resolved: 7, pending: 0, avgResponseTime: '3.1분' },
+  rockfall: { total: 5, resolved: 4, pending: 1, avgResponseTime: '6.7분' },
+  aiDetection: { aiTotal: 120, manualTotal: 30 }
 };
 
 export const mockMajorIncidents: MajorIncident[] = [

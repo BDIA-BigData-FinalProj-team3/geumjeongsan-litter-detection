@@ -24,15 +24,27 @@ interface DateRangePickerProps {
   initialState: DateRangeState;
   onApply: (state: DateRangeState) => void;
   onReset: () => void;
+  maxYears?: number;   // YEAR: 최대 N년
+  maxMonths?: number;  // MONTH: 최대 N개월
+  maxDays?: number;    // DAY: 최대 N일
 }
 
 export default function DateRangePicker({
   initialState,
   onApply,
   onReset,
+  maxYears = 10,
+  maxMonths = 12,
+  maxDays = 15,
 }: DateRangePickerProps) {
   const [unit, setUnit] = useState<TimeUnit>(initialState.unit);
   const [state, setState] = useState<DateRangeState>(initialState);
+
+  // YEAR 범위 보정
+  const clampEndYear = (start: number, end: number) => {
+    const maxEnd = start + (maxYears - 1);
+    return Math.min(Math.max(end, start), maxEnd);
+  };
 
   const handleApply = () => {
     onApply({ ...state, unit });
@@ -106,8 +118,20 @@ export default function DateRangePicker({
           <YearRangePicker
             startYear={state.startYear}
             endYear={state.endYear}
-            onStartYearChange={(year) => setState({ ...state, startYear: year })}
-            onEndYearChange={(year) => setState({ ...state, endYear: year })}
+            maxYears={maxYears}
+            onStartYearChange={(year) =>
+              setState((prev) => ({
+                ...prev,
+                startYear: year,
+                endYear: clampEndYear(year, prev.endYear),
+              }))
+            }
+            onEndYearChange={(year) =>
+              setState((prev) => ({
+                ...prev,
+                endYear: clampEndYear(prev.startYear, year),
+              }))
+            }
           />
         )}
 
@@ -117,6 +141,7 @@ export default function DateRangePicker({
             startMonth={state.monthStartMonth}
             endYear={state.monthEndYear}
             endMonth={state.monthEndMonth}
+            maxMonths={maxMonths}
             onStartChange={(year, month) =>
               setState({ ...state, monthStartYear: year, monthStartMonth: month })
             }
@@ -130,6 +155,7 @@ export default function DateRangePicker({
           <DayRangePicker
             startDate={state.dayStart}
             endDate={state.dayEnd}
+            maxDays={maxDays}
             onRangeChange={(start, end) =>
               setState({ ...state, dayStart: start, dayEnd: end })
             }

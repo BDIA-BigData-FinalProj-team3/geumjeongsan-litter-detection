@@ -26,6 +26,7 @@ public class DashboardController {
     private final DailyStatsRepository dailyStatsRepository;
     private final AvgResponseTimeRepository avgResponseTimeRepository;
     private final IncidentListViewRepository incidentListViewRepository;
+    private final CctvKpiRepository cctvKpiRepository;
 
     /**
      * 일일 통계 (상단 KPI 카드)
@@ -47,9 +48,11 @@ public class DashboardController {
         log.info("✅ [Dashboard] Loaded: todayTotal={}, pendingTotal={}", 
                 stats.getTodayTotal(), stats.getPendingTotal());
         
-        // TODO: CCTV 가동 현황은 별도 API에서 가져와야 함 (임시로 고정값)
+        // CCTV 가동 현황: cctv_info + cctv_status (현재 상태) 기반 집계
+        CctvKpi cctvKpi = cctvKpiRepository.getCurrentCctvKpi();
+
         List<DailyStatsDto> result = new ArrayList<>();
-        result.add(new DailyStatsDto("현재 총 가동 cctv", "25/26")); // TODO: 실제 CCTV 현황 연동
+        result.add(new DailyStatsDto("현재 총 가동 cctv", cctvKpi.onActive() + "/" + cctvKpi.totalActive()));
         result.add(new DailyStatsDto("화재 사고", stats.getTodayFire() + "건"));
         result.add(new DailyStatsDto("응급 사고", stats.getTodayEmergency() + "건"));
         result.add(new DailyStatsDto("쓰레기 사건", stats.getTodayTrash() + "건"));

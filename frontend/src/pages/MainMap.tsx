@@ -7,6 +7,7 @@ import MyPageButton from '../components/MyPageButton';
 import DetectionButton from '../components/DetectionButton';
 import RiskMapButton from '../components/RiskMapButton';
 import CCTVButton from '../components/CCTVButton';
+import ResetButton from '../components/ResetButton';
 import HelicopterButton from '../components/HelicopterButton';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import NotificationBellButton from '../components/NotificationBellButton';
@@ -207,7 +208,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     }
   }, [isFirstVisit]);
   
-  const [activeView, setActiveView] = useState<'default' | 'detections' | 'cctv' | 'helicopter' | 'risk-map'>('detections');
+  const [activeView, setActiveView] = useState<'default' | 'detections' | 'cctv' | 'helicopter' | 'risk-map' | 'rockfall-risk-map'>('detections');
   const [showAllDetections, setShowAllDetections] = useState(true);
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const [activeFilters, setActiveFilters] = useState<Set<'fire' | 'emergency' | 'trash'>>(new Set(['fire', 'emergency', 'trash']));
@@ -324,6 +325,35 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   // 오탐 처리 모달 State
   const [showFalseReportModal, setShowFalseReportModal] = useState(false);
   const [falseReportReason, setFalseReportReason] = useState('');
+  
+  // ✅ [추가] 모든 기능 초기화 핸들러
+  const handleResetAll = () => {
+    // 1. 뷰 모드 초기화 (기본 상태로)
+    setActiveView('default');
+    
+    // 2. 토글 기능 끄기
+    setShowAllDetections(false);
+    setShowHelicopters(false);
+    setShowNotifications(false);
+    setSidebarOpen(false); // 사이드바도 닫기
+    setShowFilterDropdown(false);
+
+    // 3. 팝업 및 선택 상태 해제
+    setSelectedCCTV(null);
+    setSelectedDetection(null);
+    setVideoDetailPopup(null);
+    setIncidentDetailPopup(null);
+    setShowFalseReportModal(false);
+    
+    // 4. 호버 상태 초기화
+    setHoveredTrailSegment(null);
+    setHoveredHotspot(null);
+    setHoveredTrailId(null);
+    setHighlightedCCTV(null);
+    
+    // 5. 필터 초기화 (필요시)
+    // setActiveFilters(new Set(['fire', 'emergency', 'trash']));
+  };
   
   const [videoClips, setVideoClips] = useState<VideoClip[]>([]);
   const [selectedVideoClip, setSelectedVideoClip] = useState<VideoClip | null>(null);
@@ -1281,6 +1311,14 @@ export default function MainMap({ onNavigate }: MainMapProps) {
           onClick={() => {
             setShowFilterDropdown(false);
             setActiveView(activeView === 'risk-map' ? 'detections' : 'risk-map');
+          }}
+        />
+        
+        <ResetButton 
+          isActive={activeView === 'rockfall-risk-map'}
+          onClick={() => {
+            setShowFilterDropdown(false);
+            setActiveView(activeView === 'rockfall-risk-map' ? 'detections' : 'rockfall-risk-map');
           }}
         />
       </div>
