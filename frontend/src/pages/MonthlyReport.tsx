@@ -115,7 +115,22 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
   };
 
   const handleDownload = () => {
-    alert('월간 보고서가 PDF로 다운로드됩니다.');
+    // PDF 저장 = 브라우저 인쇄 창을 띄워서 "PDF로 저장"을 선택하게 함
+    const prevTitle = document.title;
+    const monthStrForTitle = `${selectedMonth.getFullYear()}년 ${selectedMonth.getMonth() + 1}월`;
+    document.title = `${monthStrForTitle} 월간운영보고서`;
+
+    // 렌더링 안정화(일부 브라우저에서 title 반영 타이밍)
+    setTimeout(() => {
+      window.print();
+    }, 0);
+
+    // 인쇄 다이얼로그 닫힌 후 타이틀 복구
+    const restore = () => {
+      document.title = prevTitle;
+      window.removeEventListener('afterprint', restore);
+    };
+    window.addEventListener('afterprint', restore);
   };
 
   const monthStr = `${selectedMonth.getFullYear()}년 ${selectedMonth.getMonth() + 1}월`;
