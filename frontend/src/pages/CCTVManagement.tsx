@@ -192,11 +192,28 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
           hlsRef.current.destroy();
         }
         
-        // 새 HLS 인스턴스 생성
+        // 새 HLS 인스턴스 생성 (초저지연 설정)
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: true,
-          backBufferLength: 90,
+          
+          // 버퍼 크기 최소화 (실시간 우선)
+          maxBufferLength: 4,           // 최대 4초만 미리 버퍼링 (기본 30초)
+          maxMaxBufferLength: 6,        // 절대 최대 6초 (기본 600초)
+          maxBufferSize: 10 * 1000 * 1000, // 10MB (기본 60MB)
+          maxBufferHole: 0.5,           // 0.5초 이상 구멍나면 스킵
+          
+          // 백버퍼 최소화 (과거 데이터)
+          backBufferLength: 4,          // 과거 4초만 보관 (90초 → 4초)
+          
+          // 즉시 재생 시작
+          liveSyncDurationCount: 1,     // 1개 세그먼트만 있어도 재생 시작
+          liveMaxLatencyDurationCount: 3, // 최대 3개 세그먼트 지연 허용
+          
+          // 빠른 복구
+          manifestLoadingTimeOut: 2000,  // 2초 타임아웃
+          manifestLoadingMaxRetry: 3,    // 3회 재시도
+          levelLoadingTimeOut: 2000,     // 2초 타임아웃
         });
         
         hlsRef.current = hls;
