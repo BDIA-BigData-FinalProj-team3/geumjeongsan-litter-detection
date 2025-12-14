@@ -322,7 +322,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       try {
         // CCTV ID 추출 (CCTV-001 → 1)
         const cctvIdNum = parseInt(selectedCCTV.id.replace('CCTV-', ''));
-        const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080'}/api/cctv/${cctvIdNum}/incidents`);
+        const response = await fetch(`${API_BASE_URL}/api/cctv/${cctvIdNum}/incidents`);
         
         if (response.ok) {
           const incidents = await response.json();
