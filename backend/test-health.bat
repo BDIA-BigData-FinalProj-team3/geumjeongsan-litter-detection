@@ -9,12 +9,12 @@ echo Backend URL: %BACKEND_URL%
 echo.
 
 echo === Health Check ===
-curl -s %BACKEND_URL%/health
+curl -s %BACKEND_URL%/api/health
 echo.
 echo.
 
 echo === Deployment Info ===
-curl -s %BACKEND_URL%/deployment-info
+curl -s %BACKEND_URL%/api/deployment-info
 echo.
 echo.
 

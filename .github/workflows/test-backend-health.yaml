@@ -20,21 +20,21 @@ jobs:
           fi
           
           echo "=== Health Check ==="
-          HEALTH_RESPONSE=$(curl -s ${BACKEND_URL}/health)
+          HEALTH_RESPONSE=$(curl -s ${BACKEND_URL}/api/health)
           echo "$HEALTH_RESPONSE" | jq .
           
-          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" ${BACKEND_URL}/health)
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" ${BACKEND_URL}/api/health)
           if [ "$HTTP_CODE" != "200" ]; then
             echo "❌ Health check failed with status: $HTTP_CODE"
             exit 1
           fi
           
           echo -e "\n=== Deployment Info ==="
-          DEPLOYMENT_INFO=$(curl -s ${BACKEND_URL}/deployment-info)
+          DEPLOYMENT_INFO=$(curl -s ${BACKEND_URL}/api/deployment-info)
           echo "$DEPLOYMENT_INFO" | jq .
           
           echo -e "\n=== Response Time ==="
-          time curl -s -o /dev/null ${BACKEND_URL}/health
+          time curl -s -o /dev/null ${BACKEND_URL}/api/health
           
           echo -e "\n=== All checks passed! ✓ ==="
 

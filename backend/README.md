@@ -36,7 +36,7 @@ export ENVIRONMENT=local
 
 ### 헬스체크
 ```
-GET /health
+GET /api/health
 ```
 
 응답:
@@ -49,7 +49,7 @@ GET /health
 
 ### 배포정보
 ```
-GET /deployment-info
+GET /api/deployment-info
 ```
 
 응답:
@@ -66,9 +66,9 @@ GET /deployment-info
 
 ```bash
 # 헬스체크
-curl http://localhost:8080/health
+curl http://localhost:8080/api/health
 
 # 배포정보
-curl http://localhost:8080/deployment-info
+curl http://localhost:8080/api/deployment-info
 ```
 

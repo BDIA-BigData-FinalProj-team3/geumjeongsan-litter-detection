@@ -118,15 +118,15 @@ jobs:
       - name: Health check
         run: |
           BACKEND_URL="${{ secrets.BACKEND_URL }}"
-          echo "Health check on: ${BACKEND_URL}/health"
+          echo "Health check on: ${BACKEND_URL}/api/health"
 
           for i in {1..5}; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${BACKEND_URL}/health" || echo "000")
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${BACKEND_URL}/api/health" || echo "000")
             echo "Attempt $i: HTTP $STATUS"
 
             if [ "$STATUS" = "200" ]; then
               echo "✅ Backend is healthy"
-              curl -s "${BACKEND_URL}/health" || true
+              curl -s "${BACKEND_URL}/api/health" || true
               exit 0
             fi
 
