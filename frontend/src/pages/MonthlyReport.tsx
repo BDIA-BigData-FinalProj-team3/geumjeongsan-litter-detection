@@ -27,8 +27,25 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
   // 오늘 날짜 기준 발행일 문자열
   const today = new Date();
   const publishDateStr = `${today.getFullYear()}년 ${today.getMonth() + 1}월 ${today.getDate()}일`;
+  
+  // 반응형: 화면 크기 감지
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
+  const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
+  
+  // 화면 크기 변경 감지
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (mobile) {
+        setSidebarOpen(false);
+      }
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
-  const [sidebarOpen, setSidebarOpen] = useState(true);
   // 현재 달의 1일로 초기화
   const [selectedMonth, setSelectedMonth] = useState(new Date(today.getFullYear(), today.getMonth(), 1));
   // 년/월 분리 선택을 위한 state
@@ -414,11 +431,11 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
 
   return (
     <div className="flex h-screen bg-gray-50">
-      {/* Sidebar with smooth slide animation */}
+      {/* Sidebar - 반응형 (모바일: 75vw, PC: 고정) */}
       <div 
-        className="fixed top-0 left-0 z-50 h-screen transition-transform duration-300 ease-in-out screen-only"
+        className="fixed top-0 left-0 z-50 h-screen transition-transform duration-300 ease-in-out"
         style={{ 
-          width: '317.56px', 
+          width: isMobile ? '75vw' : '317.56px',
           backgroundColor: '#2B2847',
           transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)'
         }}
@@ -426,7 +443,15 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
         <Sidebar onNavigate={onNavigate} currentPath="report" />
       </div>
       
-      <div className="flex-1 flex flex-col overflow-hidden relative bg-gray-50" style={{ marginLeft: sidebarOpen ? '317.56px' : '0px', transition: 'margin-left 0.3s' }}>
+      {/* 모바일 오버레이 */}
+      {isMobile && sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-40"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      
+      <div className="flex-1 flex flex-col overflow-hidden relative bg-gray-50" style={{ marginLeft: sidebarOpen && !isMobile ? '317.56px' : '0px', transition: 'margin-left 0.3s' }}>
         {/* Header */}
         <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm screen-only" style={{ backgroundColor: '#345eaa' }}>
           <div className="flex items-center gap-3">
@@ -560,6 +585,62 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                     <p>작성자: {writerName}</p>
                     <p>연락처: {writerPhone}</p>
                   </div>
+                </div>
+                
+                {/* 결재라인 */}
+                <div className="mt-6 flex justify-end">
+                  <table
+                    className="text-sm text-gray-900"
+                    style={{
+                      borderCollapse: 'collapse',
+                      width: '360px',
+                      tableLayout: 'fixed',
+                      border: '1px solid #9CA3AF',
+                    }}
+                  >
+                    <tbody>
+                      <tr>
+                        <td
+                          style={{
+                            width: '72px',
+                            textAlign: 'center',
+                            verticalAlign: 'middle',
+                            borderRight: '1px solid #9CA3AF',
+                            fontWeight: 600,
+                            padding: '8px 4px',
+                          }}
+                        >
+                          결
+                        </td>
+                        <td style={{ textAlign: 'center', borderRight: '1px solid #9CA3AF', borderBottom: '1px solid #9CA3AF', padding: '8px 6px', fontWeight: 600 }}>
+                          담당 과장
+                        </td>
+                        <td style={{ textAlign: 'center', borderBottom: '1px solid #9CA3AF', padding: '8px 6px', fontWeight: 600 }}>
+                          담당 소장
+                        </td>
+                      </tr>
+                      <tr>
+                        <td
+                          style={{
+                            width: '72px',
+                            textAlign: 'center',
+                            verticalAlign: 'middle',
+                            borderRight: '1px solid #9CA3AF',
+                            fontWeight: 600,
+                            padding: '8px 4px',
+                          }}
+                        >
+                          재
+                        </td>
+                        <td style={{ height: '80px', borderRight: '1px solid #9CA3AF', verticalAlign: 'top', padding: '4px' }}>
+                          {/* 사인 영역 */}
+                        </td>
+                        <td style={{ height: '80px', verticalAlign: 'top', padding: '4px' }}>
+                          {/* 사인 영역 */}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
 

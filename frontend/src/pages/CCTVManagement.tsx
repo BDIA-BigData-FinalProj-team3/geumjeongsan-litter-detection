@@ -48,7 +48,24 @@ interface Event {
 
 export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CCTVManagementProps) {
   const { allNotifications } = useIncidentCount();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  
+  // 반응형: 화면 크기 감지
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
+  const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
+  
+  // 화면 크기 변경 감지
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (mobile) {
+        setSidebarOpen(false);
+      }
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   const [selectedCCTV, setSelectedCCTV] = useState<CCTVData | null>(null);
   const [showEvents, setShowEvents] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
@@ -876,7 +893,15 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
         <Sidebar onNavigate={onNavigate} currentPath="cctv-management" />
       </div>
       
-      <div className="flex-1 flex flex-col relative bg-gray-50" style={{ marginLeft: sidebarOpen ? '317.56px' : '0px', transition: 'margin-left 0.3s ease-out' }}>
+      {/* 모바일 오버레이 */}
+      {isMobile && sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-40"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      
+      <div className="flex-1 flex flex-col relative bg-gray-50" style={{ marginLeft: sidebarOpen && !isMobile ? '317.56px' : '0px', transition: 'margin-left 0.3s ease-out' }}>
         {/* 상단바 */}
         <div className="shadow-md px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
           <div className="flex items-center gap-3">

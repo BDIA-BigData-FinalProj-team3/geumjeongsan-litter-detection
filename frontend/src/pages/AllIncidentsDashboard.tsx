@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { LayoutDashboard, Activity, Clock, MapPin, HelpCircle, User, LogOut, AlertTriangle, X, Video, Image as ImageIcon, Map, Edit2, Save, Search, ChevronDown, Plus, ChevronLeft, ChevronRight, Flame, HeartPulse, Trash2 } from 'lucide-react';
+import { LayoutDashboard, Activity, Clock, MapPin, HelpCircle, User, LogOut, AlertTriangle, X, Video, Image as ImageIcon, Map, Edit2, Save, Search, ChevronDown, Plus, ChevronLeft, ChevronRight, Flame, HeartPulse, Trash2, Mountain } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
-import { getAllIncidentsStats, getAllIncidentsList, getAllIncidentDetail, createEmergency, createFire, createTrash, updateEmergencyStatus, updateFireStatus, updateTrashStatus, updateEmergencyDetail, updateFireDetail, updateTrashDetail } from '../services/api';
+import { getAllIncidentsStats, getAllIncidentsList, getAllIncidentDetail, createEmergency, createFire, createTrash, createRockfall, getRockfallDetail, updateEmergencyStatus, updateFireStatus, updateTrashStatus, updateEmergencyDetail, updateFireDetail, updateTrashDetail, updateRockfallDetail } from '../services/api';
 
 interface AllIncidentsDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -25,13 +25,38 @@ interface AllIncidentDetail {
   detectionBasis?: string;
   responseTime?: string;
   duration?: string;
+  // 공통 상세(note/memo)
+  note?: string;
+  memo?: string;
+  // 낙석 상세(DDL)
+  rockSizeClass?: string;
+  affectedAssetType?: string;
+  affectedAssetName?: string;
+  damageDescription?: string;
 }
 
 export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashboardProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { addCompletedIncident } = useIncidentCount();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  
+  // 반응형: 화면 크기 감지
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
+  const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
+  
+  // 화면 크기 변경 감지
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (mobile) {
+        setSidebarOpen(false);
+      }
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   const [viewMode, setViewMode] = useState<'active' | 'completed'>('active');
   const [showTooltip, setShowTooltip] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -51,6 +76,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
   const [showEmergencyModal, setShowEmergencyModal] = useState(false);
   const [showFireModal, setShowFireModal] = useState(false);
   const [showTrashModal, setShowTrashModal] = useState(false);
+  const [showRockfallModal, setShowRockfallModal] = useState(false);
   
   // 응급 신규 등록 상태
   const [showPatientInfo, setShowPatientInfo] = useState(false);
@@ -85,6 +111,18 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
     memo: '',
     trashType: '',
     amount: ''
+  });
+  
+  // 낙석 신규 등록 상태
+  const [rockfallRecord, setRockfallRecord] = useState({
+    time: '',
+    location: '',
+    severity: 'medium',
+    memo: '',
+    rockSizeClass: '',
+    affectedAssetType: '',
+    affectedAssetName: '',
+    damageDescription: ''
   });
   
   // 페이지네이션
@@ -282,6 +320,15 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
           trashType: editedDetail.trashType,
           amount: editedDetail.amount,
         });
+      } else if (editedDetail.type === '낙석') {
+        await updateRockfallDetail(editedDetail.id, {
+          memo: editedDetail.note,
+          severity: editedDetail.severity,
+          rockSizeClass: (editedDetail as any).rockSizeClass,
+          affectedAssetType: (editedDetail as any).affectedAssetType,
+          affectedAssetName: (editedDetail as any).affectedAssetName,
+          damageDescription: (editedDetail as any).damageDescription,
+        });
       }
       
       // 성공 시 데이터 재로드
@@ -364,11 +411,11 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
 
   return (
     <div className="flex h-screen">
-      {/* Sidebar */}
+      {/* Sidebar - 반응형 (모바일: 75vw, PC: 고정) */}
       <div 
         className="fixed top-0 left-0 z-50 h-screen transition-transform duration-300 ease-in-out"
         style={{ 
-          width: '317.56px', 
+          width: isMobile ? '75vw' : '317.56px',
           backgroundColor: '#2B2847',
           transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)'
         }}
@@ -376,7 +423,15 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
         <Sidebar onNavigate={onNavigate || (() => {})} currentPath="all-incidents" />
       </div>
       
-      <div className="flex-1 flex flex-col relative bg-white" style={{ marginLeft: sidebarOpen ? '317.56px' : '0px', transition: 'margin-left 0.3s' }}>
+      {/* 모바일 오버레이 */}
+      {isMobile && sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-40"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      
+      <div className="flex-1 flex flex-col relative bg-white" style={{ marginLeft: sidebarOpen && !isMobile ? '317.56px' : '0px', transition: 'margin-left 0.3s' }}>
         {/* 상단바 */}
         <div className="shadow-md px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
           <div className="flex items-center gap-3">
@@ -577,7 +632,18 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                             try {
                               const detail = await getAllIncidentDetail(incident.id);
                               if (detail) {
-                                setSelectedDetail(detail as any);
+                                // 낙석인 경우 rockfall_detail 추가 조회 후 merge
+                                if ((detail as any).type === '낙석') {
+                                  try {
+                                    const rockfall = await getRockfallDetail(incident.id);
+                                    setSelectedDetail({ ...(detail as any), ...(rockfall || {}) } as any);
+                                  } catch (e) {
+                                    console.warn('⚠️ [AllIncidents] Failed to load rockfall detail, fallback to base detail', e);
+                                    setSelectedDetail(detail as any);
+                                  }
+                                } else {
+                                  setSelectedDetail(detail as any);
+                                }
                                 setIsEditing(false);
                                 setEditedDetail(null);
                               }
@@ -808,6 +874,27 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
               >
                 <Trash2 className="w-5 h-5 text-green-700" />
                 <span className="font-semibold text-green-700">쓰레기</span>
+              </button>
+              <button
+                onClick={() => {
+                  setShowTypeSelectModal(false);
+                  setRockfallRecord({
+                    time: new Date().toISOString().slice(0, 16),
+                    location: '',
+                    severity: 'medium',
+                    memo: '',
+                    rockSizeClass: '',
+                    affectedAssetType: '',
+                    affectedAssetName: '',
+                    damageDescription: ''
+                  });
+                  setShowRockfallModal(true);
+                }}
+                className="w-full flex items-center gap-3 px-4 py-3 bg-amber-100 hover:bg-amber-200 transition-colors"
+                style={{ borderRadius: '0px' }}
+              >
+                <Mountain className="w-5 h-5 text-amber-700" />
+                <span className="font-semibold text-amber-700">낙석</span>
               </button>
             </div>
             <button
@@ -1395,6 +1482,197 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
         </div>
       )}
 
+      {/* 낙석 신규 등록 모달 */}
+      {showRockfallModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white w-full max-w-2xl shadow-xl" style={{ borderRadius: '0px', maxHeight: '90vh', overflow: 'auto' }}>
+            <div className="bg-emerald-600 px-6 py-4 flex items-center justify-between sticky top-0">
+              <div className="flex items-center gap-2">
+                <Plus className="w-5 h-5 text-white" />
+                <h2 className="text-white font-semibold">신규 낙석 등록</h2>
+              </div>
+              <button
+                onClick={() => {
+                  setShowRockfallModal(false);
+                  setRockfallRecord({
+                    time: '',
+                    location: '',
+                    severity: 'medium',
+                    memo: '',
+                    rockSizeClass: '',
+                    affectedAssetType: '',
+                    affectedAssetName: '',
+                    damageDescription: ''
+                  });
+                }}
+                className="text-white hover:text-gray-200 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <div className="p-6">
+              <p className="text-sm text-gray-600 mb-6">
+                <span className="text-red-500">*</span> 표시는 필수 입력 항목입니다.
+              </p>
+              <div className="space-y-5">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 발생시간
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={rockfallRecord.time}
+                    onChange={e => setRockfallRecord({...rockfallRecord, time: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">발생 시간을 모르면 현재 시간을 선택하세요</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 발생 위치
+                  </label>
+                  <input
+                    type="text"
+                    value={rockfallRecord.location}
+                    onChange={e => setRockfallRecord({...rockfallRecord, location: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    placeholder="발생 위치를 입력하세요"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 심각도
+                  </label>
+                  <select
+                    value={rockfallRecord.severity}
+                    onChange={e => setRockfallRecord({...rockfallRecord, severity: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                  >
+                    <option value="low">하</option>
+                    <option value="medium">중</option>
+                    <option value="high">상</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 암괴 규모
+                  </label>
+                  <input
+                    type="text"
+                    value={rockfallRecord.rockSizeClass}
+                    onChange={e => setRockfallRecord({...rockfallRecord, rockSizeClass: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    placeholder="예: 대형/중형/소형, 1m급 등"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    <span className="text-red-500">*</span> 피해 대상 유형
+                  </label>
+                  <input
+                    type="text"
+                    value={rockfallRecord.affectedAssetType}
+                    onChange={e => setRockfallRecord({...rockfallRecord, affectedAssetType: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    placeholder="예: 등산로, 시설물, 차량, 인명, 기타"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">피해 대상 식별</label>
+                  <input
+                    type="text"
+                    value={rockfallRecord.affectedAssetName}
+                    onChange={e => setRockfallRecord({...rockfallRecord, affectedAssetName: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    placeholder="예: 북문 등산로 난간 A구간, 표지판 #3 등"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">피해 설명</label>
+                  <textarea
+                    value={rockfallRecord.damageDescription}
+                    onChange={e => setRockfallRecord({...rockfallRecord, damageDescription: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    rows={3}
+                    placeholder="피해 상황을 입력하세요 (선택사항)"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">메모</label>
+                  <textarea
+                    value={rockfallRecord.memo}
+                    onChange={e => setRockfallRecord({...rockfallRecord, memo: e.target.value})}
+                    className="w-full px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    style={{ borderRadius: '0px' }}
+                    rows={3}
+                    placeholder="메모를 입력하세요 (선택사항)"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="p-6 pt-0">
+              <button
+                onClick={async () => {
+                  // 필수 항목 검증
+                  if (!rockfallRecord.time || !rockfallRecord.location || !rockfallRecord.rockSizeClass || !rockfallRecord.affectedAssetType) {
+                    alert('필수 항목(발생시간, 발생위치, 암괴 규모, 피해 대상 유형)을 입력해주세요.');
+                    return;
+                  }
+                  
+                  try {
+                    const result = await createRockfall({
+                      detectedAt: new Date(rockfallRecord.time).toISOString(),
+                      locationDesc: rockfallRecord.location,
+                      severityLevel: rockfallRecord.severity.toUpperCase(),
+                      rockSizeClass: rockfallRecord.rockSizeClass,
+                      affectedAssetType: rockfallRecord.affectedAssetType,
+                      affectedAssetName: rockfallRecord.affectedAssetName || undefined,
+                      damageDescription: rockfallRecord.damageDescription || undefined,
+                      memo: rockfallRecord.memo || undefined,
+                    });
+                    alert(`신규 낙석 사건이 등록되었습니다. (사고코드: ${result.incidentCode})`);
+                    setShowRockfallModal(false);
+                    setRockfallRecord({
+                      time: '',
+                      location: '',
+                      severity: 'medium',
+                      memo: '',
+                      rockSizeClass: '',
+                      affectedAssetType: '',
+                      affectedAssetName: '',
+                      damageDescription: ''
+                    });
+                    // 목록 새로고침
+                    const [activeData, statsData] = await Promise.all([
+                      getAllIncidentsList('active'),
+                      getAllIncidentsStats()
+                    ]);
+                    setActiveIncidents(activeData);
+                    setStats(statsData);
+                  } catch (error: any) {
+                    console.error('❌ [Rockfall] Failed to create:', error);
+                    alert('낙석 사건 등록 중 오류가 발생했습니다. 다시 시도해주세요.');
+                  }
+                }}
+                className="w-full px-6 py-4 bg-emerald-600 text-white text-lg font-semibold hover:bg-emerald-700 transition-colors"
+                style={{ borderRadius: '0px' }}
+              >
+                등록
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 상세정보 모달 */}
       {selectedDetail && (
         <>
@@ -1402,7 +1680,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
           {(selectedDetail as any).detectionBasis?.includes('AI') || (selectedDetail as any).detectionBasis?.includes('자동') ? (
             /* AI 자동 탐지 - 새 컴포넌트 사용 */
             <IncidentDetailModal
-              type={selectedDetail.type === '화재' ? 'fire' : selectedDetail.type === '쓰레기' ? 'trash' : 'emergency'}
+              type={selectedDetail.type === '화재' ? 'fire' : selectedDetail.type === '쓰레기' ? 'trash' : selectedDetail.type === '낙석' ? 'rockfall' : 'emergency'}
               detail={selectedDetail as any}
               isEditing={false}
               editedDetail={null}
@@ -1422,25 +1700,9 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                     <X className="w-6 h-6" />
                   </button>
                 </div>
-                <div className="flex p-6 gap-6">
-                  {/* 왼쪽 패널 - 이미지/영상 */}
-                  <div className="flex-1 space-y-4">
-                    <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
-                      <div className="text-center text-gray-500">
-                        <ImageIcon className="w-10 h-10 mx-auto mb-2" />
-                        <p className="text-sm">이미지</p>
-                      </div>
-                    </div>
-                    <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
-                      <div className="text-center text-gray-500">
-                        <Video className="w-10 h-10 mx-auto mb-2" />
-                        <p className="text-sm">영상</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 우측 패널 - 상세정보 */}
-                  <div className="flex-1 flex flex-col">
+                <div className="p-6">
+                  {/* 상세정보 패널 - 전체 너비 */}
+                  <div className="flex flex-col">
                     <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
                     <div className="flex gap-4 flex-1">
                       {/* 왼쪽 열 - 기본 정보 */}
@@ -1476,12 +1738,28 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                             <div><label className="text-sm text-gray-600">양</label><p className="text-gray-900 mt-1">{(selectedDetail as any).amount || '-'}</p></div>
                           </>
                         )}
+                        {selectedDetail.type === '낙석' && (
+                          <>
+                            <div><label className="text-sm text-gray-600">암괴 규모</label><p className="text-gray-900 mt-1">{(selectedDetail as any).rockSizeClass || '-'}</p></div>
+                            <div><label className="text-sm text-gray-600">피해 대상 유형</label><p className="text-gray-900 mt-1">{(selectedDetail as any).affectedAssetType || '-'}</p></div>
+                            {(selectedDetail as any).affectedAssetName && (
+                              <div><label className="text-sm text-gray-600">피해 대상 식별</label><p className="text-gray-900 mt-1">{(selectedDetail as any).affectedAssetName}</p></div>
+                            )}
+                            {(selectedDetail as any).damageDescription && (
+                              <div><label className="text-sm text-gray-600">피해 설명</label><p className="text-gray-900 mt-1 whitespace-pre-wrap">{(selectedDetail as any).damageDescription}</p></div>
+                            )}
+                          </>
+                        )}
                       </div>
                     </div>
 
                     {/* 하단 버튼 */}
                     <div className="flex justify-end gap-3 mt-4">
-                      <button className="px-6 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center gap-2" style={{ borderRadius: '0px' }}>
+                      <button 
+                        onClick={() => { setEditedDetail({...selectedDetail}); setIsEditing(true); }}
+                        className="px-6 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center gap-2" 
+                        style={{ borderRadius: '0px' }}
+                      >
                         <Edit2 className="w-4 h-4" />
                         수정
                       </button>

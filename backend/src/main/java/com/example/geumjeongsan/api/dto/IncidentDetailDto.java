@@ -174,6 +174,7 @@ public class IncidentDetailDto {
             case "FIRE": return "화재";
             case "EMERGENCY": return "응급";
             case "TRASH": return "쓰레기";
+            case "ROCKFALL": return "낙석";
             default: return type;
         }
     }

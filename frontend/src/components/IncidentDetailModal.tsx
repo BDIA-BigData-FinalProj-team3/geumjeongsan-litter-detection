@@ -62,10 +62,16 @@ interface IncidentDetail {
   trashType?: string;
   amount?: string;
   trashNote?: string;
+  
+  // 낙석 상세 (DDL 기반)
+  rockSizeClass?: string;       // 암괴 규모
+  affectedAssetType?: string;   // 피해 대상 유형
+  affectedAssetName?: string;   // 피해 대상 식별
+  damageDescription?: string;   // 피해 설명
 }
 
 interface IncidentDetailModalProps {
-  type: 'emergency' | 'fire' | 'trash';
+  type: 'emergency' | 'fire' | 'trash' | 'rockfall';
   detail: IncidentDetail;
   isEditing: boolean;
   editedDetail: IncidentDetail | null;
@@ -92,25 +98,37 @@ export default function IncidentDetailModal({
   const [showImageModal, setShowImageModal] = useState(false);
 
   const headerColors = {
-    emergency: '#9333EA',
-    fire: '#DC2626',
-    trash: '#576F93'
+    emergency: '#345eaa', // 수동등록과 동일하게 통일
+    fire: '#345eaa',      // 수동등록과 동일하게 통일
+    trash: '#345eaa',     // 수동등록과 동일하게 통일
+    rockfall: '#345eaa'   // 수동등록과 동일하게 통일
   };
 
   const headerTitles = {
     emergency: '응급 상세정보',
     fire: '화재 상세정보',
-    trash: '쓰레기 상세정보'
+    trash: '쓰레기 상세정보',
+    rockfall: '낙석 상세정보'
   };
 
   const markerColors = {
     emergency: '#9333EA',
     fire: '#FF5A5A',
-    trash: '#576F93'
+    trash: '#576F93',
+    rockfall: '#576F93' // 쓰레기와 동일한 파란색으로 통일
   };
 
   // AI 자동 탐지인지 확인 (백엔드에서 제공)
   const isAIDetection = detail.isAIDetection || false;
+
+  // 낙석 + 수동등록이면 1번 캡쳐 스타일 (지도 없이 이미지/영상 박스만)
+  const isManualRockfall = type === 'rockfall' && (
+    !detail.latitude || 
+    !detail.longitude || 
+    detail.cctvId === '수동등록' || 
+    detail.detectionBasis?.includes('수동') ||
+    !isAIDetection
+  );
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4" style={{ zIndex: 10000 }} onClick={onClose}>
@@ -127,104 +145,128 @@ export default function IncidentDetailModal({
         <div className="flex p-4 gap-4">
           {/* 좌측 패널 */}
           <div className="flex-1 flex flex-col">
-            {/* 지도 영역 */}
-            <div className="border border-gray-300 mb-3" style={{ height: '380px', borderRadius: '0px', position: 'relative', zIndex: 1 }}>
-              <MapContainer
-                center={
-                  detail.latitude && detail.longitude 
-                    ? [detail.latitude, detail.longitude] 
-                    : [35.2456, 129.0917]  // 기본값: 부산 좌표
-                }
-                zoom={detail.latitude && detail.longitude ? 17 : 15}
-                style={{ height: '100%', width: '100%' }}
-
-                zoomControl={false}
-                key={`${detail.latitude || 35.2456}-${detail.longitude || 129.0917}`}  // 좌표 변경 시 지도 재렌더링
-              >
-                <TileLayer
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                />
-                <Marker 
-                  position={
-                    detail.latitude && detail.longitude 
-                      ? [detail.latitude, detail.longitude] 
-                      : [35.2456, 129.0917]  // 좌표가 없어도 기본 위치에 마커 표시
-                  }
-                  icon={L.divIcon({
-                    className: `custom-${type}-marker`,
-                    html: `<div style="width: 40px; height: 40px;">
-                      <svg viewBox="0 0 96.72 125.04" style="filter: drop-shadow(3px 3px 3px rgba(0,0,0,0.3));">
-                        <path fill="#FFFFFF" d="M74.481,41.241c0,18.358-33.24,61.788-33.24,61.788S8,59.6,8,41.241C8,22.882,22.883,8,41.241,8S74.481,22.882,74.481,41.241z"/>
-                        <circle fill="${markerColors[type]}" cx="41.241" cy="40.43" r="27.834"/>
-                      </svg>
-                    </div>`,
-                    iconSize: [40, 40],
-                    iconAnchor: [20, 40],
-                  })}
-                />
-              </MapContainer>
-            </div>
-            
-            {/* 영상/이미지 영역 */}
-            <div className="flex gap-3" style={{ position: 'relative', zIndex: 10 }}>
-              {/* 클립 영상 */}
-              <div 
-                className="flex-1 bg-gray-100 border border-gray-300 relative cursor-pointer overflow-hidden group" 
-                style={{ aspectRatio: '16/9', borderRadius: '0px', position: 'relative', zIndex: 10 }}
-                onClick={() => detail.clipUrl && setShowVideoModal(true)}
-              >
-                {detail.clipUrl ? (
-                  <>
-                    <video
-                      src={detail.clipUrl}
-                      className="w-full h-full object-cover"
-                      muted
-                      playsInline
-                      preload="metadata"
-                    />
-                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-opacity flex items-center justify-center pointer-events-none">
-                      <div className="bg-white bg-opacity-90 rounded-full p-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Play className="w-8 h-8 text-gray-900" fill="currentColor" />
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="text-center text-gray-500 h-full flex items-center justify-center">
-                    <Video className="w-8 h-8 mx-auto mb-2" />
-                    <p className="text-sm">영상</p>
-                  </div>
-                )}
-              </div>
-              
-              {/* 프레임 이미지 (_4만 표시) */}
-              <div className="flex-1 bg-gray-100 border border-gray-300 relative cursor-pointer overflow-hidden group" style={{ borderRadius: '0px', position: 'relative', zIndex: 10 }}>
-                {detail.frameUrls && detail.frameUrls.length > 0 ? (
-                  <div
-                    onClick={() => {
-                      const lastFrameIndex = detail.frameUrls!.length - 1; // _4 프레임 (인덱스 3)
-                      setSelectedFrameIndex(lastFrameIndex);
-                      setShowImageModal(true);
-                    }}
-                    className="w-full h-full"
-                  >
-                    <img
-                      src={detail.frameUrls[detail.frameUrls.length - 1]} // 마지막 프레임 (_4)
-                      alt="Frame 4"
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-opacity flex items-center justify-center">
-                      <Camera className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-center text-gray-500 h-full flex items-center justify-center">
-                    <Camera className="w-8 h-8 mx-auto mb-2" />
+            {isManualRockfall ? (
+              <>
+                {/* 1번 캡쳐 스타일: 이미지 박스 */}
+                <div className="bg-gray-100 border border-gray-300 mb-3 flex items-center justify-center"
+                     style={{ height: '380px', borderRadius: '0px' }}>
+                  <div className="text-center text-gray-500">
+                    <Camera className="w-10 h-10 mx-auto mb-2" />
                     <p className="text-sm">이미지</p>
                   </div>
-                )}
-              </div>
-            </div>
+                </div>
+
+                {/* 1번 캡쳐 스타일: 영상 박스 */}
+                <div className="bg-gray-100 border border-gray-300 flex items-center justify-center"
+                     style={{ height: '210px', borderRadius: '0px' }}>
+                  <div className="text-center text-gray-500">
+                    <Video className="w-10 h-10 mx-auto mb-2" />
+                    <p className="text-sm">영상</p>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                {/* 기존: 지도 영역 */}
+                <div className="border border-gray-300 mb-3" style={{ height: '380px', borderRadius: '0px', position: 'relative', zIndex: 1 }}>
+                  <MapContainer
+                    center={
+                      detail.latitude && detail.longitude 
+                        ? [detail.latitude, detail.longitude] 
+                        : [35.2456, 129.0917]  // 기본값: 부산 좌표
+                    }
+                    zoom={detail.latitude && detail.longitude ? 17 : 15}
+                    style={{ height: '100%', width: '100%' }}
+
+                    zoomControl={false}
+                    key={`${detail.latitude || 35.2456}-${detail.longitude || 129.0917}`}  // 좌표 변경 시 지도 재렌더링
+                  >
+                    <TileLayer
+                      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    />
+                    <Marker 
+                      position={
+                        detail.latitude && detail.longitude 
+                          ? [detail.latitude, detail.longitude] 
+                          : [35.2456, 129.0917]  // 좌표가 없어도 기본 위치에 마커 표시
+                      }
+                      icon={L.divIcon({
+                        className: `custom-${type}-marker`,
+                        html: `<div style="width: 40px; height: 40px;">
+                          <svg viewBox="0 0 96.72 125.04" style="filter: drop-shadow(3px 3px 3px rgba(0,0,0,0.3));">
+                            <path fill="#FFFFFF" d="M74.481,41.241c0,18.358-33.24,61.788-33.24,61.788S8,59.6,8,41.241C8,22.882,22.883,8,41.241,8S74.481,22.882,74.481,41.241z"/>
+                            <circle fill="${markerColors[type]}" cx="41.241" cy="40.43" r="27.834"/>
+                          </svg>
+                        </div>`,
+                        iconSize: [40, 40],
+                        iconAnchor: [20, 40],
+                      })}
+                    />
+                  </MapContainer>
+                </div>
+                
+                {/* 영상/이미지 영역 */}
+                <div className="flex gap-3" style={{ position: 'relative', zIndex: 10 }}>
+                  {/* 클립 영상 */}
+                  <div 
+                    className="flex-1 bg-gray-100 border border-gray-300 relative cursor-pointer overflow-hidden group" 
+                    style={{ aspectRatio: '16/9', borderRadius: '0px', position: 'relative', zIndex: 10 }}
+                    onClick={() => detail.clipUrl && setShowVideoModal(true)}
+                  >
+                    {detail.clipUrl ? (
+                      <>
+                        <video
+                          src={detail.clipUrl}
+                          className="w-full h-full object-cover"
+                          muted
+                          playsInline
+                          preload="metadata"
+                        />
+                        <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-opacity flex items-center justify-center pointer-events-none">
+                          <div className="bg-white bg-opacity-90 rounded-full p-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <Play className="w-8 h-8 text-gray-900" fill="currentColor" />
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="text-center text-gray-500 h-full flex items-center justify-center">
+                        <Video className="w-8 h-8 mx-auto mb-2" />
+                        <p className="text-sm">영상</p>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* 프레임 이미지 (_4만 표시) */}
+                  <div className="flex-1 bg-gray-100 border border-gray-300 relative cursor-pointer overflow-hidden group" style={{ borderRadius: '0px', position: 'relative', zIndex: 10 }}>
+                    {detail.frameUrls && detail.frameUrls.length > 0 ? (
+                      <div
+                        onClick={() => {
+                          const lastFrameIndex = detail.frameUrls!.length - 1; // _4 프레임 (인덱스 3)
+                          setSelectedFrameIndex(lastFrameIndex);
+                          setShowImageModal(true);
+                        }}
+                        className="w-full h-full"
+                      >
+                        <img
+                          src={detail.frameUrls[detail.frameUrls.length - 1]} // 마지막 프레임 (_4)
+                          alt="Frame 4"
+                          className="w-full h-full object-cover"
+                        />
+                        <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-opacity flex items-center justify-center">
+                          <Camera className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="text-center text-gray-500 h-full flex items-center justify-center">
+                        <Camera className="w-8 h-8 mx-auto mb-2" />
+                        <p className="text-sm">이미지</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
 
           {/* 우측 패널 */}
@@ -236,10 +278,12 @@ export default function IncidentDetailModal({
                 <label className="text-sm text-gray-600">사고 코드</label>
                 <p className="text-gray-900 mt-1">{detail.accidentCode}</p>
               </div>
-              <div>
-                <label className="text-sm text-gray-600">CCTV ID</label>
-                <p className="text-gray-900 mt-1">{detail.cctvId}</p>
-              </div>
+              {detail.cctvId && detail.cctvId !== '수동등록' && (
+                <div>
+                  <label className="text-sm text-gray-600">CCTV ID</label>
+                  <p className="text-gray-900 mt-1">{detail.cctvId}</p>
+                </div>
+              )}
               <div>
                 <label className="text-sm text-gray-600">위치</label>
                 {isEditing && editedDetail ? (
@@ -257,7 +301,7 @@ export default function IncidentDetailModal({
               <div>
                 <label className="text-sm text-gray-600">유형</label>
                 <p className="text-gray-900 mt-1">
-                  {type === 'emergency' ? '응급' : type === 'fire' ? '화재' : '쓰레기'}
+                  {type === 'emergency' ? '응급' : type === 'fire' ? '화재' : type === 'trash' ? '쓰레기' : '낙석'}
                 </p>
               </div>
               <div>
@@ -463,6 +507,36 @@ export default function IncidentDetailModal({
                 </>
               )}
 
+              {/* 낙석 전용 필드 */}
+              {type === 'rockfall' && (
+                <>
+                  {detail.rockSizeClass && (
+                    <div>
+                      <label className="text-sm text-gray-600">암괴 규모</label>
+                      <p className="text-gray-900 mt-1">{detail.rockSizeClass}</p>
+                    </div>
+                  )}
+                  {detail.affectedAssetType && (
+                    <div>
+                      <label className="text-sm text-gray-600">피해 대상 유형</label>
+                      <p className="text-gray-900 mt-1">{detail.affectedAssetType}</p>
+                    </div>
+                  )}
+                  {detail.affectedAssetName && (
+                    <div>
+                      <label className="text-sm text-gray-600">피해 대상 식별</label>
+                      <p className="text-gray-900 mt-1">{detail.affectedAssetName}</p>
+                    </div>
+                  )}
+                  {detail.damageDescription && (
+                    <div className="col-span-2">
+                      <label className="text-sm text-gray-600">피해 설명</label>
+                      <p className="text-gray-900 mt-1 whitespace-pre-wrap">{detail.damageDescription}</p>
+                    </div>
+                  )}
+                </>
+              )}
+
               {/* 상황메모 */}
               <div className="col-span-2">
                 <label className="text-sm text-gray-600">상황메모</label>
@@ -526,12 +600,14 @@ export default function IncidentDetailModal({
                     <Edit2 className="w-4 h-4" />
                     수정
                   </button>
-                  <button 
-                    className="flex-1 px-4 py-2 bg-red-500 text-white hover:bg-red-600 transition-colors" 
-                    style={{ borderRadius: '0px' }}
-                  >
-                    오탐처리
-                  </button>
+                  {isAIDetection && (
+                    <button 
+                      className="flex-1 px-4 py-2 bg-red-500 text-white hover:bg-red-600 transition-colors" 
+                      style={{ borderRadius: '0px' }}
+                    >
+                      오탐처리
+                    </button>
+                  )}
                 </>
               )}
             </div>

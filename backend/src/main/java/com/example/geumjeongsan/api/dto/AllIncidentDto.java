@@ -21,6 +21,7 @@ public class AllIncidentDto {
     private final String handler;
     private final String location;
     private final String detectionBasis;
+    private final Double detectionConfidence;  // AI 탐지 신뢰도 (0.0 ~ 1.0)
     private final String responseTime;  // 처리완료 시만
     private final String duration;  // 처리완료 시만
 
@@ -61,6 +62,9 @@ public class AllIncidentDto {
                 ? "AI 자동 탐지: " + (view.getConfidenceReason() != null ? view.getConfidenceReason() : "")
                 : "수동 등록";
         
+        // AI 탐지 신뢰도
+        this.detectionConfidence = view.getDetectionConfidence();
+        
         // 처리완료 시간
         this.responseTime = view.getResolvedAt() != null 
                 ? view.getResolvedAt().format(TIME_FORMATTER) 
@@ -78,6 +82,7 @@ public class AllIncidentDto {
             case "FIRE": return "화재";
             case "EMERGENCY": return "응급";
             case "TRASH": return "쓰레기";
+            case "ROCKFALL": return "낙석";
             default: return type;
         }
     }

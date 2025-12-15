@@ -1,0 +1,27 @@
+{
+  "type": "FeatureCollection",
+  "name": "geumjeongsan_poi",
+  "features": [
+    { "type": "Feature", "properties": { "name": "고당봉", "desc": "금정산 최고봉", "category": "peak", "priority": 3, "source": "OSM: 금정산(고당봉) peak" }, "geometry": { "type": "Point", "coordinates": [129.0506168, 35.2801497] } },
+    { "type": "Feature", "properties": { "name": "장군봉", "desc": "주요 봉우리", "category": "peak", "priority": 2, "source": "OSM: 장군봉 peak" }, "geometry": { "type": "Point", "coordinates": [129.0571659, 35.2978157] } },
+
+    { "type": "Feature", "properties": { "name": "북문", "desc": "금정산성 북문", "category": "gate", "priority": 2, "source": "OSM: 북문 city_gate" }, "geometry": { "type": "Point", "coordinates": [129.0575187, 35.2754733] } },
+    { "type": "Feature", "properties": { "name": "동문", "desc": "금정산성 동문", "category": "gate", "priority": 2, "source": "OSM: 동문 city_gate" }, "geometry": { "type": "Point", "coordinates": [129.0636905, 35.2454029] } },
+    { "type": "Feature", "properties": { "name": "남문", "desc": "금정산성 남문", "category": "gate", "priority": 2, "source": "OSM: 남문 city_gate" }, "geometry": { "type": "Point", "coordinates": [129.0568247, 35.2300702] } },
+    { "type": "Feature", "properties": { "name": "서문", "desc": "금정산성 서문", "category": "gate", "priority": 2, "source": "OSM: 금정산서문 city_gate" }, "geometry": { "type": "Point", "coordinates": [129.0454232, 35.2514859] } },
+
+    { "type": "Feature", "properties": { "name": "범어사", "desc": "대표 사찰", "category": "temple", "priority": 3, "source": "OSM: 범어사 place_of_worship" }, "geometry": { "type": "Point", "coordinates": [129.068642, 35.283984] } },
+    { "type": "Feature", "properties": { "name": "대성암", "desc": "산내 암자", "category": "temple", "priority": 1, "source": "OSM: 대성암 place_of_worship" }, "geometry": { "type": "Point", "coordinates": [129.0670791, 35.2820284] } },
+    { "type": "Feature", "properties": { "name": "미륵사", "desc": "동쪽 사찰", "category": "temple", "priority": 1, "source": "OSM: 미륵사 place_of_worship" }, "geometry": { "type": "Point", "coordinates": [129.0490841, 35.274093] } },
+
+    { "type": "Feature", "properties": { "name": "범어사 입구", "desc": "가장 이용 많음", "category": "entrance", "priority": 2, "source": "OSM: 범어사역 stop_area (접근 거점)" }, "geometry": { "type": "Point", "coordinates": [129.0926166, 35.2731392] } },
+    { "type": "Feature", "properties": { "name": "온천장 입구", "desc": "시내 접근", "category": "entrance", "priority": 1, "source": "OSM: 온천장역" }, "geometry": { "type": "Point", "coordinates": [129.0861819, 35.2206226] } },
+    { "type": "Feature", "properties": { "name": "장전동 입구", "desc": "부산대 쪽", "category": "entrance", "priority": 1, "source": "OSM: 장전역" }, "geometry": { "type": "Point", "coordinates": [129.0880983, 35.2382122] } },
+    { "type": "Feature", "properties": { "name": "노포동 입구", "desc": "북쪽 접근", "category": "entrance", "priority": 1, "source": "OSM: 노포역" }, "geometry": { "type": "Point", "coordinates": [129.0951147, 35.2839721] } },
+
+    { "type": "Feature", "properties": { "name": "고당봉 능선", "desc": "산불 감시", "category": "monitoring", "priority": 2, "source": "derived (near 고당봉)" }, "geometry": { "type": "Point", "coordinates": [129.0510, 35.2810] } },
+    { "type": "Feature", "properties": { "name": "북문~고당봉 구간", "desc": "낙석 주의", "category": "hazard", "priority": 2, "source": "derived (midpoint 북문-고당봉)" }, "geometry": { "type": "Point", "coordinates": [129.05406775, 35.2778115] } },
+    { "type": "Feature", "properties": { "name": "장군봉 암릉", "desc": "추락 위험", "category": "hazard", "priority": 2, "source": "derived (near 장군봉)" }, "geometry": { "type": "Point", "coordinates": [129.0572, 35.2978] } }
+  ]
+}
+

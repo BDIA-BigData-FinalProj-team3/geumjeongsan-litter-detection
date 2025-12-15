@@ -8,6 +8,8 @@ import com.example.geumjeongsan.domain.mainmap.MainMapTrail;
 import com.example.geumjeongsan.domain.mainmap.MainMapTrailRepository;
 import com.example.geumjeongsan.domain.mainmap.RiskMapHeatmap;
 import com.example.geumjeongsan.domain.mainmap.RiskMapHeatmapRepository;
+import com.example.geumjeongsan.domain.mainmap.RockfallRisk;
+import com.example.geumjeongsan.domain.mainmap.RockfallRiskRepository;
 import com.example.geumjeongsan.domain.weather.Weather;
 import com.example.geumjeongsan.domain.weather.WeatherRepository;
 import jakarta.persistence.EntityManager;
@@ -33,6 +35,7 @@ public class MainMapController {
     private final WeatherRepository weatherRepository;
     private final MainMapTrailRepository trailRepository;
     private final RiskMapHeatmapRepository riskMapHeatmapRepository;
+    private final RockfallRiskRepository rockfallRiskRepository;
     private final EntityManager entityManager;
 
     public MainMapController(
@@ -41,6 +44,7 @@ public class MainMapController {
             WeatherRepository weatherRepository,
             MainMapTrailRepository trailRepository,
             RiskMapHeatmapRepository riskMapHeatmapRepository,
+            RockfallRiskRepository rockfallRiskRepository,
             EntityManager entityManager
     ) {
         this.incidentMarkerRepository = incidentMarkerRepository;
@@ -48,6 +52,7 @@ public class MainMapController {
         this.weatherRepository = weatherRepository;
         this.trailRepository = trailRepository;
         this.riskMapHeatmapRepository = riskMapHeatmapRepository;
+        this.rockfallRiskRepository = rockfallRiskRepository;
         this.entityManager = entityManager;
     }
 
@@ -324,6 +329,31 @@ public class MainMapController {
             """);
 
         return sql.toString();
+    }
+
+    /**
+     * 낙석 위험 데이터 조회
+     * GET /api/mainmap/rockfall-risk
+     * 
+     * VIEW: view_mainmap_rockfall_risk
+     * 문화재 낙석 위험과 등산로 낙석 위험을 통합하여 반환
+     * 
+     * @return 낙석 위험 데이터 리스트
+     */
+    @GetMapping("/rockfall-risk")
+    public List<RockfallRisk> getRockfallRisk() {
+        log.info("🏔️ [RockfallRisk] Fetching rockfall risk data");
+        
+        List<RockfallRisk> data = rockfallRiskRepository.findAll();
+        
+        log.info("✅ [RockfallRisk] Found {} rockfall risk entries (cultural + trail)", data.size());
+        
+        // 타입별 개수 로깅
+        long culturalCount = data.stream().filter(r -> "cultural".equals(r.getRiskType())).count();
+        long trailCount = data.stream().filter(r -> "trail".equals(r.getRiskType())).count();
+        log.info("📊 [RockfallRisk] Cultural: {}, Trail: {}", culturalCount, trailCount);
+        
+        return data;
     }
 }
 

@@ -31,7 +31,24 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { setFireCount, addCompletedIncident, completedIncidents } = useIncidentCount();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  
+  // 반응형: 화면 크기 감지
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
+  const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
+  
+  // 화면 크기 변경 감지
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (mobile) {
+        setSidebarOpen(false);
+      }
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   const [viewMode, setViewMode] = useState<'active' | 'completed'>('active');
   const [showTooltip, setShowTooltip] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -386,32 +403,41 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
 
   return (
     <div className="flex h-screen">
-      {/* Sidebar with smooth slide animation */}
+      {/* Sidebar - 반응형 (모바일: 75vw, PC: 고정) */}
       <div 
         className="fixed top-0 left-0 z-50 h-screen transition-transform duration-300 ease-in-out"
         style={{ 
-          width: '317.56px', 
+          width: isMobile ? '75vw' : '317.56px',
           backgroundColor: '#2B2847',
           transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)'
         }}
       >
         <Sidebar onNavigate={onNavigate || (() => {})} currentPath="fire-dashboard" />
       </div>
-      <div className="flex-1 flex flex-col relative bg-white" style={{ marginLeft: sidebarOpen ? '317.56px' : '0px', transition: 'margin-left 0.3s' }}>
-        {/* 상단바 */}
-        <div className="shadow-md px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
-          <div className="flex items-center gap-3">
+      
+      {/* 모바일 오버레이 */}
+      {isMobile && sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-40"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      
+      <div className="flex-1 flex flex-col relative bg-white" style={{ marginLeft: sidebarOpen && !isMobile ? '317.56px' : '0px', transition: 'margin-left 0.3s' }}>
+        {/* 상단바 - 반응형 */}
+        <div className="shadow-md flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#345eaa', padding: isMobile ? '12px 16px' : '16px 24px' }}>
+          <div className="flex items-center" style={{ gap: isMobile ? '8px' : '12px' }}>
             <HamburgerMenuButton onClick={() => setSidebarOpen(!sidebarOpen)} />
-            <Flame className="w-6 h-6 text-gray-200" />
-            <h1 className="text-gray-100">화재 상황 현황</h1>
+            <Flame className={isMobile ? 'w-5 h-5 text-gray-200' : 'w-6 h-6 text-gray-200'} />
+            <h1 className="text-gray-100" style={{ fontSize: isMobile ? '16px' : '20px' }}>화재 상황 현황</h1>
           </div>
         </div>
 
-        <div className="flex-1">
-        <div className="p-6 bg-gray-50 min-h-screen">
+        <div className="flex-1 overflow-y-auto">
+        <div className="bg-gray-50 min-h-screen" style={{ padding: isMobile ? '16px' : '24px' }}>
           <div className="max-w-7xl mx-auto">
-            {/* KPI Cards - 높이 줄임 */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
+            {/* KPI Cards - 반응형 그리드 */}
+            <div className={`grid gap-${isMobile ? '3' : '4'} mb-4`} style={{ gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fit, minmax(180px, 1fr))' }}>
               <div className="bg-white p-4 shadow-sm border border-gray-200 rounded-lg">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-sm text-gray-600">당일 발생</span>
@@ -792,40 +818,15 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
             </div>
 
             {/* 모달 내용 */}
-            <div className="flex p-6 gap-6">
-              {/* 좌측 패널 */}
-              <div className="flex-1 flex flex-col gap-4">
-                {/* 지도 영역 */}
-                <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ height: '400px', borderRadius: '0px' }}>
-                  <div className="text-center text-gray-500">
-                    <Map className="w-12 h-12 mx-auto mb-2" />
-                    <p>지도 및 해당 위치에 아이콘</p>
-                  </div>
-                </div>
-                
-                {/* 영상/이미지 영역 */}
-                <div className="flex gap-4">
-                  <div className="flex-1 bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ height: '150px', borderRadius: '0px' }}>
-                    <div className="text-center text-gray-500">
-                      <Video className="w-8 h-8 mx-auto mb-2" />
-                      <p className="text-sm">영상</p>
-                    </div>
-                  </div>
-                  <div className="flex-1 bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ height: '150px', borderRadius: '0px' }}>
-                    <div className="text-center text-gray-500">
-                      <ImageIcon className="w-8 h-8 mx-auto mb-2" />
-                      <p className="text-sm">이미지</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* 우측 패널 */}
-              <div className="flex-1 flex flex-col">
+            <div className="p-6">
+              {/* 상세정보 패널 - 전체 너비 */}
+              <div className="flex flex-col">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
-                <div className="space-y-4 flex-1">
-                  <div>
-                    <label className="text-sm text-gray-600">사고 코드</label>
+                <div className="grid grid-cols-2 gap-x-8 gap-y-5 flex-1">
+                  {/* 왼쪽 열 - 기본 정보 */}
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm text-gray-600">사고 코드</label>
                     {isEditing && editedDetail ? (
                       <input
                         type="text"
@@ -952,8 +953,11 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                       <p className="text-gray-900 mt-1">{selectedDetail.detectionBasis || 'AI 자동 탐지'}</p>
                     )}
                   </div>
-                  <div>
-                    <label className="text-sm text-gray-600">풍속</label>
+                  </div>
+                  {/* 오른쪽 열 - 추가 정보 */}
+                  <div className="space-y-4">
+                    <div>
+                      <label className="text-sm text-gray-600">풍속</label>
                     {isEditing && editedDetail ? (
                       <input
                         type="text"
@@ -1030,6 +1034,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                       <p className="text-gray-900 mt-1">{selectedDetail.transferHospital || '-'}</p>
                     )}
                   </div>
+                  </div>
                 </div>
 
                 {/* 하단 버튼 */}
@@ -1101,29 +1106,13 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                     <X className="w-6 h-6" />
                   </button>
                 </div>
-                <div className="flex p-6 gap-6">
-                  {/* 왼쪽 패널 - 이미지/영상 */}
-                  <div className="flex-1 space-y-4">
-                    <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
-                      <div className="text-center text-gray-500">
-                        <ImageIcon className="w-10 h-10 mx-auto mb-2" />
-                        <p className="text-sm">이미지</p>
-                      </div>
-                    </div>
-                    <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
-                      <div className="text-center text-gray-500">
-                        <Video className="w-10 h-10 mx-auto mb-2" />
-                        <p className="text-sm">영상</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 우측 패널 - 상세정보 */}
-                  <div className="flex-1 flex flex-col">
+                <div className="p-6">
+                  {/* 상세정보 패널 - 전체 너비 */}
+                  <div className="flex flex-col">
                     <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
-                    <div className="flex gap-4 flex-1">
+                    <div className="grid grid-cols-2 gap-x-8 gap-y-5 flex-1">
                       {/* 왼쪽 열 - 기본 정보 */}
-                      <div className="flex-1 space-y-4">
+                      <div className="space-y-4">
                         <div><label className="text-sm text-gray-600">사고 코드</label><p className="text-gray-900 mt-1">{selectedDetail.accidentCode}</p></div>
                         <div><label className="text-sm text-gray-600">발생시간</label><p className="text-gray-900 mt-1">{selectedDetail.time}</p></div>
                         <div><label className="text-sm text-gray-600">유형</label><p className="text-gray-900 mt-1">화재</p></div>
@@ -1144,7 +1133,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                         <div><label className="text-sm text-gray-600">탐지근거</label><p className="text-gray-900 mt-1">수동 등록</p></div>
                       </div>
                       {/* 오른쪽 열 - 추가 정보 */}
-                      <div className="flex-1 space-y-4">
+                      <div className="space-y-4">
                         <div><label className="text-sm text-gray-600">위치</label><p className="text-gray-900 mt-1">{selectedDetail.location || '-'}</p></div>
                         <div>
                           <label className="text-sm text-gray-600">메모</label>

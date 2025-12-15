@@ -33,7 +33,24 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
   const navigate = useNavigate();
   const location = useLocation();
   const { setEmergencyCount, addCompletedIncident, completedIncidents } = useIncidentCount();
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  
+  // 반응형: 화면 크기 감지
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
+  const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
+  
+  // 화면 크기 변경 감지
+  useEffect(() => {
+    const handleResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (mobile) {
+        setSidebarOpen(false);
+      }
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   const [viewMode, setViewMode] = useState<'active' | 'completed'>('active');
   const [showTooltip, setShowTooltip] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -437,18 +454,27 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
 
   return (
     <div className="flex h-screen">
-      {/* Sidebar with smooth slide animation */}
+      {/* Sidebar - 반응형 (모바일: 75vw, PC: 고정) */}
       <div 
         className="fixed top-0 left-0 z-50 h-screen transition-transform duration-300 ease-in-out"
         style={{ 
-          width: '317.56px', 
+          width: isMobile ? '75vw' : '317.56px',
           backgroundColor: '#2B2847',
           transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)'
         }}
       >
         <Sidebar onNavigate={onNavigate || (() => {})} currentPath="emergency-dashboard" />
       </div>
-      <div className="flex-1 flex flex-col relative bg-white" style={{ marginLeft: sidebarOpen ? '317.56px' : '0px', transition: 'margin-left 0.3s' }}>
+      
+      {/* 모바일 오버레이 */}
+      {isMobile && sidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 z-40"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+      
+      <div className="flex-1 flex flex-col relative bg-white" style={{ marginLeft: sidebarOpen && !isMobile ? '317.56px' : '0px', transition: 'margin-left 0.3s' }}>
         {/* 상단바 */}
         <div className="shadow-md px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
           <div className="flex items-center gap-3">
@@ -890,29 +916,13 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
                     <X className="w-6 h-6" />
                   </button>
                 </div>
-                <div className="flex p-6 gap-6">
-                  {/* 왼쪽 패널 - 이미지/영상 */}
-                  <div className="flex-1 space-y-4">
-                    <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
-                      <div className="text-center text-gray-500">
-                        <ImageIcon className="w-10 h-10 mx-auto mb-2" />
-                        <p className="text-sm">이미지</p>
-                      </div>
-                    </div>
-                    <div className="bg-gray-100 border border-gray-300 flex items-center justify-center" style={{ aspectRatio: '16/9', borderRadius: '0px' }}>
-                      <div className="text-center text-gray-500">
-                        <Video className="w-10 h-10 mx-auto mb-2" />
-                        <p className="text-sm">영상</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* 우측 패널 - 상세정보 */}
-                  <div className="flex-1 flex flex-col">
+                <div className="p-6">
+                  {/* 상세정보 패널 - 전체 너비 */}
+                  <div className="flex flex-col">
                     <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
-                    <div className="flex gap-4 flex-1">
+                    <div className="grid grid-cols-2 gap-x-8 gap-y-5 flex-1">
                       {/* 왼쪽 열 - 기본 정보 */}
-                      <div className="flex-1 space-y-4">
+                      <div className="space-y-4">
                         <div><label className="text-sm text-gray-600">사고 코드</label><p className="text-gray-900 mt-1">{selectedDetail.accidentCode}</p></div>
                         <div><label className="text-sm text-gray-600">발생시간</label><p className="text-gray-900 mt-1">{(selectedDetail as any).detectedAt || selectedDetail.time}</p></div>
                         <div><label className="text-sm text-gray-600">유형</label><p className="text-gray-900 mt-1">응급</p></div>
@@ -933,7 +943,7 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
                         <div><label className="text-sm text-gray-600">탐지근거</label><p className="text-gray-900 mt-1">수동 등록</p></div>
                       </div>
                       {/* 오른쪽 열 - 추가 정보 */}
-                      <div className="flex-1 space-y-4">
+                      <div className="space-y-4">
                         <div><label className="text-sm text-gray-600">위치</label><p className="text-gray-900 mt-1">{selectedDetail.location || '-'}</p></div>
                         <div>
                           <label className="text-sm text-gray-600">환자명</label>

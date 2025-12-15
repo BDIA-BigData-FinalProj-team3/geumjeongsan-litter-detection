@@ -73,7 +73,7 @@ public class AuthService {
         response.setLoginId(user.getLoginId());
         response.setName(user.getName());
         response.setRole(user.getRole());
-        response.setDept(user.getDept());
+        response.setDept(user.getDeptName()); // dept → deptName으로 변경
         response.setEmail(user.getEmail());
         response.setPhone(user.getPhone());
         return response;

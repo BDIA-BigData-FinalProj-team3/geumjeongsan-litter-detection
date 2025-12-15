@@ -7,7 +7,9 @@ import MyPageButton from '../components/MyPageButton';
 import DetectionButton from '../components/DetectionButton';
 import RiskMapButton from '../components/RiskMapButton';
 import CCTVButton from '../components/CCTVButton';
+import MapStyleToggle from '../components/MapStyleToggle';
 import ResetButton from '../components/ResetButton';
+import CulturalButton from '../components/CulturalButton';
 import HelicopterButton from '../components/HelicopterButton';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import NotificationBellButton from '../components/NotificationBellButton';
@@ -16,7 +18,8 @@ import TrashMarkerIcon from '../components/TrashMarkerIcon';
 import CCTVOnMarkerIcon from '../components/CCTVOnMarkerIcon';
 import CCTVOffMarkerIcon from '../components/CCTVOffMarkerIcon';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
-import { getFireNotifications, getEmergencyNotifications, getTrashNotifications, getHelicopterLocations, getHotspots, getCCTVVideoClips, getCCTVMedia, getCCTVList, getActiveIncidents, getIncidentMarkers, getCCTVStatus, getMainMapWeather, getCCTVIncidents, getTrails, getRiskMapHeatmap, getFireDetail, getEmergencyDetail, getTrashDetail, type RiskMapHeatmapItem } from '../services/api';
+import { getFireNotifications, getEmergencyNotifications, getTrashNotifications, getHelicopterLocations, getHotspots, getCCTVVideoClips, getCCTVMedia, getCCTVList, getActiveIncidents, getIncidentMarkers, getCCTVStatus, getMainMapWeather, getCCTVIncidents, getTrails, getRiskMapHeatmap, getFireDetail, getEmergencyDetail, getTrashDetail, getRockfallRiskData, type RiskMapHeatmapItem, type RockfallRiskItem } from '../services/api';
+import { getRockfallRiskColorWithOpacity, getRockfallRiskLevel } from '../utils/rockfallColors';
 import type { VideoClip } from '../services/mock';
 import type { CCTVMedia } from '../services/api';
 import type { CCTVMarker as BackendCCTVMarker } from '../services/common';
@@ -28,7 +31,7 @@ import logoIcon from 'figma:asset/0abed642df6551dc36712b1dfc4c5cda079eed1a.png';
 import headerLogo from 'figma:asset/14f294982efa79d8462919ccdda7d0c0c674d095.png';
 
 // Leaflet 추가
-import { MapContainer, TileLayer, Marker, Popup as LeafletPopup, Polyline, Tooltip, useMap, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup as LeafletPopup, Polyline, Polygon, Tooltip, useMap, useMapEvents, GeoJSON } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import ReactDOMServer from 'react-dom/server';
@@ -193,13 +196,116 @@ function ZoomController({ zoom, onZoomChange }: { zoom: number; onZoomChange: (z
   return null;
 }
 
+function getFirstLngLatFromGeoJSON(geoJson: any): { lng: number; lat: number } | null {
+  try {
+    const feature = geoJson?.features?.[0];
+    const coords = feature?.geometry?.coordinates;
+    const type = feature?.geometry?.type;
+    if (!type || !coords) return null;
+
+    // GeoJSON standard: [lng, lat]
+    if (type === 'Polygon') {
+      const c = coords?.[0]?.[0]; // first ring, first coord
+      if (Array.isArray(c) && typeof c[0] === 'number' && typeof c[1] === 'number') return { lng: c[0], lat: c[1] };
+    }
+    if (type === 'MultiPolygon') {
+      const c = coords?.[0]?.[0]?.[0]; // first polygon, first ring, first coord
+      if (Array.isArray(c) && typeof c[0] === 'number' && typeof c[1] === 'number') return { lng: c[0], lat: c[1] };
+    }
+    if (type === 'Point') {
+      const c = coords;
+      if (Array.isArray(c) && typeof c[0] === 'number' && typeof c[1] === 'number') return { lng: c[0], lat: c[1] };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// 문화재(낙석 위험) 필터 ON 시 해당 영역으로 자동 줌/이동
+function FitBoundsOnCulturalRockfall({
+  enabled,
+  geoJson,
+}: {
+  enabled: boolean;
+  geoJson: any;
+}) {
+  const map = useMap();
+  const didFitRef = React.useRef(false);
+  const lastSigRef = React.useRef<string>('');
+
+  useEffect(() => {
+    if (!enabled || !geoJson) return;
+
+    // enabled가 다시 false가 되었다가 true가 될 때는 다시 fit 허용
+    if (!enabled) {
+      didFitRef.current = false;
+      return;
+    }
+
+    // GeoJSON이 바뀌면(예: DB 뷰 수정 후 재로딩) 다시 fit 허용
+    const first = getFirstLngLatFromGeoJSON(geoJson);
+    const sig = `${geoJson?.features?.length ?? 0}:${first ? `${first.lng},${first.lat}` : 'no-first'}`;
+    if (lastSigRef.current !== sig) {
+      lastSigRef.current = sig;
+      didFitRef.current = false;
+    }
+
+    if (didFitRef.current) return;
+
+    try {
+      const layer = L.geoJSON(geoJson as any);
+      const bounds = layer.getBounds();
+
+      if (bounds && (bounds as any).isValid && (bounds as any).isValid()) {
+        map.fitBounds(bounds.pad(0.2), { maxZoom: 16, animate: true });
+        didFitRef.current = true;
+      }
+    } catch (e) {
+      // fitBounds 실패는 UX에 치명적이지 않아서 warn만 남김
+      console.warn('⚠️ [RockfallRisk] Failed to fitBounds for cultural geojson:', e);
+    }
+  }, [enabled, geoJson, map]);
+
+  // enabled 해제 시 다음에 다시 켰을 때 fit 되도록 리셋
+  useEffect(() => {
+    if (!enabled) {
+      didFitRef.current = false;
+    }
+  }, [enabled]);
+
+  return null;
+}
+
+// (boundary 생성은 frontend/scripts/generate-geumjeongsan-boundary.mjs 에서 수행)
+
 export default function MainMap({ onNavigate }: MainMapProps) {
   const navigate = useNavigate();
   const { setEmergencyCount, setFireCount, setTrashCount, completedIncidents, addCompletedIncident, setAllNotifications } = useIncidentCount();
   
+  // 반응형: 화면 크기 감지 (먼저 선언)
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
+  
+  const WEATHER_POS_STORAGE_KEY = 'mainmap.weather.position.v1';
+  const WEATHER_POS_MIGRATION_KEY = 'mainmap.weather.position.migrated.v2';
+  // 날씨 위젯 대략 크기(클램프/기본 위치 계산용) - 반응형
+  const WEATHER_WIDGET_W = isMobile ? 200 : 240;
+  const WEATHER_WIDGET_H = isMobile ? 180 : 220;
+  const WEATHER_WIDGET_MARGIN = isMobile ? 12 : 16;
+  
   // 세션 스토리지를 사용하여 첫 방문인지 확인
   const isFirstVisit = sessionStorage.getItem('visited-mainmap') === null;
-  const [sidebarOpen, setSidebarOpen] = useState(!isFirstVisit);
+  const [sidebarOpen, setSidebarOpen] = useState(isMobile ? false : !isFirstVisit);
+  
+  // 화면 크기 변경 감지
+  React.useEffect(() => {
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 768);
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
   
   // 첫 방문 플래그 설정
   React.useEffect(() => {
@@ -218,6 +324,11 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   const [riskMapPeriod, setRiskMapPeriod] = useState<'30d' | '7d' | 'today'>('30d');
   const [riskMapType, setRiskMapType] = useState<'all' | 'fire' | 'emergency' | 'trash'>('all');
   const [riskMapHeatmap, setRiskMapHeatmap] = useState<RiskMapHeatmapItem[]>([]);
+  const [mapStyle, setMapStyle] = useState<'normal' | 'satellite'>('normal');
+  
+  // 낙석 위험 지도 관련 state
+  const [rockfallRiskData, setRockfallRiskData] = useState<RockfallRiskItem[]>([]);
+  const [rockfallRiskFilter, setRockfallRiskFilter] = useState<'all' | 'cultural' | 'trail'>('trail');
   const [hoveredTrailSegment, setHoveredTrailSegment] = useState<{
     entityId: number;
     entityName: string;
@@ -246,10 +357,98 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     x: number; 
     y: number;
   } | null>(null);
+
+  const [hoveredRockfall, setHoveredRockfall] = useState<{
+    name: string;
+    riskType: string;
+    riskValue: number;
+    riskLevel: string;
+    styleC: number;
+    cultural?: string;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  // ✅ 금정산 경계(고정 GeoJSON) 로드: public/geumjeongsan_boundary.geojson
+  const [geumjeongsanBoundaryGeoJson, setGeumjeongsanBoundaryGeoJson] = useState<any | null>(null);
+  // ✅ 금정산 주요지점(POI) 로드: public/geumjeongsan_poi.geojson (항상 표시)
+  const [geumjeongsanPoiGeoJson, setGeumjeongsanPoiGeoJson] = useState<any | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        // 1) 공식 경계(있으면 이걸 우선 사용)
+        const official = await fetch('/geumjeongsan_boundary_official.geojson', { cache: 'no-cache' });
+        if (official.ok) {
+          const json = await official.json();
+          if (!cancelled) setGeumjeongsanBoundaryGeoJson(json);
+          return;
+        }
+
+        // 2) 자동 생성 경계(기본값)
+        const generated = await fetch('/geumjeongsan_boundary.geojson', { cache: 'no-cache' });
+        if (!generated.ok) return;
+        const json = await generated.json();
+        if (!cancelled) setGeumjeongsanBoundaryGeoJson(json);
+      } catch {
+        // boundary 로드는 실패해도 앱 동작에는 영향 없게 무시
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // ✅ 금정산 주요지점(POI) 로드
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/geumjeongsan_poi.geojson', { cache: 'no-cache' });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!cancelled) setGeumjeongsanPoiGeoJson(json);
+      } catch {
+        // POI 로드는 실패해도 앱 동작에는 영향 없게 무시
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   
   // 공통: 백엔드에서 내려오는 [lng, lat] 배열을 Leaflet용 [lat, lng]로 변환
   const toLeafletPositions = (coords: number[][]) =>
     coords.map(([lng, lat]) => [lat, lng] as [number, number]);
+
+  // ✅ 금정산 이외 지역 딤(마스크) 처리용 좌표
+  // 외곽(월드) 링 + 내부(금정산) 링을 이용한 "hole polygon" 마스크
+  const dimWorldRing: [number, number][] = [
+    [-90, -180],
+    [-90, 180],
+    [90, 180],
+    [90, -180],
+  ];
+
+  // ✅ 금정산 경계(고정 GeoJSON) -> Leaflet용 [lat,lng] 링으로 변환
+  const dimGeumjeongRing: [number, number][] = React.useMemo(() => {
+    const fallback: [number, number][] = [
+      [35.18, 128.95],
+      [35.18, 129.15],
+      [35.34, 129.15],
+      [35.34, 128.95],
+    ];
+
+    try {
+      const ring = geumjeongsanBoundaryGeoJson?.features?.[0]?.geometry?.coordinates?.[0];
+      if (!Array.isArray(ring) || ring.length < 3) return fallback;
+
+      // GeoJSON: [lng,lat] -> Leaflet: [lat,lng]
+      return ring.map((c: any) => [Number(c[1]), Number(c[0])] as [number, number]);
+    } catch {
+      return fallback;
+    }
+  }, [geumjeongsanBoundaryGeoJson]);
   
   // 기간별 히트맵 색상 함수
   const getHeatmapColorByPeriod = (count: number, period: string) => {
@@ -400,7 +599,13 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   const [emergencyNotifications, setEmergencyNotifications] = useState<Array<{ id: string; cctvId: string; location: string; time: string; confidence: string; timeAgo: string; timestamp: number; type: 'emergency' }>>([]);
   const [trashNotifications, setTrashNotifications] = useState<Array<{ id: string; cctvId: string; location: string; time: string; confidence: string; timeAgo: string; timestamp: number; type: 'trash' }>>([]);
   
-  // API에서 알림 데이터 로드
+  // completedIncidents를 ref로 추적하여 최신 상태 유지
+  const completedIncidentsRef = React.useRef(completedIncidents);
+  React.useEffect(() => {
+    completedIncidentsRef.current = completedIncidents;
+  }, [completedIncidents]);
+
+  // API에서 알림 데이터 로드 (주기적 폴링으로 새 알람 추가)
   useEffect(() => {
     const loadNotifications = async () => {
       const [fire, emergency, trash] = await Promise.all([
@@ -409,17 +614,37 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         getTrashNotifications(),
       ]);
       
-      const initialFireNotifications = fire.filter(n => !completedIncidents.has(n.cctvId));
-      const initialEmergencyNotifications = emergency.filter(n => !completedIncidents.has(n.cctvId));
-      const initialTrashNotifications = trash.filter(n => !completedIncidents.has(n.cctvId));
+      // 기존 알림과 새 알림 병합 (중복 제거 + completedIncidents 필터링)
+      setFireNotifications(prev => {
+        const existingIds = new Set(prev.map(n => n.id));
+        const currentCompleted = completedIncidentsRef.current;
+        const newNotifications = fire.filter(n => !existingIds.has(n.id) && !currentCompleted.has(n.cctvId));
+        return [...prev, ...newNotifications];
+      });
       
-      setFireNotifications(initialFireNotifications);
-      setEmergencyNotifications(initialEmergencyNotifications);
-      setTrashNotifications(initialTrashNotifications);
+      setEmergencyNotifications(prev => {
+        const existingIds = new Set(prev.map(n => n.id));
+        const currentCompleted = completedIncidentsRef.current;
+        const newNotifications = emergency.filter(n => !existingIds.has(n.id) && !currentCompleted.has(n.cctvId));
+        return [...prev, ...newNotifications];
+      });
+      
+      setTrashNotifications(prev => {
+        const existingIds = new Set(prev.map(n => n.id));
+        const currentCompleted = completedIncidentsRef.current;
+        const newNotifications = trash.filter(n => !existingIds.has(n.id) && !currentCompleted.has(n.cctvId));
+        return [...prev, ...newNotifications];
+      });
     };
     
+    // 초기 로드
     loadNotifications();
-  }, [completedIncidents]);
+    
+    // 10초마다 새 알람 확인
+    const interval = setInterval(loadNotifications, 10000);
+    
+    return () => clearInterval(interval);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // 알림 개수 변경 시 카운트 업데이트 및 전체 알림 데이터 업데이트
   useEffect(() => {
@@ -440,22 +665,117 @@ export default function MainMap({ onNavigate }: MainMapProps) {
 
   const [dragging, setDragging] = useState<string | null>(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
-  const [popupPositions, setPopupPositions] = useState({
-    notification: { x: window.innerWidth / 2 - 250, y: window.innerHeight / 2 - 200 },
-    detection: { x: window.innerWidth / 2 - 250, y: window.innerHeight / 2 - 200 },
-    cctv: { x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 - 150 },
+  const draggingRef = React.useRef<string | null>(null);
+  const dragOffsetRef = React.useRef({ x: 0, y: 0 });
+  const sidebarOpenRef = React.useRef(sidebarOpen);
+  
+  React.useEffect(() => {
+    draggingRef.current = dragging;
+  }, [dragging]);
+  
+  React.useEffect(() => {
+    dragOffsetRef.current = dragOffset;
+  }, [dragOffset]);
+  
+  React.useEffect(() => {
+    sidebarOpenRef.current = sidebarOpen;
+  }, [sidebarOpen]);
+  
+  const [popupPositions, setPopupPositions] = useState(() => {
+    const fallbackWeather = {
+      x: WEATHER_WIDGET_MARGIN + 120, // ✅ 기본 위치: 더 우측
+      y: Math.max(120, window.innerHeight - WEATHER_WIDGET_H - WEATHER_WIDGET_MARGIN + 20), // ✅ 기본 위치: 더 아래쪽
+    };
+    let savedWeather = null as null | { x: number; y: number };
+    try {
+      const raw = localStorage.getItem(WEATHER_POS_STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed?.x === 'number' && typeof parsed?.y === 'number') {
+          savedWeather = { x: parsed.x, y: parsed.y };
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // ✅ 기존 저장 위치가 있으면 1회만 미세 보정(살짝 우측 + 조금 더 아래)
+    try {
+      if (savedWeather && !localStorage.getItem(WEATHER_POS_MIGRATION_KEY)) {
+        const maxX = window.innerWidth - WEATHER_WIDGET_W - WEATHER_WIDGET_MARGIN;
+        const maxY = window.innerHeight - WEATHER_WIDGET_H - WEATHER_WIDGET_MARGIN;
+        savedWeather = {
+          x: Math.max(WEATHER_WIDGET_MARGIN, Math.min(maxX, savedWeather.x + 36)),
+          y: Math.max(80, Math.min(maxY, savedWeather.y + 20)),
+        };
+        localStorage.setItem(WEATHER_POS_STORAGE_KEY, JSON.stringify(savedWeather));
+        localStorage.setItem(WEATHER_POS_MIGRATION_KEY, '1');
+      }
+    } catch {
+      // ignore
+    }
+
+    return {
+      notification: { x: window.innerWidth / 2 - 250, y: window.innerHeight / 2 - 200 },
+      detection: { x: window.innerWidth / 2 - 250, y: window.innerHeight / 2 - 200 },
+      cctv: { x: window.innerWidth / 2 - 200, y: window.innerHeight / 2 - 150 },
+      // 날씨 위젯 위치(저장값 우선)
+      weather: savedWeather ?? fallbackWeather,
+    };
   });
 
-  const handleMouseMove = (e: MouseEvent) => {
-    if (!dragging) return;
-    const newX = e.clientX - dragOffset.x;
-    const newY = e.clientY - dragOffset.y;
-    setPopupPositions(prev => ({ ...prev, [dragging]: { x: newX, y: newY } }));
-  };
+  const handleMouseMove = React.useCallback((e: MouseEvent) => {
+    const currentDragging = draggingRef.current;
+    if (!currentDragging) return;
+    
+    const offset = dragOffsetRef.current;
+    let newX = e.clientX - offset.x;
+    let newY = e.clientY - offset.y;
 
-  const handleMouseUp = () => {
+    // ✅ 날씨 위젯은 화면 밖/사이드바 겹침 방지 클램프
+    if (currentDragging === 'weather') {
+      const minX = (sidebarOpenRef.current ? 256 : 0) + WEATHER_WIDGET_MARGIN;
+      const minY = 80;
+      const maxX = window.innerWidth - WEATHER_WIDGET_W - WEATHER_WIDGET_MARGIN;
+      const maxY = window.innerHeight - WEATHER_WIDGET_H - WEATHER_WIDGET_MARGIN;
+      newX = Math.max(minX, Math.min(maxX, newX));
+      newY = Math.max(minY, Math.min(maxY, newY));
+    }
+
+    setPopupPositions(prev => ({ ...prev, [currentDragging]: { x: newX, y: newY } }));
+  }, []);
+
+  const handleMouseUp = React.useCallback(() => {
+    const currentDragging = draggingRef.current;
+    if (!currentDragging) return;
+    
+    // ✅ 날씨 위젯 위치 저장 (다음 진입 시 동일 위치로 시작)
+    if (currentDragging === 'weather') {
+      setPopupPositions(prev => {
+        const pos = (prev as any).weather;
+        if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
+          try {
+            localStorage.setItem(WEATHER_POS_STORAGE_KEY, JSON.stringify({ x: pos.x, y: pos.y }));
+          } catch {
+            // ignore
+          }
+        }
+        return prev;
+      });
+    }
     setDragging(null);
-  };
+  }, []);
+
+  // ✅ 사이드바가 열릴 때 날씨 위젯이 겹치지 않도록 최소 X 보정
+  useEffect(() => {
+    const minX = (sidebarOpen ? 256 : 0) + 16;
+    setPopupPositions(prev => {
+      const cur = (prev as any).weather;
+      if (!cur) return prev;
+      if (cur.x >= minX) return prev;
+      return { ...prev, weather: { ...cur, x: minX } };
+    });
+  }, [sidebarOpen]);
 
   // 개별 사건 상세보기 관련 핸들러
   const handleIncidentFieldChange = (field: string, value: string) => {
@@ -519,7 +839,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         window.removeEventListener('mouseup', handleMouseUp);
       };
     }
-  }, [dragging, dragOffset]);
+  }, [dragging, handleMouseMove, handleMouseUp]);
 
   // 드롭다운 외부 클릭 시 닫기
   useEffect(() => {
@@ -541,8 +861,27 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   }, [showFilterDropdown]);
 
   const startDrag = (popupType: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // 날씨 위젯의 경우, 위젯 전체 컨테이너의 위치를 기준으로 계산
+    if (popupType === 'weather') {
+      const widgetContainer = (e.currentTarget as HTMLElement).closest('.weather-widget-container') as HTMLElement;
+      if (widgetContainer) {
+        const rect = widgetContainer.getBoundingClientRect();
+        const offset = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        setDragOffset(offset);
+        dragOffsetRef.current = offset;
+        setDragging(popupType);
+        return;
+      }
+    }
+    
+    // 다른 팝업의 경우 기존 로직
     const rect = e.currentTarget.getBoundingClientRect();
-    setDragOffset({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    const offset = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    setDragOffset(offset);
+    dragOffsetRef.current = offset;
     setDragging(popupType);
   };
 
@@ -864,6 +1203,168 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     loadRiskMapHeatmap();
   }, [activeView, riskMapPeriod, riskMapType]);
 
+  // ✅ 낙석 위험 데이터 프리패치(페이지 진입 시 1회)
+  // - 첫 클릭 때는 이미 데이터가 있어서 즉시 뜸
+  const rockfallPrefetchOnceRef = React.useRef(false);
+
+  useEffect(() => {
+    if (rockfallPrefetchOnceRef.current) return;
+    rockfallPrefetchOnceRef.current = true;
+
+    let cancelled = false;
+
+    (async () => {
+      try {
+        // 이미 있으면 스킵
+        if (rockfallRiskData.length > 0) return;
+
+        console.log('🚀 [RockfallRisk] Prefetching data on mount...');
+        const data = await getRockfallRiskData();
+        if (!cancelled) {
+          setRockfallRiskData(data);
+          console.log('✅ [RockfallRisk] Prefetched:', data.length, 'items');
+        }
+      } catch (error) {
+        // 실패해도 무시 (버튼 눌렀을 때 로딩 로직이 다시 시도 가능)
+        console.warn('⚠️ [RockfallRisk] Prefetch failed (will retry on button click):', error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 낙석 위험 지도 데이터 로드 (캐싱 최적화)
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRockfallRisk = async () => {
+      if (activeView !== 'rockfall-risk-map') return;
+
+      // ✅ 이미 데이터가 있으면 즉시 표시(재클릭 빨라짐)
+      if (rockfallRiskData.length > 0) {
+        console.log('⚡ [RockfallRisk] Using cached data:', rockfallRiskData.length, 'items');
+        return;
+      }
+
+      try {
+        console.log('🏔️ [RockfallRisk] Loading data...');
+        const data = await getRockfallRiskData();
+        if (cancelled) return;
+        
+        console.log('✅ [RockfallRisk] Loaded:', data.length, 'items');
+        
+        // 타입별 통계
+        const culturalCount = data.filter(item => item.riskType === 'cultural').length;
+        const trailCount = data.filter(item => item.riskType === 'trail').length;
+        console.log('🏛️ [RockfallRisk] Cultural:', culturalCount, ', Trail:', trailCount);
+        
+        setRockfallRiskData(data);
+      } catch (error) {
+        if (cancelled) return;
+        console.error('❌ [RockfallRisk] Error loading data:', error);
+        setRockfallRiskData([]);
+      }
+    };
+    
+    loadRockfallRisk();
+    return () => { cancelled = true; };
+  }, [activeView]); // rockfallRiskData는 의도적으로 의존성에서 제외 (캐싱 유지)
+
+  // ✅ 필터 적용된 낙석 위험 데이터
+  const filteredRockfallRiskData = React.useMemo(() => {
+    if (!rockfallRiskData || rockfallRiskData.length === 0) return [];
+    if (rockfallRiskFilter === 'all') return rockfallRiskData;
+    return rockfallRiskData.filter(d => d.riskType === rockfallRiskFilter);
+  }, [rockfallRiskData, rockfallRiskFilter]);
+
+  // ✅ UI 표시용: 문화재 개수
+  const rockfallCulturalCount = React.useMemo(() => {
+    if (!rockfallRiskData || rockfallRiskData.length === 0) return 0;
+    return rockfallRiskData.filter(d => d.riskType === 'cultural').length;
+  }, [rockfallRiskData]);
+
+  // ✅ [성능 최적화] 낙석 위험 데이터를 GeoJSON FeatureCollection으로 변환 (useMemo로 캐싱)
+  const rockfallGeoJson = React.useMemo(() => {
+    if (!filteredRockfallRiskData || filteredRockfallRiskData.length === 0) return null;
+    
+    // ✅ 문화재가 등산로보다 위에 그려지도록 정렬 (Z-Index 효과: 문화재를 배열 뒤로)
+    const sortedData = [...filteredRockfallRiskData].sort((a, b) => {
+      if (a.riskType === 'cultural' && b.riskType !== 'cultural') return 1;
+      if (a.riskType !== 'cultural' && b.riskType === 'cultural') return -1;
+      return 0;
+    });
+
+    return {
+      type: 'FeatureCollection' as const,
+      features: sortedData.map(item => ({
+        type: 'Feature' as const,
+        geometry: item.geomGeojson, // 이미 GeoJSON 객체임
+        properties: {
+          ...item,
+          baseColor: getRockfallRiskColorWithOpacity(item.styleC, 1.0),
+          riskLevel: getRockfallRiskLevel(item.styleC)
+        }
+      }))
+    };
+  }, [filteredRockfallRiskData]);
+
+  // ✅ 팝업 바인딩 함수 (onEachFeature)
+  const onEachRockfallFeature = (feature: any, layer: L.Layer) => {
+    const item = feature.properties;
+    
+    // 팝업 HTML 컨텐츠 생성
+    const popupContent = `
+      <div class="text-sm" style="min-width: 220px;">
+        <div class="font-bold mb-2 text-base">
+          ${item.riskType === 'cultural' ? '🏛️ 문화재 낙석 위험' : '🥾 등산로 낙석 위험'}
+        </div>
+        ${item.name ? `<div class="mb-1"><span class="font-semibold">이름:</span> ${item.name}</div>` : ''}
+        ${item.cultural ? `<div class="mb-1"><span class="font-semibold">문화재:</span> ${item.cultural}</div>` : ''}
+        <div class="mb-1"><span class="font-semibold">위험도 값:</span> ${Number(item.riskValue).toFixed(2)}</div>
+        <div class="mt-2 p-2 rounded" style="background-color: #f5f5f5;">
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs font-semibold">위험 등급:</span>
+            <span class="text-sm font-bold">${item.riskLevel}</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <div class="flex-1 h-4 border border-gray-400 rounded" style="background-color: ${item.baseColor};"></div>
+            <span class="text-xs text-gray-600">${item.styleC}/100</span>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    layer.bindPopup(popupContent);
+    
+    // hover 이벤트 추가
+    layer.on({
+      mouseover: (e: L.LeafletMouseEvent) => {
+        // 이미 같은 낙석이 hover 상태면 좌표를 업데이트하지 않음
+        if (hoveredRockfall && hoveredRockfall.name === item.name && hoveredRockfall.riskType === item.riskType) {
+          return;
+        }
+        const clientX = (e.originalEvent as MouseEvent).clientX;
+        const clientY = (e.originalEvent as MouseEvent).clientY;
+        setHoveredRockfall({
+          name: item.name || '',
+          riskType: item.riskType,
+          riskValue: item.riskValue,
+          riskLevel: item.riskLevel,
+          styleC: item.styleC,
+          cultural: item.cultural,
+          x: clientX,
+          y: clientY,
+        });
+      },
+      mouseout: () => {
+        setHoveredRockfall(null);
+      },
+    });
+  };
+
   const getPriorityIncident = (incidents: MapCCTVMarker['incidents']) => {
     if (incidents.fire) return { type: 'fire' as const, count: incidents.fire };
     if (incidents.emergency) return { type: 'emergency' as const, count: incidents.emergency };
@@ -1004,12 +1505,13 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   };
 
   return (
-    <div className="h-screen flex flex-col relative bg-white">
-      {/* Sidebar with smooth slide animation */}
+    <>
+      <div className="h-screen flex flex-col relative bg-white">
+      {/* Sidebar with smooth slide animation - 반응형 (모바일: 화면의 75%, PC: 고정) */}
       <div 
         className="fixed top-0 left-0 z-50 h-screen transition-transform duration-300 ease-in-out"
         style={{ 
-          width: '317.56px', 
+          width: isMobile ? '75vw' : '317.56px',
           backgroundColor: '#2B2847',
           transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)'
         }}
@@ -1017,11 +1519,31 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         <Sidebar onNavigate={onNavigate} currentPath="main-map" />
       </div>
 
-      {/* 알림 드롭다운을 최상위 레벨로 분리 */}
+      {/* 알림 드롭다운을 최상위 레벨로 분리 - 반응형 (모바일: 전체 화면 모달 스타일) */}
       {showNotifications && (
-        <div className="fixed" style={{ zIndex: 9999, top: '80px', right: '24px', display: 'flex', gap: '0px' }}>
-          {/* 알림 탭 컨테이너 */}
-          <div className="shadow-2xl" style={{ backgroundColor: '#414042', borderRadius: '9px', width: '261.129px', height: '369.987px', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div 
+          className="fixed" 
+          style={{ 
+            zIndex: 9999, 
+            top: isMobile ? '0' : '80px', 
+            right: isMobile ? '0' : '24px',
+            left: isMobile ? '0' : 'auto',
+            bottom: isMobile ? '0' : 'auto',
+            display: 'flex', 
+            gap: '0px',
+            backgroundColor: isMobile ? 'rgba(0,0,0,0.5)' : 'transparent',
+            alignItems: isMobile ? 'center' : 'flex-start',
+            justifyContent: isMobile ? 'center' : 'flex-end',
+            padding: isMobile ? '20px' : '0'
+          }}
+          onClick={(e) => {
+            if (isMobile && e.target === e.currentTarget) {
+              setShowNotifications(false);
+            }
+          }}
+        >
+          {/* 알림 탭 컨테이너 - 반응형 크기 */}
+          <div className="shadow-2xl" style={{ backgroundColor: '#414042', borderRadius: '9px', width: isMobile ? '90vw' : '261.129px', maxWidth: isMobile ? '400px' : 'none', height: isMobile ? '70vh' : '369.987px', maxHeight: isMobile ? '600px' : 'none', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             {/* 필터 버튼 - SVG 아이콘 사용 */}
             <div className="p-3 flex gap-2" style={{ flexShrink: 0 }}>
             <button 
@@ -1110,7 +1632,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                     const eventText = notification.type === 'fire' ? '화재' : notification.type === 'emergency' ? '응급' : '쓰레기 투기';
                     
                     return (
-                      <div key={`${notification.type}-${notification.id}`} style={{ backgroundColor: bgColor, width: '238px', height: '79.742px', padding: '8px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>
+                      <div key={`${notification.type}-${notification.id}`} style={{ backgroundColor: bgColor, width: '100%', minHeight: isMobile ? '80px' : '79.742px', padding: isMobile ? '10px' : '8px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>
                         <div className="flex items-start justify-between">
                           <button onClick={() => { setSelectedNotification({ cctvId: notification.cctvId, type: notification.type, location: notification.location, time: notification.time, confidence: notification.confidence }); setHighlightedCCTV(notification.cctvId); }} className="hover:opacity-80">
                             <span style={{ fontSize: '15px', color: titleColor, fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.cctvId}</span>
@@ -1141,7 +1663,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             {notificationTab === 'fire' && (
               <div className="space-y-2">
                 {fireNotifications.map((notification) => (
-                  <div key={notification.id} style={{ backgroundColor: '#FFC7C7', width: '238px', height: '79.742px', padding: '8px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>
+                  <div key={notification.id} style={{ backgroundColor: '#FFC7C7', width: '100%', minHeight: isMobile ? '80px' : '79.742px', padding: isMobile ? '10px' : '8px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>
                     <div className="flex items-start justify-between">
                       <button onClick={() => { setSelectedNotification({ cctvId: notification.cctvId, type: 'fire', location: notification.location, time: notification.time, confidence: notification.confidence }); setHighlightedCCTV(notification.cctvId); }} className="hover:opacity-80">
                         <span style={{ fontSize: '15px', color: '#FF5A5A', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.cctvId}</span>
@@ -1165,7 +1687,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             {notificationTab === 'emergency' && (
               <div className="space-y-2">
                 {emergencyNotifications.map((notification) => (
-                  <div key={notification.id} style={{ backgroundColor: '#FFB366', width: '238px', height: '79.742px', padding: '8px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>
+                  <div key={notification.id} style={{ backgroundColor: '#FFB366', width: '100%', minHeight: isMobile ? '80px' : '79.742px', padding: isMobile ? '10px' : '8px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>
                     <div className="flex items-start justify-between">
                       <button onClick={() => { setSelectedNotification({ cctvId: notification.cctvId, type: 'emergency', location: notification.location, time: notification.time, confidence: notification.confidence }); setHighlightedCCTV(notification.cctvId); }} className="hover:opacity-80">
                         <span style={{ fontSize: '15px', color: '#CC6600', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.cctvId}</span>
@@ -1189,7 +1711,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             {notificationTab === 'trash' && (
               <div className="space-y-2">
                 {trashNotifications.map((notification) => (
-                  <div key={notification.id} style={{ backgroundColor: '#9BACBF', width: '238px', height: '79.742px', padding: '8px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>
+                  <div key={notification.id} style={{ backgroundColor: '#9BACBF', width: '100%', minHeight: isMobile ? '80px' : '79.742px', padding: isMobile ? '10px' : '8px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>
                     <div className="flex items-start justify-between">
                       <button onClick={() => { setSelectedNotification({ cctvId: notification.cctvId, type: 'trash', location: notification.location, time: notification.time, confidence: notification.confidence }); setHighlightedCCTV(notification.cctvId); }} className="hover:opacity-80">
                         <span style={{ fontSize: '15px', color: '#142744', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.cctvId}</span>
@@ -1212,8 +1734,8 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             </div>
           </div>
           
-          {/* 커스텀 스크롤바 - 탭 오른쪽 바깥 */}
-          {scrollContentHeight > scrollContainerHeight && scrollContainerHeight > 0 && (
+          {/* 커스텀 스크롤바 - 탭 오른쪽 바깥 - 반응형 (모바일에서는 숨김) */}
+          {!isMobile && scrollContentHeight > scrollContainerHeight && scrollContainerHeight > 0 && (
             <div style={{ 
               width: '15px', 
               height: '369.987px',
@@ -1257,8 +1779,17 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         </div>
       )}
 
-      {/* 버튼 컨트롤 영역 - 최상단에 fixed로 배치 */}
-      <div className="fixed top-6 flex items-center gap-3 z-50 transition-all duration-300" style={{ left: sidebarOpen ? '340px' : '24px' }}>
+      {/* 버튼 컨트롤 영역 - 최상단에 fixed로 배치 - 반응형 (모바일: 세로 배치, PC: 가로 배치) */}
+      <div 
+        className="fixed top-6 z-50 transition-all duration-300"
+        style={{ 
+          left: sidebarOpen ? (isMobile ? 'calc(75vw + 12px)' : '340px') : (isMobile ? '12px' : '24px'),
+          display: 'flex',
+          flexDirection: isMobile ? 'column' : 'row',
+          gap: isMobile ? '8px' : '12px',
+          alignItems: isMobile ? 'flex-start' : 'center'
+        }}
+      >
         <HamburgerMenuButton onClick={() => setSidebarOpen(!sidebarOpen)} />
         
         <DetectionButton 
@@ -1318,20 +1849,54 @@ export default function MainMap({ onNavigate }: MainMapProps) {
           isActive={activeView === 'rockfall-risk-map'}
           onClick={() => {
             setShowFilterDropdown(false);
-            setActiveView(activeView === 'rockfall-risk-map' ? 'detections' : 'rockfall-risk-map');
+            if (activeView === 'rockfall-risk-map') {
+              setActiveView('detections');
+            } else {
+              setActiveView('rockfall-risk-map');
+              setRockfallRiskFilter('trail');
+            }
           }}
         />
+
+        {/* 문화재 버튼: 낙석위험지도 활성화 시 오른쪽으로 슬라이드되어 표시 */}
+        <div 
+          className={`
+            overflow-hidden transition-all duration-500 ease-out flex items-center
+            ${activeView === 'rockfall-risk-map' 
+              ? 'max-w-[100px] opacity-100 translate-x-0 ml-2' 
+              : 'max-w-0 opacity-0 -translate-x-4 ml-0 pointer-events-none'}
+          `}
+          style={{ 
+            visibility: activeView === 'rockfall-risk-map' ? 'visible' : 'hidden',
+            transitionProperty: 'all, visibility',
+            transitionDuration: '500ms',
+            transitionDelay: activeView === 'rockfall-risk-map' ? '0s' : '500ms'
+          }}
+        >
+          <CulturalButton
+            isActive={rockfallRiskFilter === 'all'}
+            onClick={() => {
+              setShowFilterDropdown(false);
+              setRockfallRiskFilter(rockfallRiskFilter === 'all' ? 'trail' : 'all');
+            }}
+          />
+        </div>
       </div>
 
-      {/* 위험지도 필터 UI (기간 선택, 타입 선택) */}
+      {/* 위험지도 필터 UI (기간 선택, 타입 선택) - 반응형 (모바일: 하단 시트 스타일) */}
       {activeView === 'risk-map' && (
         <div 
-          className="fixed bg-white shadow-lg border border-gray-200 p-4 transition-all duration-300" 
+          className="fixed bg-white shadow-lg border border-gray-200 transition-all duration-300" 
           style={{ 
-            borderRadius: '8px', 
-            minWidth: '280px',
-            top: '80px',
-            left: sidebarOpen ? '268px' : '24px',
+            borderRadius: isMobile ? '16px 16px 0 0' : '8px',
+            padding: isMobile ? '20px 16px' : '16px',
+            width: isMobile ? '100vw' : 'auto',
+            minWidth: isMobile ? 'auto' : '280px',
+            maxWidth: isMobile ? '100vw' : 'none',
+            bottom: isMobile ? '0' : 'auto',
+            top: isMobile ? 'auto' : '80px',
+            left: isMobile ? '0' : (sidebarOpen ? '268px' : '24px'),
+            right: isMobile ? '0' : 'auto',
             zIndex: 1000
           }}
         >
@@ -1418,9 +1983,9 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         </div>
       )}
 
-      <div className="flex-1 relative bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300" style={{ marginLeft: sidebarOpen ? '256px' : '0px', transition: 'margin-left 0.3s' }}>
-        {/* 알림 버튼 - 오른쪽 상단 */}
-        <div className="absolute top-6 right-6 z-20">
+      <div className="flex-1 relative bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300" style={{ marginLeft: sidebarOpen ? (isMobile ? '0px' : '256px') : '0px', transition: 'margin-left 0.3s' }}>
+        {/* 알림 버튼 - 오른쪽 상단 - 반응형 */}
+        <div className="absolute top-6 z-20" style={{ right: isMobile ? '12px' : '24px' }}>
           <NotificationBellButton onClick={() => setShowNotifications(!showNotifications)} />
         </div>
 
@@ -1435,13 +2000,127 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             maxZoom={18}
             maxBounds={[[35.18, 128.95], [35.34, 129.15]]}
             maxBoundsViscosity={1.0}
-            zoomSnap={0.5}
-            zoomDelta={0.5}
+            zoomSnap={1}
+            zoomDelta={1}
+            preferCanvas={true}
           >
+            {/* 1. 일반 지도 레이어 (항상 렌더링, 위성 모드일 땐 투명도 0) */}
             <TileLayer
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+              url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}.png"
+              attribution='&copy; <a href="https://carto.com">CARTO</a>'
+              maxZoom={20}
+              maxNativeZoom={18}
+              minNativeZoom={0}
+              opacity={mapStyle === 'normal' ? 1 : 0}
+              zIndex={1}
             />
+
+            {/* 2. 위성 지도 레이어 (항상 렌더링, 일반 모드일 땐 투명도 0) */}
+            <TileLayer
+              url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+              attribution='&copy; <a href="https://www.esri.com">Esri</a>'
+              maxZoom={19}
+              maxNativeZoom={18}
+              minNativeZoom={0}
+              opacity={mapStyle === 'satellite' ? 1 : 0}
+              zIndex={2}
+            />
+
+            {/* ✅ 금정산 이외 지역 딤 마스크 (금정산 영역은 hole로 뚫어서 그대로 보이게) */}
+            <Polygon
+              positions={[dimWorldRing, dimGeumjeongRing] as any}
+              pathOptions={{
+                fillColor: '#0B1020',
+                fillOpacity: 0.55,
+                color: '#0B1020',
+                opacity: 0,
+                weight: 0,
+                fillRule: 'evenodd',
+              }}
+              interactive={false}
+            />
+
+            {/* ✅ 금정산 주요지점(POI): 항상 표시 + 줌에 따라 아주 조금씩 스케일 */}
+            {geumjeongsanPoiGeoJson?.features?.length > 0 && (
+              <>
+                {geumjeongsanPoiGeoJson.features
+                  .filter((f: any) => f?.geometry?.type === 'Point' && Array.isArray(f?.geometry?.coordinates))
+                  .map((f: any, idx: number) => {
+                    const [lng, lat] = f.geometry.coordinates as [number, number];
+                    const name = String(f?.properties?.name ?? f?.properties?.Name ?? '');
+                    if (!name || typeof lng !== 'number' || typeof lat !== 'number') return null;
+
+                    const category = String(f?.properties?.category ?? 'etc');
+                    const priorityRaw = Number(f?.properties?.priority ?? 1);
+                    const priority = Number.isFinite(priorityRaw) ? Math.max(1, Math.min(3, priorityRaw)) : 1;
+
+                    // zoomLevel: 12~18 → scale: 0.90~1.15 (아주 조금씩)
+                    const base = 0.90 + (zoomLevel - 12) * 0.04;
+                    const clamped = Math.max(0.90, Math.min(1.15, base));
+                    const priorityScale = priority === 3 ? 1.07 : priority === 2 ? 1.0 : 0.95;
+                    const scale = clamped * priorityScale;
+
+                    const dot = Math.round(6 * scale);
+                    const font = Math.round(11 * scale);
+                    const padY = Math.round(3 * scale);
+                    const padX = Math.round(6 * scale);
+                    const gap = Math.round(6 * scale);
+
+                    const color =
+                      category === 'peak' ? '#ef4444' :
+                      category === 'temple' ? '#7c3aed' :
+                      category === 'gate' ? '#2563eb' :
+                      category === 'entrance' ? '#10b981' :
+                      category === 'hazard' ? '#f97316' :
+                      category === 'monitoring' ? '#0ea5e9' :
+                      '#64748b';
+
+                    // ✅ "이름만" 표시: 해당 좌표에 텍스트만 렌더링 (점/배경 제거)
+                    const html = `<div style="
+                      position: relative;
+                      width: 1px;
+                      height: 1px;
+                      pointer-events: none;
+                    ">
+                      <div style="
+                        position: absolute;
+                        left: 0;
+                        top: 0;
+                        transform: translate(-50%, -50%);
+                        font-size: ${font}px;
+                        font-weight: 900;
+                        line-height: 1;
+                        color: #0f172a;
+                        white-space: nowrap;
+                        text-shadow:
+                          0 0 2px rgba(255,255,255,0.95),
+                          0 0 6px rgba(255,255,255,0.85),
+                          0 1px 2px rgba(0,0,0,0.30);
+                      ">${name}</div>
+                    </div>`;
+
+                    return (
+                      <Marker
+                        key={`geumjeong-poi-${name}-${idx}`}
+                        position={[lat, lng]}
+                        icon={L.divIcon({
+                          className: 'geumjeong-poi-marker',
+                          html,
+                          iconSize: [0, 0],
+                          iconAnchor: [0, 0],
+                        })}
+                        zIndexOffset={priority * 1000}
+                      />
+                    );
+                  })}
+              </>
+            )}
+
+            {/* 문화재 필터 ON 시 자동 줌/이동 기능 제거 요청으로 주석 처리 */}
+            {/* <FitBoundsOnCulturalRockfall
+              enabled={activeView === 'rockfall-risk-map' && rockfallRiskFilter === 'all'}
+              geoJson={rockfallGeoJson}
+            /> */}
             <ZoomController zoom={zoomLevel} onZoomChange={setZoomLevel} />
             
             {/* 실시간 CCTV 마커 (Leaflet Marker) */}
@@ -1626,8 +2305,8 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               );
             })}
             
-            {/* 등산로 렌더링 */}
-            {activeView !== 'risk-map' && trails.map((trail) => {
+            {/* 등산로 렌더링 - 지도 스타일 (3겹: 그림자 + 흰 테두리 + 본선) */}
+            {activeView !== 'risk-map' && activeView !== 'rockfall-risk-map' && trails.map((trail) => {
               if (!trail.geom || !trail.geom.coordinates) return null;
               
               // [[lng, lat], ...] → [[lat, lng], ...] 로 변환 (Leaflet 형식)
@@ -1640,14 +2319,48 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               
               const isHovered = hoveredTrailId === trail.segmentId;
               
+              // 낙석 기준 굵기: outline 4/6, fill 3/5
+              const outlineW = isHovered ? 6 : 4;
+              const coreW = isHovered ? 5 : 3;
+              const coreColor = isHovered ? '#ea580c' : '#f59e0b'; // hover: 진한 주황, 기본: 주황(지도 느낌)
+              
               return (
                 <React.Fragment key={trail.segmentId}>
+                  {/* 1) 약한 그림자(밑) */}
                   <Polyline
                     positions={positions}
                     pathOptions={{
-                      color: isHovered ? '#059669' : '#10b981',  // hover 시 더 진한 초록
-                      weight: isHovered ? 6 : 4,  // hover 시 더 두꺼운 선
-                      opacity: isHovered ? 1.0 : 0.8,  // hover 시 더 선명
+                      color: '#0f172a',
+                      weight: outlineW + 2,
+                      opacity: 0.28,
+                      lineCap: 'round',
+                      lineJoin: 'round',
+                    }}
+                    interactive={false}
+                  />
+                  
+                  {/* 2) 흰색 테두리(casing) */}
+                  <Polyline
+                    positions={positions}
+                    pathOptions={{
+                      color: '#ffffff',
+                      weight: outlineW + 1,
+                      opacity: 0.95,
+                      lineCap: 'round',
+                      lineJoin: 'round',
+                    }}
+                    interactive={false}
+                  />
+                  
+                  {/* 3) 본선(인터랙션은 여기) */}
+                  <Polyline
+                    positions={positions}
+                    pathOptions={{
+                      color: coreColor,
+                      weight: coreW,
+                      opacity: 1,
+                      lineCap: 'round',
+                      lineJoin: 'round',
                     }}
                     eventHandlers={{
                       mouseover: () => {
@@ -1658,9 +2371,8 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                       },
                       click: (e) => {
                         e.originalEvent.stopPropagation();
-                        const latlng = e.target.getBounds().getCenter();
-                        const x = ((latlng.lng - 129.0) / (129.1 - 129.0)) * 100;
-                        const y = ((35.3 - latlng.lat) / (35.3 - 35.2)) * 100;
+                        const clientX = (e.originalEvent as MouseEvent).clientX;
+                        const clientY = (e.originalEvent as MouseEvent).clientY;
                         setHoveredTrailSegment({
                           entityId: trail.segmentId as number,
                           entityName: trail.segmentName,
@@ -1668,8 +2380,8 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                           fireCount: 0,
                           emergencyCount: 0,
                           trashCount: 0,
-                          x,
-                          y,
+                          x: clientX,
+                          y: clientY,
                         });
                       },
                     }}
@@ -1738,28 +2450,36 @@ export default function MainMap({ onNavigate }: MainMapProps) {
 
               return (
                 <React.Fragment key={`risk-map-trail-${trail.segmentId}`}>
-                  {/* 그라데이션 효과를 위한 그림자 레이어 */}
+                  {/* 1) 낙석위험지도 스타일: 배경 검정 테두리 레이어 (낙석 outline 기준) */}
                   <Polyline
                     positions={positions}
                     pathOptions={{
                       color: '#000000',
-                      weight: isHovered ? 10 : 8,
-                      opacity: 0.15,
+                      weight: isHovered ? 6 : 4,      // 낙석 outline과 동일: 4 (일반), 6 (hover)
+                      opacity: isHovered ? 0.95 : 0.85,
+                      lineCap: 'round',
+                      lineJoin: 'round',
                     }}
+                    interactive={false}
                   />
-                  {/* 메인 라인 */}
+                  {/* 2) 전경 컬러 레이어 (낙석 fill 기준) */}
                   <Polyline
                     positions={positions}
                     pathOptions={{
                       color,
-                      weight: isHovered ? 7 : 5.5,
-                      opacity: isHovered ? 1.0 : 0.85,
+                      weight: isHovered ? 5 : 3,      // 낙석 fill과 동일: 3 (일반), 5 (hover)
+                      opacity: isHovered ? 1.0 : 0.9,
+                      lineCap: 'round',
+                      lineJoin: 'round',
                     }}
                     eventHandlers={{
                       mouseover: (e) => {
-                        const latlng = e.target.getBounds().getCenter();
-                        const x = ((latlng.lng - 129.0) / (129.1 - 129.0)) * 100;
-                        const y = ((35.3 - latlng.lat) / (35.3 - 35.2)) * 100;
+                        // 이미 같은 구간이 hover 상태면 좌표를 업데이트하지 않음
+                        if (hoveredTrailSegment?.entityId === trail.segmentId) {
+                          return;
+                        }
+                        const clientX = (e.originalEvent as MouseEvent).clientX;
+                        const clientY = (e.originalEvent as MouseEvent).clientY;
                         setHoveredTrailSegment({
                           entityId: trail.segmentId,
                           entityName: trail.segmentName,
@@ -1767,8 +2487,8 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                           fireCount: stats?.fireCount || 0,
                           emergencyCount: stats?.emergencyCount || 0,
                           trashCount: stats?.trashCount || 0,
-                          x,
-                          y,
+                          x: clientX,
+                          y: clientY,
                         });
                       },
                       mouseout: () => {
@@ -1776,9 +2496,8 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                       },
                       click: (e) => {
                         e.originalEvent.stopPropagation();
-                        const latlng = e.target.getBounds().getCenter();
-                        const x = ((latlng.lng - 129.0) / (129.1 - 129.0)) * 100;
-                        const y = ((35.3 - latlng.lat) / (35.3 - 35.2)) * 100;
+                        const clientX = (e.originalEvent as MouseEvent).clientX;
+                        const clientY = (e.originalEvent as MouseEvent).clientY;
                         setHoveredTrailSegment({
                           entityId: trail.segmentId,
                           entityName: trail.segmentName,
@@ -1786,8 +2505,8 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                           fireCount: stats?.fireCount || 0,
                           emergencyCount: stats?.emergencyCount || 0,
                           trashCount: stats?.trashCount || 0,
-                          x,
-                          y,
+                          x: clientX,
+                          y: clientY,
                         });
                       },
                     }}
@@ -1815,6 +2534,39 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               );
             })}
 
+            {/* 낙석 위험 지도 모드: GeoJSON 렌더링 (성능 최적화 버전) */}
+            {activeView === 'rockfall-risk-map' && rockfallGeoJson && (
+              <>
+                {/* 1) 배경 검정 테두리 레이어 (클릭 무시, 성능 위주) */}
+                <GeoJSON
+                  key={`rockfall-outline-${rockfallRiskFilter}-${filteredRockfallRiskData.length}`}
+                  data={rockfallGeoJson as any}
+                  style={(feature) => ({
+                    color: '#000000',
+                    // ✅ 문화재 필터 ON('all')이고, 해당 피쳐가 문화재일 때만 굵게
+                    weight: (rockfallRiskFilter === 'all' && feature?.properties.riskType === 'cultural') ? 6 : 4,
+                    opacity: rockfallRiskFilter === 'all' ? 1.0 : 0.9,
+                    fill: false,   // 채우기 끔
+                    interactive: false // 마우스 이벤트 끄기 (속도 향상 핵심)
+                  })}
+                />
+                
+                {/* 2) 전경 컬러 + 채우기 레이어 (팝업 이벤트용) */}
+                <GeoJSON
+                  key={`rockfall-fill-${rockfallRiskFilter}-${filteredRockfallRiskData.length}`}
+                  data={rockfallGeoJson as any}
+                  style={(feature) => ({
+                    color: feature?.properties.baseColor,
+                    fillColor: feature?.properties.baseColor,
+                    // ✅ 문화재 필터 ON('all')이고 문화재일 때만 진하게, 등산로는 유지
+                    fillOpacity: (rockfallRiskFilter === 'all' && feature?.properties.riskType === 'cultural') ? 0.9 : 0.7,
+                    weight: (rockfallRiskFilter === 'all' && feature?.properties.riskType === 'cultural') ? 5 : 3,
+                    opacity: rockfallRiskFilter === 'all' ? 1.0 : 0.8
+                  })}
+                  onEachFeature={onEachRockfallFeature}
+                />
+              </>
+            )}
           
           {/* 위험지도 모드: CCTV 사고다발 구간 마커 (Top 3/Top 5) - 지도 좌표 기반 Marker로 렌더링 */}
           {activeView === 'risk-map' && (() => {
@@ -1957,10 +2709,15 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                       handleMarkerClick(markerData, e);
                     },
                     mouseover: (e) => {
+                      // 이미 같은 hotspot이 hover 상태면 좌표를 업데이트하지 않음
+                      const cctvId = item.cctvCode || item.entityName;
+                      if (hoveredHotspot && hoveredHotspot.cctvId === cctvId) {
+                        return;
+                      }
                       const clientX = (e.originalEvent as MouseEvent).clientX;
                       const clientY = (e.originalEvent as MouseEvent).clientY;
                       setHoveredHotspot({
-                        cctvId: item.cctvCode || item.entityName,
+                        cctvId: cctvId,
                         location: item.cctvAddress || item.entityName,
                         fireCount: item.fireCount || 0,
                         emergencyCount: item.emergencyCount || 0,
@@ -1984,21 +2741,30 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         {/* 날씨 위젯 - 좌측 하단 */}
         {weather && (
           <div 
-            className="absolute bottom-6" 
+            className="fixed weather-widget-container" 
             style={{ 
-              left: '16px',
-              zIndex: 1000 
+              left: `${(popupPositions as any)?.weather?.x ?? 16}px`,
+              top: `${(popupPositions as any)?.weather?.y ?? Math.max(120, window.innerHeight - 260)}px`,
+              zIndex: 1000,
+              cursor: 'default',
             }}
           >
-            <div className="bg-white rounded-lg shadow-lg p-4" style={{ minWidth: '200px' }}>
-              <div className="flex items-center justify-between mb-2">
+            <div className="bg-white rounded-lg shadow-lg" style={{ minWidth: isMobile ? '180px' : '220px' }}>
+              {/* ✅ 드래그 핸들 */}
+              <div
+                className="flex items-center justify-between border-b cursor-move select-none"
+                style={{ padding: isMobile ? '8px 12px' : '8px 16px', borderTopLeftRadius: '8px', borderTopRightRadius: '8px' }}
+                onMouseDown={(e) => startDrag('weather', e)}
+                title="드래그해서 위치 이동"
+              >
                 <div className="flex items-center gap-2">
-                  <Wind className="w-5 h-5 text-blue-500" />
-                  <span className="font-semibold text-gray-800">금정산 날씨</span>
+                  <Move className={isMobile ? 'w-3 h-3 text-gray-500' : 'w-4 h-4 text-gray-500'} />
+                  <Wind className={isMobile ? 'w-4 h-4 text-blue-500' : 'w-5 h-5 text-blue-500'} />
+                  <span className="font-semibold text-gray-800" style={{ fontSize: isMobile ? '0.875rem' : '1rem' }}>금정산 날씨</span>
                 </div>
               </div>
               
-              <div className="space-y-2">
+              <div className="space-y-2" style={{ padding: isMobile ? '12px' : '16px' }}>
                 {/* 기온 */}
                 {weather.temperature && (
                   <div className="flex items-center justify-between">
@@ -2076,10 +2842,17 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         ))}
 
 
-// 수정 코드
+        {/* 지도 스타일 토글 - 우측 하단 줌 버튼 왼쪽 */}
+        <div className="absolute bottom-6 z-[1000] shadow-lg" style={{ right: '172px', left: 'auto' }}>
+          <MapStyleToggle 
+            currentStyle={mapStyle}
+            onToggle={setMapStyle}
+          />
+        </div>
+
         <div className="absolute bottom-6 right-6 flex flex-col gap-1 shadow-lg" style={{ zIndex: 1000 }}>
           <button 
-            onClick={() => setZoomLevel(prev => Math.min(prev + 0.5, 18))} 
+            onClick={() => setZoomLevel(prev => Math.min(prev + 1, 18))} 
             disabled={zoomLevel >= 18}
             className={`w-10 h-10 flex items-center justify-center transition-colors ${
               zoomLevel >= 18 
@@ -2091,7 +2864,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             <Plus className={`w-5 h-5 ${zoomLevel >= 18 ? 'text-gray-400' : 'text-gray-700'}`} />
           </button>
           <button 
-            onClick={() => setZoomLevel(prev => Math.max(prev - 0.5, 12))} 
+            onClick={() => setZoomLevel(prev => Math.max(prev - 1, 12))} 
             disabled={zoomLevel <= 12}
             className={`w-10 h-10 flex items-center justify-center transition-colors ${
               zoomLevel <= 12 
@@ -2105,26 +2878,44 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         </div>
       </div>
 
+      {/* CCTV 상세 정보 팝업 - 반응형 (모바일: 하단 시트 스타일) */}
       {selectedCCTV && (
-        <div 
-          className="fixed bg-white shadow-2xl border-2 border-gray-300"
-          style={{ 
-            borderRadius: '0px', 
-            left: `${popupPositions.cctv.x}px`, 
-            top: `${popupPositions.cctv.y}px`,
-            width: '400px',
-            zIndex: 2000
-          }}
-        >
+        <>
+          {/* 모바일 백드롭 */}
+          {isMobile && (
+            <div 
+              className="fixed inset-0 bg-black bg-opacity-50 z-[1999]"
+              onClick={() => setSelectedCCTV(null)}
+            />
+          )}
+          
           <div 
-            className="bg-emerald-600 px-4 py-3 flex items-center justify-between cursor-move"
-            style={{ borderRadius: '0px' }}
-            onMouseDown={(e) => startDrag('cctv', e)}
+            className="fixed bg-white shadow-2xl border-2 border-gray-300 overflow-y-auto"
+            style={{ 
+              borderRadius: isMobile ? '16px 16px 0 0' : '0px',
+              left: isMobile ? '0' : `${popupPositions.cctv.x}px`, 
+              top: isMobile ? 'auto' : `${popupPositions.cctv.y}px`,
+              bottom: isMobile ? '0' : 'auto',
+              right: isMobile ? '0' : 'auto',
+              width: isMobile ? '100vw' : '400px',
+              maxWidth: isMobile ? '100vw' : '400px',
+              maxHeight: isMobile ? '85vh' : '90vh',
+              zIndex: 2000
+            }}
           >
-            <div className="flex items-center gap-2">
-              <Move className="w-4 h-4 text-white" />
-              <h3 className="text-white">CCTV 상세 정보</h3>
-            </div>
+            <div 
+              className="bg-emerald-600 flex items-center justify-between"
+              style={{ 
+                borderRadius: isMobile ? '16px 16px 0 0' : '0px',
+                padding: isMobile ? '16px 20px' : '12px 16px',
+                cursor: isMobile ? 'default' : 'move'
+              }}
+              onMouseDown={isMobile ? undefined : (e) => startDrag('cctv', e)}
+            >
+              <div className="flex items-center gap-2">
+                {!isMobile && <Move className="w-4 h-4 text-white" />}
+                <h3 className="text-white font-semibold" style={{ fontSize: isMobile ? '16px' : '14px' }}>CCTV 상세 정보</h3>
+              </div>
             <button onClick={() => setSelectedCCTV(null)} className="text-white hover:text-gray-200">
               <X className="w-5 h-5" />
             </button>
@@ -2382,29 +3173,47 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             </div>
           </div>
         </div>
+        </>
       )}
 
+      {/* 탐지 상세 정보 팝업 - 반응형 */}
       {selectedDetection && (
-        <div 
-          className="fixed bg-white shadow-2xl border-2 border-gray-300"
-          style={{ 
-            borderRadius: '0px', 
-            left: `${popupPositions.detection.x}px`, 
-            top: `${popupPositions.detection.y}px`,
-            width: '500px',
-            maxHeight: '600px',
-            zIndex: 2100
-          }}
-        >
+        <>
+          {/* 모바일 백드롭 */}
+          {isMobile && (
+            <div 
+              className="fixed inset-0 bg-black bg-opacity-50 z-[2099]"
+              onClick={() => setSelectedDetection(null)}
+            />
+          )}
+          
           <div 
-            className="bg-emerald-600 px-4 py-3 flex items-center justify-between cursor-move"
-            style={{ borderRadius: '0px' }}
-            onMouseDown={(e) => startDrag('detection', e)}
+            className="fixed bg-white shadow-2xl border-2 border-gray-300 overflow-y-auto"
+            style={{ 
+              borderRadius: isMobile ? '16px 16px 0 0' : '0px',
+              left: isMobile ? '0' : `${popupPositions.detection.x}px`, 
+              top: isMobile ? 'auto' : `${popupPositions.detection.y}px`,
+              bottom: isMobile ? '0' : 'auto',
+              right: isMobile ? '0' : 'auto',
+              width: isMobile ? '100vw' : '500px',
+              maxWidth: isMobile ? '100vw' : '500px',
+              maxHeight: isMobile ? '85vh' : '600px',
+              zIndex: 2100
+            }}
           >
-            <div className="flex items-center gap-2">
-              <Move className="w-4 h-4 text-white" />
-              <h3 className="text-white">탐지 상세 정보</h3>
-            </div>
+            <div 
+              className="bg-emerald-600 flex items-center justify-between"
+              style={{ 
+                borderRadius: isMobile ? '16px 16px 0 0' : '0px',
+                padding: isMobile ? '16px 20px' : '12px 16px',
+                cursor: isMobile ? 'default' : 'move'
+              }}
+              onMouseDown={isMobile ? undefined : (e) => startDrag('detection', e)}
+            >
+              <div className="flex items-center gap-2">
+                {!isMobile && <Move className="w-4 h-4 text-white" />}
+                <h3 className="text-white font-semibold" style={{ fontSize: isMobile ? '16px' : '14px' }}>탐지 상세 정보</h3>
+              </div>
             <button onClick={() => setSelectedDetection(null)} className="text-white hover:text-gray-200">
               <X className="w-5 h-5" />
             </button>
@@ -2507,6 +3316,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             </div>
           </div>
         </div>
+        </>
       )}
 
       {selectedNotification && (
@@ -2608,12 +3418,13 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         <div 
           className="fixed bg-white shadow-2xl"
           style={{ 
-            borderRadius: '0px', 
-            left: '50%',
-            top: '50%',
-            transform: 'translate(-50%, -50%)',
-            width: '680px',
-            maxHeight: '98vh',
+            borderRadius: isMobile ? '0' : '0px',
+            left: isMobile ? '0' : '50%',
+            top: isMobile ? '0' : '50%',
+            transform: isMobile ? 'none' : 'translate(-50%, -50%)',
+            width: isMobile ? '100vw' : '680px',
+            height: isMobile ? '100vh' : 'auto',
+            maxHeight: isMobile ? '100vh' : '98vh',
             overflowY: 'auto',
             zIndex: 3000,
             border: `2px solid ${videoDetailPopup.type === 'fire' ? '#DC2626' : videoDetailPopup.type === 'emergency' ? '#9333EA' : '#10B981'}`,
@@ -2887,20 +3698,20 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         </div>
       )}
 
-      {/* 개별 사건 상세보기 팝업 */}
+      {/* 개별 사건 상세보기 팝업 - 반응형 */}
       {incidentDetailPopup && incidentDetailPopup.type === 'fire' && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4" style={{ zIndex: 10000 }} onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }}>
-          <div className="bg-white rounded-lg shadow-xl w-full max-h-[95vh] overflow-y-auto" style={{ maxWidth: '1100px' }} onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" style={{ zIndex: 10000, padding: isMobile ? '0' : '16px' }} onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }}>
+          <div className="bg-white shadow-xl w-full overflow-y-auto" style={{ maxWidth: isMobile ? '100vw' : '1100px', maxHeight: isMobile ? '100vh' : '95vh', borderRadius: isMobile ? '0' : '8px' }} onClick={(e) => e.stopPropagation()}>
             {/* 모달 헤더 */}
-            <div className="flex items-center justify-between p-4 border-b border-gray-200" style={{ backgroundColor: '#DC2626' }}>
-              <h2 className="text-xl font-semibold text-white">화재 상세정보</h2>
+            <div className="flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#DC2626', padding: isMobile ? '12px 16px' : '16px' }}>
+              <h2 className="font-semibold text-white" style={{ fontSize: isMobile ? '18px' : '20px' }}>화재 상세정보</h2>
               <button onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }} className="text-white hover:text-gray-200 transition-colors">
-                <X className="w-6 h-6" />
+                <X className={isMobile ? 'w-5 h-5' : 'w-6 h-6'} />
               </button>
             </div>
 
-            {/* 모달 내용 */}
-            <div className="flex p-4 gap-4">
+            {/* 모달 내용 - 반응형 레이아웃 */}
+            <div className="p-4" style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? '16px' : '16px' }}>
               {/* 좌측 패널 */}
               <div className="flex-1 flex flex-col">
                 {/* 지도 영역 */}
@@ -3202,20 +4013,20 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         </div>
       )}
 
-      {/* 응급 상세보기 팝업 */}
+      {/* 응급 상세보기 팝업 - 반응형 */}
       {incidentDetailPopup && incidentDetailPopup.type === 'emergency' && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4" style={{ zIndex: 10000 }} onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }}>
-          <div className="bg-white rounded-lg shadow-xl w-full max-h-[95vh] overflow-y-auto" style={{ maxWidth: '1100px' }} onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" style={{ zIndex: 10000, padding: isMobile ? '0' : '16px' }} onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }}>
+          <div className="bg-white shadow-xl w-full overflow-y-auto" style={{ maxWidth: isMobile ? '100vw' : '1100px', maxHeight: isMobile ? '100vh' : '95vh', borderRadius: isMobile ? '0' : '8px' }} onClick={(e) => e.stopPropagation()}>
             {/* 모달 헤더 */}
-            <div className="flex items-center justify-between p-4 border-b border-gray-200" style={{ backgroundColor: '#9333EA' }}>
-              <h2 className="text-xl font-semibold text-white">응급 상세정보</h2>
+            <div className="flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#9333EA', padding: isMobile ? '12px 16px' : '16px' }}>
+              <h2 className="font-semibold text-white" style={{ fontSize: isMobile ? '18px' : '20px' }}>응급 상세정보</h2>
               <button onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }} className="text-white hover:text-gray-200 transition-colors">
-                <X className="w-6 h-6" />
+                <X className={isMobile ? 'w-5 h-5' : 'w-6 h-6'} />
               </button>
             </div>
 
-            {/* 모달 내용 */}
-            <div className="flex p-4 gap-4">
+            {/* 모달 내용 - 반응형 레이아웃 */}
+            <div className="p-4" style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? '16px' : '16px' }}>
               {/* 좌측 패널 */}
               <div className="flex-1 flex flex-col">
                 {/* 지도 영역 */}
@@ -3576,20 +4387,20 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         </div>
       )}
 
-      {/* 쓰레기 투기 상세보기 팝업 */}
+      {/* 쓰레기 투기 상세보기 팝업 - 반응형 */}
       {incidentDetailPopup && incidentDetailPopup.type === 'trash' && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4" style={{ zIndex: 10000 }} onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }}>
-          <div className="bg-white rounded-lg shadow-xl w-full max-h-[95vh] overflow-y-auto" style={{ maxWidth: '1100px' }} onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" style={{ zIndex: 10000, padding: isMobile ? '0' : '16px' }} onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }}>
+          <div className="bg-white shadow-xl w-full overflow-y-auto" style={{ maxWidth: isMobile ? '100vw' : '1100px', maxHeight: isMobile ? '100vh' : '95vh', borderRadius: isMobile ? '0' : '8px' }} onClick={(e) => e.stopPropagation()}>
             {/* 모달 헤더 */}
-            <div className="flex items-center justify-between p-4 border-b border-gray-200" style={{ backgroundColor: '#10B981' }}>
-              <h2 className="text-xl font-semibold text-white">쓰레기 투기 상세정보</h2>
+            <div className="flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#10B981', padding: isMobile ? '12px 16px' : '16px' }}>
+              <h2 className="font-semibold text-white" style={{ fontSize: isMobile ? '18px' : '20px' }}>쓰레기 투기 상세정보</h2>
               <button onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }} className="text-white hover:text-gray-200 transition-colors">
-                <X className="w-6 h-6" />
+                <X className={isMobile ? 'w-5 h-5' : 'w-6 h-6'} />
               </button>
             </div>
 
-            {/* 모달 내용 */}
-            <div className="flex p-4 gap-4">
+            {/* 모달 내용 - 반응형 레이아웃 */}
+            <div className="p-4" style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? '16px' : '16px' }}>
               {/* 좌측 패널 */}
               <div className="flex-1 flex flex-col">
                 {/* 지도 영역 */}
@@ -3895,13 +4706,16 @@ export default function MainMap({ onNavigate }: MainMapProps) {
       )}
 
       {/* 위험지도 호버 팝업 (사고다발구간) */}
+      {/* 호버 툴팁 - 반응형 */}
       {activeView === 'risk-map' && hoveredHotspot && (
         <div 
-          className="absolute bg-white shadow-xl border-2 border-gray-300 p-3 rounded transform -translate-x-1/2 pointer-events-none" 
+          className="absolute bg-white shadow-xl border-2 border-gray-300 rounded transform -translate-x-1/2 pointer-events-none" 
           style={{ 
+            padding: isMobile ? '8px 12px' : '12px',
             left: `${hoveredHotspot.x}px`, 
             top: `${hoveredHotspot.y - 8}px`,
-            zIndex: 1200 
+            zIndex: 1200,
+            fontSize: isMobile ? '12px' : '14px'
           }}
         >
           <div className="text-xs text-gray-500 mb-1">사고다발구간</div>
@@ -3988,13 +4802,16 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         );
       })()}
 
+      {/* 등산로 구간 툴팁 - 반응형 */}
       {activeView === 'risk-map' && hoveredTrailSegment && (
         <div 
-          className="absolute bg-white shadow-xl border-2 border-gray-300 p-3 rounded transform -translate-x-1/2 pointer-events-none" 
+          className="absolute bg-white shadow-xl border-2 border-gray-300 rounded transform -translate-x-1/2 pointer-events-none" 
           style={{ 
-            left: `${hoveredTrailSegment.x}%`, 
-            top: `${hoveredTrailSegment.y - 8}%`,
-            zIndex: 1200 
+            padding: isMobile ? '8px 12px' : '12px',
+            left: `${hoveredTrailSegment.x}px`, 
+            top: `${hoveredTrailSegment.y - 8}px`,
+            zIndex: 1200,
+            fontSize: isMobile ? '12px' : '14px'
           }}
         >
           <div className="text-xs text-gray-500 mb-1">구간별 빈도</div>
@@ -4032,10 +4849,48 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         </div>
       )}
 
-      {/* 오탐 처리 모달 */}
+      {/* 낙석 위험 지도 hover 툴팁 */}
+      {activeView === 'rockfall-risk-map' && hoveredRockfall && (
+        <div 
+          className="absolute bg-white shadow-xl border-2 border-gray-300 p-3 rounded transform -translate-x-1/2 pointer-events-none" 
+          style={{ 
+            left: `${hoveredRockfall.x}px`, 
+            top: `${hoveredRockfall.y - 8}px`,
+            zIndex: 1200 
+          }}
+        >
+          <div className="text-xs text-gray-500 mb-1">
+            {hoveredRockfall.riskType === 'cultural' ? '🏛️ 문화재 낙석 위험' : '🥾 등산로 낙석 위험'}
+          </div>
+          <div className="text-sm font-bold mb-2">{hoveredRockfall.name || '이름 없음'}</div>
+          {hoveredRockfall.cultural && (
+            <div className="text-xs text-gray-600 mb-2">문화재: {hoveredRockfall.cultural}</div>
+          )}
+          <div className="text-xs space-y-1">
+            <div>위험도 값: <b>{Number(hoveredRockfall.riskValue).toFixed(2)}</b></div>
+            <div className="mt-2 p-2 rounded bg-gray-100">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-semibold">위험 등급:</span>
+                <span className="text-sm font-bold">{hoveredRockfall.riskLevel}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div 
+                  className="flex-1 h-4 border border-gray-400 rounded" 
+                  style={{ backgroundColor: getRockfallRiskColorWithOpacity(hoveredRockfall.styleC, 1.0) }}
+                ></div>
+                <span className="text-xs text-gray-600">{hoveredRockfall.styleC}/100</span>
+              </div>
+            </div>
+          </div>
+          {/* 아래 화살표 */}
+          <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-8 border-l-transparent border-r-8 border-r-transparent border-t-8 border-t-white"></div>
+        </div>
+      )}
+
+      {/* 오탐 처리 모달 - 반응형 */}
       {showFalseReportModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4" style={{ zIndex: 15000 }} onClick={() => { setShowFalseReportModal(false); setFalseReportReason(''); }}>
-          <div className="bg-white rounded-lg shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" style={{ zIndex: 15000, padding: isMobile ? '20px' : '16px' }} onClick={() => { setShowFalseReportModal(false); setFalseReportReason(''); }}>
+          <div className="bg-white shadow-xl w-full" style={{ borderRadius: isMobile ? '12px' : '8px', maxWidth: isMobile ? '90vw' : '28rem' }} onClick={(e) => e.stopPropagation()}>
             {/* 모달 헤더 */}
             <div className="p-6 border-b border-gray-200">
               <h2 className="text-xl font-semibold text-gray-900">오탐 처리</h2>
@@ -4082,5 +4937,6 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         </div>
       )}
     </div>
+    </>
   );
 }

@@ -328,41 +328,135 @@ export const getCCTVMedia = async (id: number, fileType: 'video' | 'image' | 'al
  * Get fire detection notifications
  * 
  * Backend integration:
- * - Fetch from /api/notifications/fire
+ * - Fetch from /api/fire/active
  * - Real-time AI detection events
  * - Include confidence scores and timestamps
  */
 export const getFireNotifications = async (): Promise<NotificationItem[]> => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/notifications/fire').then(res => res.json());
-  return Promise.resolve(mockFireNotifications);
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/fire/active`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data = await response.json();
+    
+    // 백엔드 데이터를 NotificationItem 형식으로 변환
+    return data
+      .filter((item: any) => item.type === '화재') // 화재 타입만 필터링
+      .map((item: any) => ({
+        id: item.id.toString(),
+        cctvId: item.cctvId || 'UNKNOWN',
+        type: 'fire' as const,
+        location: item.location || '알 수 없음',
+        time: item.time || '',
+        confidence: item.detectionConfidence 
+          ? `${Math.round(item.detectionConfidence * 100)}%`
+          : (item.detectionBasis && item.detectionBasis.includes('AI') ? '85%' : '수동'),
+        timeAgo: calculateTimeAgo(item.time),
+        timestamp: new Date(item.time).getTime(),
+      }));
+  } catch (error) {
+    console.error('Failed to fetch fire notifications:', error);
+    return mockFireNotifications; // Fallback to mock data
+  }
 };
 
 /**
  * Get emergency detection notifications
  * 
  * Backend integration:
- * - Fetch from /api/notifications/emergency
+ * - Fetch from /api/emergency/active
  * - Detect fallen persons, medical emergencies
  */
 export const getEmergencyNotifications = async (): Promise<NotificationItem[]> => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/notifications/emergency').then(res => res.json());
-  return Promise.resolve(mockEmergencyNotifications);
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/emergency/active`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data = await response.json();
+    
+    // 백엔드 데이터를 NotificationItem 형식으로 변환
+    return data
+      .filter((item: any) => item.type === '응급') // 응급 타입만 필터링
+      .map((item: any) => ({
+        id: item.id.toString(),
+        cctvId: item.cctvId || 'UNKNOWN',
+        type: 'emergency' as const,
+        location: item.location || '알 수 없음',
+        time: item.time || '',
+        confidence: item.detectionConfidence 
+          ? `${Math.round(item.detectionConfidence * 100)}%`
+          : (item.detectionBasis && item.detectionBasis.includes('AI') ? '85%' : '수동'),
+        timeAgo: calculateTimeAgo(item.time),
+        timestamp: new Date(item.time).getTime(),
+      }));
+  } catch (error) {
+    console.error('Failed to fetch emergency notifications:', error);
+    return mockEmergencyNotifications; // Fallback to mock data
+  }
 };
 
 /**
  * Get trash dumping notifications
  * 
  * Backend integration:
- * - Fetch from /api/notifications/trash
+ * - Fetch from /api/trash/active
  * - AI-detected illegal dumping events
  */
 export const getTrashNotifications = async (): Promise<NotificationItem[]> => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/notifications/trash').then(res => res.json());
-  return Promise.resolve(mockTrashNotifications);
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/trash/active`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data = await response.json();
+    
+    // 백엔드 데이터를 NotificationItem 형식으로 변환
+    return data
+      .filter((item: any) => item.type === '쓰레기') // 쓰레기 타입만 필터링
+      .map((item: any) => ({
+        id: item.id.toString(),
+        cctvId: item.cctvId || 'UNKNOWN',
+        type: 'trash' as const,
+        location: item.location || '알 수 없음',
+        time: item.time || '',
+        confidence: item.detectionConfidence 
+          ? `${Math.round(item.detectionConfidence * 100)}%`
+          : (item.detectionBasis && item.detectionBasis.includes('AI') ? '75%' : '수동'),
+        timeAgo: calculateTimeAgo(item.time),
+        timestamp: new Date(item.time).getTime(),
+      }));
+  } catch (error) {
+    console.error('Failed to fetch trash notifications:', error);
+    return mockTrashNotifications; // Fallback to mock data
+  }
 };
+
+/**
+ * 시간 경과 계산 함수
+ */
+function calculateTimeAgo(timeString: string): string {
+  if (!timeString) return '알 수 없음';
+  
+  try {
+    const time = new Date(timeString);
+    const now = new Date();
+    const diff = now.getTime() - time.getTime();
+    const minutes = Math.floor(diff / 60000);
+    
+    if (minutes < 1) return '방금 전';
+    if (minutes < 60) return `${minutes}분 전`;
+    
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}시간 전`;
+    
+    const days = Math.floor(hours / 24);
+    return `${days}일 전`;
+  } catch (error) {
+    return '알 수 없음';
+  }
+}
 
 /**
  * Get helicopter locations
@@ -843,14 +937,192 @@ export const getCompletedTrashIncidents = async (): Promise<TrashItem[]> => {
 };
 
 // ==================== RockfallDashboard API ====================
-export const getActiveRockfalls = async (): Promise<RockfallItem[]> => {
-  // TODO: Replace with actual API call
-  return Promise.resolve(mockActiveRockfalls);
+export interface RockfallDashboardResponse {
+  todayCount: number;
+  pendingCount: number;
+  avgResponseTime: number;
+  riskAreas: string[];
+  activeIncidents: Array<{
+    id: number;
+    cctvId: string;
+    incidentTime: string;
+    magnitude: string;
+    severity: string;
+    status: string;
+    handler: string;
+    responseTime?: string | null;
+    duration?: string | null;
+  }>;
+  resolvedIncidents: Array<{
+    id: number;
+    cctvId: string;
+    incidentTime: string;
+    magnitude: string;
+    severity: string;
+    status: string;
+    handler: string;
+    responseTime?: string | null;
+    duration?: string | null;
+  }>;
+}
+
+/**
+ * 낙석 대시보드 통합 조회
+ * GET /api/rockfalls/dashboard
+ */
+export const getRockfallDashboard = async (): Promise<RockfallDashboardResponse | null> => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/rockfalls/dashboard`);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch rockfall dashboard: ${response.status}`);
+    }
+    return await response.json();
+  } catch (error) {
+    console.error('❌ [Rockfall] Failed to fetch dashboard:', error);
+    return null;
+  }
 };
 
+/**
+ * 진행 중인 낙석 사고 조회
+ */
+export const getActiveRockfalls = async (): Promise<RockfallItem[]> => {
+  try {
+    const dashboard = await getRockfallDashboard();
+    if (!dashboard) return [];
+    return (dashboard.activeIncidents || []).map((i: any) => ({
+      id: i.id,
+      cctvId: i.cctvId,
+      time: i.incidentTime,
+      status: i.status,
+      severity: i.severity,
+      magnitude: i.magnitude,
+      handler: i.handler,
+      responseTime: i.responseTime || undefined,
+      duration: i.duration || undefined,
+    }));
+  } catch (error) {
+    console.error('Error fetching active rockfalls:', error);
+    return [];
+  }
+};
+
+/**
+ * 완료된 낙석 사고 조회
+ */
 export const getCompletedRockfalls = async (): Promise<RockfallItem[]> => {
-  // TODO: Replace with actual API call
-  return Promise.resolve(mockCompletedRockfalls);
+  try {
+    const dashboard = await getRockfallDashboard();
+    if (!dashboard) return [];
+    return (dashboard.resolvedIncidents || []).map((i: any) => ({
+      id: i.id,
+      cctvId: i.cctvId,
+      time: i.incidentTime,
+      status: i.status,
+      severity: i.severity,
+      magnitude: i.magnitude,
+      handler: i.handler,
+      responseTime: i.responseTime || undefined,
+      duration: i.duration || undefined,
+    }));
+  } catch (error) {
+    console.error('Error fetching completed rockfalls:', error);
+    return [];
+  }
+};
+
+/**
+ * 낙석 통계 조회 (상단 KPI)
+ */
+export interface RockfallStatsResponse {
+  todayCount: number;
+  pendingCount: number;
+  avgResponseTime: number;
+  avgResponseTimeFormatted: string;
+}
+
+export const getRockfallStats = async (): Promise<RockfallStatsResponse> => {
+  try {
+    const dashboard = await getRockfallDashboard();
+    if (!dashboard) {
+      throw new Error('No dashboard data');
+    }
+    const minutes = dashboard.avgResponseTime ?? 0;
+    const formatted = minutes && minutes > 0 ? `${Math.round(minutes)}분` : '-';
+    return {
+      todayCount: dashboard.todayCount ?? 0,
+      pendingCount: dashboard.pendingCount ?? 0,
+      avgResponseTime: minutes,
+      avgResponseTimeFormatted: formatted,
+    };
+  } catch (error) {
+    console.error('Error fetching rockfall stats:', error);
+    return {
+      todayCount: 0,
+      pendingCount: 0,
+      avgResponseTime: 0,
+      avgResponseTimeFormatted: '-'
+    };
+  }
+};
+
+/**
+ * 낙석 사고다발구간 조회
+ */
+export const getRockfallHotspots = async (
+  period: 'this_month' | '30d' | '7d' | 'all' = 'this_month',
+  limit: number = 1
+): Promise<HotspotResponse[]> => {
+  try {
+    // 백엔드에 별도 hotspots API가 없어서 dashboard의 riskAreas로 대체
+    const dashboard = await getRockfallDashboard();
+    const areas = dashboard?.riskAreas || [];
+    return areas.slice(0, limit).map((address) => ({ address }));
+  } catch (error) {
+    console.error('Error fetching rockfall hotspots:', error);
+    return [];
+  }
+};
+
+// ==================== 낙석 위험 지도 API ====================
+/**
+ * 낙석 위험 데이터 조회
+ * GET /api/mainmap/rockfall-risk
+ * 
+ * VIEW: view_mainmap_rockfall_risk
+ * 문화재 낙석 위험과 등산로 낙석 위험을 통합하여 반환
+ */
+export interface RockfallRiskItem {
+  id: string;
+  sourceId: number;
+  riskType: 'cultural' | 'trail';
+  name?: string;
+  cultural?: string;
+  riskValue: number;
+  styleC: number; // 0-100
+  geomGeojson: string; // GeoJSON string
+  createdAt: string;
+}
+
+export const getRockfallRiskData = async (): Promise<RockfallRiskItem[]> => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/mainmap/rockfall-risk`);
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ [RockfallRisk] Loaded data:', data.length);
+      
+      // GeoJSON 문자열을 객체로 파싱
+      return data.map((item: any) => ({
+        ...item,
+        geomGeojson: typeof item.geomGeojson === 'string' ? JSON.parse(item.geomGeojson) : item.geomGeojson
+      }));
+    }
+    console.warn('⚠️ [RockfallRisk] Failed to fetch data');
+    return [];
+  } catch (error) {
+    console.error('❌ [RockfallRisk] Error fetching data:', error);
+    return [];
+  }
 };
 
 // ==================== MonthlyReport API ====================
@@ -1365,6 +1637,61 @@ export const updateTrashDetail = async (id: number, data: {
   }
 };
 
+/**
+ * 낙석 사건 상태 업데이트
+ */
+export const updateRockfallStatus = async (id: number, status: string, handlerName?: string) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/rockfalls/${id}/status`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ status, handlerName }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to update rockfall status: ${response.status}`);
+    }
+    // 백엔드가 void를 반환하므로 json 파싱하지 않음
+    console.log('✅ [Rockfall] Status updated');
+    return;
+  } catch (error) {
+    console.error('❌ [Rockfall] Failed to update status:', error);
+    throw error;
+  }
+};
+
+/**
+ * 낙석 사건 상세정보 업데이트 (수동 등록/수정)
+ */
+export const updateRockfallDetail = async (id: number, data: {
+  memo?: string;
+  severity?: string;
+  rockSizeClass?: string;
+  affectedAssetType?: string;
+  affectedAssetName?: string;
+  damageDescription?: string;
+}) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/rockfalls/${id}/detail`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to update rockfall detail: ${response.status}`);
+    }
+    const result = await response.json();
+    console.log('✅ [Rockfall] Detail updated:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ [Rockfall] Failed to update detail:', error);
+    throw error;
+  }
+};
+
 // ============================================
 // 사고 목록 조회 API (페이지네이션)
 // ============================================
@@ -1579,6 +1906,24 @@ export const getTrashDetail = async (id: number) => {
   return null;
 };
 
+/**
+ * 낙석 사건 상세 조회
+ * GET /api/rockfalls/detail/{id}
+ */
+export const getRockfallDetail = async (id: number) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/rockfalls/detail/${id}`);
+    if (response.ok) {
+      const data = await response.json();
+      console.log('✅ [Rockfall] Loaded detail:', data);
+      return data;
+    }
+  } catch (error) {
+    console.error('❌ [Rockfall] Failed to fetch detail:', error);
+  }
+  return null;
+};
+
 // ============================================
 // Dashboard API - 전체 사건 목록 조회
 // ============================================
@@ -1754,6 +2099,43 @@ export const createTrash = async (data: {
   }
 };
 
+/**
+ * 신규 낙석 사건 등록
+ * POST /api/rockfalls/create
+ */
+export const createRockfall = async (data: {
+  detectedAt: string;      // ISO 8601 format
+  locationDesc: string;
+  severityLevel: string;   // 'HIGH' | 'MEDIUM' | 'LOW'
+  rockSizeClass: string;       // 암괴 규모 (필수)
+  affectedAssetType: string;   // 피해 대상 유형 (필수)
+  affectedAssetName?: string;  // 피해 대상 식별
+  damageDescription?: string;  // 피해 설명
+  memo?: string;
+  createdById?: number;
+}) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/rockfalls/create`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(data),
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to create rockfall: ${response.status}`);
+    }
+    
+    const result = await response.json();
+    console.log('✅ [Rockfall] Created:', result);
+    return result;
+  } catch (error) {
+    console.error('❌ [Rockfall] Failed to create:', error);
+    throw error;
+  }
+};
+
 // ============================================
 // MainMap API - 등산로
 // ============================================
@@ -1874,6 +2256,143 @@ export const analyzeFallenVideo = async (cctvCode: string): Promise<FallenAnalys
     return result;
   } catch (error) {
     console.error('❌ [CCTV] Failed to analyze video:', error);
+    throw error;
+  }
+};
+
+// ==================== Notification API ====================
+
+// 외부 연락처 API
+export const getAllContacts = async () => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/notifications/contacts`);
+    if (!response.ok) throw new Error('Failed to fetch contacts');
+    return response.json();
+  } catch (error) {
+    console.error('❌ [Notification] Failed to fetch contacts:', error);
+    throw error;
+  }
+};
+
+export const createContact = async (contact: {
+  category: string;
+  name: string;
+  phone: string;
+  organization: string;
+}) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/notifications/contacts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(contact),
+    });
+    if (!response.ok) throw new Error('Failed to create contact');
+    return response.json();
+  } catch (error) {
+    console.error('❌ [Notification] Failed to create contact:', error);
+    throw error;
+  }
+};
+
+export const deleteContact = async (contactId: number) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/notifications/contacts/${contactId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error('Failed to delete contact');
+  } catch (error) {
+    console.error('❌ [Notification] Failed to delete contact:', error);
+    throw error;
+  }
+};
+
+// 알림 구독 API (직원)
+export const subscribeStaff = async (userId: number, incidentType: string) => {
+  try {
+    const response = await fetch(
+      `${BACKEND_URL}/api/notifications/subscriptions/staff?userId=${userId}&incidentType=${incidentType}`,
+      { method: 'POST' }
+    );
+    if (!response.ok) throw new Error('Failed to subscribe staff');
+    return response.json();
+  } catch (error) {
+    console.error('❌ [Notification] Failed to subscribe staff:', error);
+    throw error;
+  }
+};
+
+export const unsubscribeStaff = async (userId: number, incidentType: string) => {
+  try {
+    const response = await fetch(
+      `${BACKEND_URL}/api/notifications/subscriptions/staff?userId=${userId}&incidentType=${incidentType}`,
+      { method: 'DELETE' }
+    );
+    if (!response.ok) throw new Error('Failed to unsubscribe staff');
+  } catch (error) {
+    console.error('❌ [Notification] Failed to unsubscribe staff:', error);
+    throw error;
+  }
+};
+
+// 알림 구독 API (외부 연락처)
+export const subscribeContact = async (contactId: number, incidentType: string) => {
+  try {
+    const response = await fetch(
+      `${BACKEND_URL}/api/notifications/subscriptions/contact?contactId=${contactId}&incidentType=${incidentType}`,
+      { method: 'POST' }
+    );
+    if (!response.ok) throw new Error('Failed to subscribe contact');
+    return response.json();
+  } catch (error) {
+    console.error('❌ [Notification] Failed to subscribe contact:', error);
+    throw error;
+  }
+};
+
+export const unsubscribeContact = async (contactId: number, incidentType: string) => {
+  try {
+    const response = await fetch(
+      `${BACKEND_URL}/api/notifications/subscriptions/contact?contactId=${contactId}&incidentType=${incidentType}`,
+      { method: 'DELETE' }
+    );
+    if (!response.ok) throw new Error('Failed to unsubscribe contact');
+  } catch (error) {
+    console.error('❌ [Notification] Failed to unsubscribe contact:', error);
+    throw error;
+  }
+};
+
+// 알림 수신자 조회 API
+export const getAllRecipients = async () => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/notifications/recipients`);
+    if (!response.ok) throw new Error('Failed to fetch recipients');
+    return response.json();
+  } catch (error) {
+    console.error('❌ [Notification] Failed to fetch recipients:', error);
+    throw error;
+  }
+};
+
+export const getRecipientsByIncidentType = async (incidentType: string) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/notifications/recipients/incident/${incidentType}`);
+    if (!response.ok) throw new Error('Failed to fetch recipients');
+    return response.json();
+  } catch (error) {
+    console.error('❌ [Notification] Failed to fetch recipients:', error);
+    throw error;
+  }
+};
+
+// 활성 직원 목록 조회 API
+export const getActiveStaff = async () => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/notifications/staff/active`);
+    if (!response.ok) throw new Error('Failed to fetch active staff');
+    return response.json();
+  } catch (error) {
+    console.error('❌ [Notification] Failed to fetch active staff:', error);
     throw error;
   }
 };

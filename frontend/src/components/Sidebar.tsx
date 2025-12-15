@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Home, LayoutDashboard, Camera, UserX, TrendingUp, Clock, Trash2, Users, ChevronDown, ChevronUp, ChevronRight, HeartPulse, FileText, AlertTriangle, Flame, Mountain } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
+import { useAuth } from '../contexts/AuthContext';
 
 const Logo = () => (
   <svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
@@ -125,12 +126,12 @@ export default function Sidebar({ onNavigate, currentPath, onClose }: SidebarPro
   return (
     <div className="flex flex-col h-full" style={{ backgroundColor: '#2B2847' }}>
       {/* Logo and Title */}
-      <div className="p-6 border-b flex items-center gap-3" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-        <Logo style={{ width: '62px', height: '62px', flexShrink: 0 }} />
+      <div className="p-4 border-b flex items-center gap-2" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+        <Logo style={{ width: '45px', height: '45px', flexShrink: 0 }} />
         <div className="flex flex-col">
-          <span className="text-white" style={{ fontSize: '16pt', lineHeight: '1.3', WebkitTextStroke: '0.5pt white' }}>Geumjeong</span>
-          <span className="text-white" style={{ fontSize: '16pt', lineHeight: '1.3', WebkitTextStroke: '0.5pt white' }}>Sentinel</span>
-          <span className="text-gray-400" style={{ fontSize: '9pt', lineHeight: '1.3', marginTop: '4px', whiteSpace: 'nowrap' }}>금정산 국립공원 탐지현황 관리자 대시보드</span>
+          <span className="text-white" style={{ fontSize: '14pt', lineHeight: '1.2', WebkitTextStroke: '0.5pt white' }}>Geumjeong</span>
+          <span className="text-white" style={{ fontSize: '14pt', lineHeight: '1.2', WebkitTextStroke: '0.5pt white' }}>Sentinel</span>
+          <span className="text-gray-400" style={{ fontSize: '8pt', lineHeight: '1.2', marginTop: '2px', whiteSpace: 'nowrap' }}>금정산 국립공원 탐지현황 관리자 대시보드</span>
         </div>
       </div>
 

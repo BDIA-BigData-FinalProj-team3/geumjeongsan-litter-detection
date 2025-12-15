@@ -4,7 +4,7 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
 
-import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "rockfall_detail")
@@ -13,18 +13,36 @@ import java.math.BigDecimal;
 public class RockfallDetail {
 
     @Id
-    @Column(name = "incident_id")
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @Column(name = "rockfall_detail_id")
+    private Long rockfallDetailId;
+
+    @Column(name = "incident_id", nullable = false, unique = true)
     private Long incidentId;
 
+    // 연관관계는 조회 편의용 (insert/update는 incidentId가 담당)
     @OneToOne(fetch = FetchType.LAZY)
-    @MapsId
-    @JoinColumn(name = "incident_id")
+    @JoinColumn(name = "incident_id", referencedColumnName = "incident_id", insertable = false, updatable = false)
     private Incident incident;
 
-    @Column(name = "magnitude", precision = 5, scale = 2)
-    private BigDecimal magnitude;
+    @Column(name = "rock_size_class", length = 20, nullable = false)
+    private String rockSizeClass;
 
-    @Column(name = "note", columnDefinition = "text")
-    private String note;
+    @Column(name = "damage_description", columnDefinition = "text")
+    private String damageDescription;
+
+    @Column(name = "affected_asset_type", length = 30, nullable = false)
+    private String affectedAssetType;
+
+    @Column(name = "affected_asset_name", length = 200)
+    private String affectedAssetName;
+
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
+
+    @PrePersist
+    void prePersist() {
+        if (createdAt == null) createdAt = LocalDateTime.now();
+    }
 }
 
