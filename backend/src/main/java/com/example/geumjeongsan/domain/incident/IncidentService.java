@@ -33,7 +33,6 @@ public class IncidentService {
     private final IncidentRepository incidentRepository;
     private final EmergencyDetailRepository emergencyDetailRepository;
     private final IncidentActionRepository incidentActionRepository;
-    private final IncidentManualRepository incidentManualRepository;
     private final IncidentFalseReportRepository incidentFalseReportRepository;
     private final CCTVRepository cctvRepository;
     private final MapCCTVRepository mapCCTVRepository;
@@ -46,7 +45,6 @@ public class IncidentService {
     public IncidentService(IncidentRepository incidentRepository, 
                          EmergencyDetailRepository emergencyDetailRepository,
                          IncidentActionRepository incidentActionRepository,
-                         IncidentManualRepository incidentManualRepository,
                          IncidentFalseReportRepository incidentFalseReportRepository,
                          CCTVRepository cctvRepository,
                          MapCCTVRepository mapCCTVRepository,
@@ -57,7 +55,6 @@ public class IncidentService {
         this.incidentRepository = incidentRepository;
         this.emergencyDetailRepository = emergencyDetailRepository;
         this.incidentActionRepository = incidentActionRepository;
-        this.incidentManualRepository = incidentManualRepository;
         this.incidentFalseReportRepository = incidentFalseReportRepository;
         this.cctvRepository = cctvRepository;
         this.mapCCTVRepository = mapCCTVRepository;
@@ -400,13 +397,9 @@ public class IncidentService {
         
         // 수동 등록인 경우 IncidentManual 저장 (IncidentService는 대부분 MANUAL)
         if (saved.getSourceType() == null || "MANUAL".equals(saved.getSourceType())) {
-            IncidentManual manual = new IncidentManual();
-            manual.setIncidentId(saved.getId());
-            manual.setManualDescription(request.getSymptoms() != null ? request.getSymptoms() : "");
-            manual.setManualLocation(request.getLocation());
-            manual.setCreatedById(null); // TODO: 실제 사용자 ID 연동
-            manual.setCreatedAt(OffsetDateTime.now());
-            incidentManualRepository.save(manual);
+            // DB: created_by_id NOT NULL. IncidentService 쪽은 request에 createdById가 없어서 저장을 생략.
+            // (필요하면 인증 연동 후 SecurityContext의 userId로 채우도록 개선)
+            // IncidentManual은 optional이므로 없는 상태로 incident만 저장해도 무방.
         }
         
         return toEmergencyResponse(saved);

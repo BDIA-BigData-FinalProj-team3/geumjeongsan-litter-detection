@@ -86,3 +86,59 @@ backend/src/main/resources/application-local.yml
 backend/src/main/resources/application-secret.yml
 backend/src/main/resources/application-prod.yml
 *.key
+
+# ===========================
+# 빌드 산출물 및 임시 파일
+# ===========================
+backend/bin/
+backend/*.log
+frontend/build/
+
+# ===========================
+# 백업 및 임시 파일
+# ===========================
+*_backup.*
+*_backup.tsx
+*.bak
+*.tmp
+*.swp
+*.swo
+*~
+
+# ===========================
+# Jupyter 노트북
+# ===========================
+*.ipynb
+*.ipynb_checkpoints/
+
+# ===========================
+# 테스트/임시 스크립트
+# ===========================
+test-*.ps1
+test-*.sh
+test-*.bat
+overpass*
+tatus
+
+# ===========================
+# OSM 임시 데이터 파일
+# ===========================
+scripts/osm_*.txt
+scripts/osm_*.xml
+scripts/osm_*.json
+# scripts/fetch_geumjeongsan_boundary.ps1 - 유지 (유용한 스크립트)
+# scripts/osm_geocode_poi.mjs - 유지 (유용한 스크립트)
+
+# ===========================
+# AI 테스트 데이터
+# ===========================
+backend/ai/test_data/
+
+# ===========================
+# 루트 레벨 중복 파일 (frontend/backend에 이미 있음)
+# ===========================
+# 루트의 node_modules는 frontend/node_modules와 별개일 수 있으므로 주석 처리
+# node_modules/
+# package.json
+# package-lock.json
+# gradlew.bat

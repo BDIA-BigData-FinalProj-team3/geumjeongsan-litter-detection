@@ -276,33 +276,55 @@ public class EmergencyService {
         String incidentTimeStr = request.getIncidentTime().trim();
         // T가 있으면 공백으로 변환 (datetime-local 형식 대응)
         incidentTimeStr = incidentTimeStr.replace('T', ' ');
-        LocalDateTime localDateTime = LocalDateTime.parse(incidentTimeStr, DATE_FORMATTER);
+        
+        // 초 단위(:ss)가 포함되어 있다면 제거 (yyyy-MM-dd HH:mm 형식으로 맞춤)
+        if (incidentTimeStr.length() > 16) {
+            incidentTimeStr = incidentTimeStr.substring(0, 16);
+        }
+        
+        LocalDateTime localDateTime;
+        try {
+            localDateTime = LocalDateTime.parse(incidentTimeStr, DATE_FORMATTER);
+        } catch (Exception e) {
+            // 파싱 실패 시 현재 시간으로 fallback하거나 에러 명시
+             throw new IllegalArgumentException("날짜 형식이 올바르지 않습니다. (입력값: " + request.getIncidentTime() + ", 기대형식: yyyy-MM-dd HH:mm)");
+        }
+        
         incident.setDetectedAt(localDateTime.atOffset(java.time.ZoneOffset.of("+09:00")));
         
         incident.setLocationDesc(request.getLocation());
         // acknowledged_at, resolved_at, handler_name은 incident_action에만 저장 ✅
         
+        // 1. 사고 코드 생성 (E-YYMMDD-001A 또는 E-YYMMDD-001M)
+        String dateStr = incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd"));
+        String prefix = String.format("E-%s-", dateStr);
+        
+        Incident lastIncident = incidentRepository.findTopByIncidentCodeStartingWithOrderByIncidentCodeDesc(prefix);
+        int nextSequence = 1;
+        
+        if (lastIncident != null && lastIncident.getIncidentCode() != null) {
+            String lastCode = lastIncident.getIncidentCode();
+            try {
+                String[] parts = lastCode.split("-");
+                if (parts.length >= 3) {
+                    String seqPart = parts[2].substring(0, 3);
+                    nextSequence = Integer.parseInt(seqPart) + 1;
+                }
+            } catch (Exception e) {
+                nextSequence = 1;
+            }
+        }
+        
+        String sequence = String.format("%03d", nextSequence);
+        String suffix = "AUTO".equals(incident.getSourceType()) ? "A" : "M";
+        String incidentCode = String.format("%s%s%s", prefix, sequence, suffix);
+        
+        incident.setIncidentCode(incidentCode);
+        
+        // 2. Incident 저장
         Incident saved = incidentRepository.save(incident);
         // ID를 확보하기 위해 flush (트랜잭션 내에서 ID 생성 보장)
         incidentRepository.flush();
-        
-        // flush 후에도 ID가 null일 수 있으므로 확인
-        if (saved.getId() == null) {
-            throw new IllegalStateException("Incident ID가 생성되지 않았습니다.");
-        }
-        
-        // 사고 코드 생성 (E-YYMMDD-001A 또는 E-YYMMDD-001M)
-        LocalDate date = saved.getDetectedAt().toLocalDate();
-        long count = incidentRepository.countByIncidentTypeAndDetectedAtDate("EMERGENCY", date);
-        String sequence = String.format("%03d", count);
-        String suffix = "AUTO".equals(saved.getSourceType()) ? "A" : "M";
-        String incidentCode = String.format("E-%s-%s%s",
-            saved.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd")),
-            sequence,
-            suffix
-        );
-        saved.setIncidentCode(incidentCode);
-        saved = incidentRepository.save(saved);
         
         // EmergencyDetail 저장 (@MapsId를 사용하므로 incident만 설정하면 incidentId가 자동 설정됨)
         EmergencyDetail detail = new EmergencyDetail();
@@ -335,13 +357,8 @@ public class EmergencyService {
         
         // 수동 등록인 경우 IncidentManual 저장
         if ("MANUAL".equals(saved.getSourceType())) {
-            IncidentManual manual = new IncidentManual();
-            manual.setIncidentId(saved.getId());
-            manual.setManualDescription(request.getSymptoms() != null ? request.getSymptoms() : "");
-            manual.setManualLocation(request.getLocation());
-            manual.setCreatedById(null); // TODO: 실제 사용자 ID 연동
-            manual.setCreatedAt(OffsetDateTime.now());
-            incidentManualRepository.save(manual);
+            // EmergencyRequest에는 createdById가 없으므로 incident_manual 저장을 생략.
+            // (인증 연동 후 SecurityContext의 userId로 채우도록 개선 가능)
         }
         
         return toEmergencyResponse(saved);
@@ -696,22 +713,33 @@ public class EmergencyService {
         incident.setCreatedAt(OffsetDateTime.now());
         incident.setUpdatedAt(OffsetDateTime.now());
         
-        // Incident 저장
-        incident = incidentRepository.save(incident);
+        // 1. 사고 코드 생성 (E-YYMMDD-001A 또는 E-YYMMDD-001M)
+        String dateStr = incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd"));
+        String prefix = String.format("E-%s-", dateStr);
         
-        // 2. 사고 코드 생성 (E-YYMMDD-001A 또는 E-YYMMDD-001M)
-        LocalDate date = incident.getDetectedAt().toLocalDate();
-        long count = incidentRepository.countByIncidentTypeAndDetectedAtDate("EMERGENCY", date);
-        String sequence = String.format("%03d", count);
+        Incident lastIncident = incidentRepository.findTopByIncidentCodeStartingWithOrderByIncidentCodeDesc(prefix);
+        int nextSequence = 1;
+        
+        if (lastIncident != null && lastIncident.getIncidentCode() != null) {
+            String lastCode = lastIncident.getIncidentCode();
+            try {
+                String[] parts = lastCode.split("-");
+                if (parts.length >= 3) {
+                    String seqPart = parts[2].substring(0, 3);
+                    nextSequence = Integer.parseInt(seqPart) + 1;
+                }
+            } catch (Exception e) {
+                nextSequence = 1;
+            }
+        }
+        
+        String sequence = String.format("%03d", nextSequence);
         String suffix = "AUTO".equals(incident.getSourceType()) ? "A" : "M";
-        String incidentCode = String.format("E-%s-%s%s",
-            incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd")),
-            sequence,
-            suffix
-        );
+        String incidentCode = String.format("%s%s%s", prefix, sequence, suffix);
         
-        // 사고 코드를 Incident에 저장
         incident.setIncidentCode(incidentCode);
+        
+        // 2. Incident 저장
         incident = incidentRepository.save(incident);
         
         // 3. EmergencyDetail 생성
@@ -734,7 +762,8 @@ public class EmergencyService {
         action.setActionType("CREATED");
         action.setPrevStatus(null);
         action.setNextStatus("PENDING");
-        action.setActorId(request.getCreatedById());  // ✅ 등록자 저장
+        action.setActorId(null);  // ✅ 등록자 ID 임시 비활성화 (FK 오류 방지)
+        // action.setActorId(request.getCreatedById());
         action.setAcknowledgedAt(null);
         action.setResolvedAt(null);
         action.setMemo("신규 응급 사건 등록 (수동)");
@@ -742,11 +771,15 @@ public class EmergencyService {
         incidentActionRepository.save(action);
         
         // 5. IncidentManual 저장
+        // DB: created_by_id NOT NULL. 값이 없으면 400 에러 반환
+        if (request.getCreatedById() == null) {
+            throw new IllegalArgumentException("createdById는 필수입니다.");
+        }
         IncidentManual manual = new IncidentManual();
         manual.setIncidentId(incident.getId());
-        manual.setManualDescription(request.getMemo() != null ? request.getMemo() : "응급 사건 수동 등록");
+        manual.setManualDescription(request.getMemo() != null ? request.getMemo() : "");
         manual.setManualLocation(request.getLocationDesc());
-        manual.setCreatedById(null);
+        manual.setCreatedById(request.getCreatedById());
         manual.setCreatedAt(OffsetDateTime.now());
         incidentManualRepository.save(manual);
         

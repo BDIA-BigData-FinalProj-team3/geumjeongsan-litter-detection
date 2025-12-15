@@ -104,17 +104,23 @@ public class IncidentListView {
     @Column(name = "detected_features")
     private String detectedFeatures;
 
-    @Column(name = "auto_created_at")
+    /**
+     * NOTE:
+     * DB의 view_all_incidents_list 컬럼과 불일치할 수 있어 조회 시 SQL 에러를 유발할 수 있음.
+     * (예: auto_created_at 컬럼 미존재)
+     * 필요한 경우 VIEW에서 alias를 맞추거나, 엔티티 매핑을 맞춰야 함.
+     */
+    @Transient
     private OffsetDateTime autoCreatedAt;
 
     // MANUAL 정보
-    @Column(name = "manual_location")
+    @Transient
     private String manualLocation;
 
-    @Column(name = "manual_description")
+    @Transient
     private String manualDescription;
 
-    @Column(name = "manual_created_by_id")
+    @Transient
     private Long manualCreatedById;
 
     // 처리 담당자

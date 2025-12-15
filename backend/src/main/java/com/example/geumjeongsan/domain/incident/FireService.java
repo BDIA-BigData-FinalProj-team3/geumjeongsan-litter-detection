@@ -11,6 +11,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import lombok.extern.slf4j.Slf4j;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -20,6 +21,7 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 @Service
+@Slf4j
 public class FireService {
 
     private final IncidentRepository incidentRepository;
@@ -519,26 +521,37 @@ public class FireService {
         incident.setDetectedAt(request.getDetectedAt());
         incident.setLocationDesc(request.getLocationDesc());
         incident.setMemo(request.getMemo());
-        incident.setCctvId(null);
+        incident.setCctvId(null); // ✅ 수동 등록은 CCTV ID 없음
         incident.setCreatedAt(OffsetDateTime.now());
         incident.setUpdatedAt(OffsetDateTime.now());
         
-        // Incident 저장
-        incident = incidentRepository.save(incident);
+        // 1. 사고 코드 생성 (F-YYMMDD-001A 또는 F-YYMMDD-001M)
+        String dateStr = incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd"));
+        String prefix = String.format("F-%s-", dateStr);
         
-        // 2. 사고 코드 생성 (F-YYMMDD-001A 또는 F-YYMMDD-001M)
-        LocalDate date = incident.getDetectedAt().toLocalDate();
-        long count = incidentRepository.countByIncidentTypeAndDetectedAtDate("FIRE", date);
-        String sequence = String.format("%03d", count);
+        Incident lastIncident = incidentRepository.findTopByIncidentCodeStartingWithOrderByIncidentCodeDesc(prefix);
+        int nextSequence = 1;
+        
+        if (lastIncident != null && lastIncident.getIncidentCode() != null) {
+            String lastCode = lastIncident.getIncidentCode();
+            try {
+                String[] parts = lastCode.split("-");
+                if (parts.length >= 3) {
+                    String seqPart = parts[2].substring(0, 3);
+                    nextSequence = Integer.parseInt(seqPart) + 1;
+                }
+            } catch (Exception e) {
+                nextSequence = 1;
+            }
+        }
+        
+        String sequence = String.format("%03d", nextSequence);
         String suffix = "AUTO".equals(incident.getSourceType()) ? "A" : "M";
-        String incidentCode = String.format("F-%s-%s%s",
-            incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd")),
-            sequence,
-            suffix
-        );
+        String incidentCode = String.format("%s%s%s", prefix, sequence, suffix);
         
-        // 사고 코드를 Incident에 저장
         incident.setIncidentCode(incidentCode);
+        
+        // 2. Incident 저장
         incident = incidentRepository.save(incident);
         
         // 3. FireDetail 생성
@@ -555,7 +568,8 @@ public class FireService {
         action.setActionType("CREATED");
         action.setPrevStatus(null);
         action.setNextStatus("PENDING");
-        action.setActorId(request.getCreatedById());  // ✅ 등록자 저장
+        action.setActorId(null);  // ✅ 등록자 ID 임시 비활성화 (FK 오류 방지)
+        // action.setActorId(request.getCreatedById());
         action.setAcknowledgedAt(null);
         action.setResolvedAt(null);
         action.setMemo("신규 화재 사건 등록");
@@ -564,13 +578,41 @@ public class FireService {
         
         // 수동 등록인 경우 IncidentManual 저장
         if ("MANUAL".equals(incident.getSourceType())) {
-            IncidentManual manual = new IncidentManual();
-            manual.setIncidentId(incident.getId());
-            manual.setManualDescription(request.getMemo() != null ? request.getMemo() : "");
-            manual.setManualLocation(request.getLocationDesc());
-            manual.setCreatedById(null); // TODO: 실제 사용자 ID 연동
-            manual.setCreatedAt(OffsetDateTime.now());
-            incidentManualRepository.save(manual);
+            // DB: created_by_id NOT NULL. 값이 없으면 400 에러 반환
+            if (request.getCreatedById() == null) {
+                throw new IllegalArgumentException("createdById는 필수입니다.");
+            }
+            
+            try {
+                IncidentManual manual = new IncidentManual();
+                manual.setIncidentId(incident.getId());
+                manual.setManualDescription(request.getMemo() != null ? request.getMemo() : "");
+                manual.setManualLocation(request.getLocationDesc());
+                manual.setCreatedById(request.getCreatedById());
+                manual.setCreatedAt(OffsetDateTime.now());
+                incidentManualRepository.save(manual);
+                log.info("✅ [Fire] IncidentManual saved - incidentId: {}, createdById: {}", 
+                        incident.getId(), request.getCreatedById());
+            } catch (org.springframework.dao.DataIntegrityViolationException e) {
+                log.error("❌ [Fire] Failed to save IncidentManual - incidentId: {}, createdById: {}, error: {}", 
+                        incident.getId(), request.getCreatedById(), e.getMessage(), e);
+                // FK 제약 위반인 경우
+                if (e.getCause() instanceof org.hibernate.exception.ConstraintViolationException) {
+                    org.hibernate.exception.ConstraintViolationException hibernateEx = 
+                        (org.hibernate.exception.ConstraintViolationException) e.getCause();
+                    if (hibernateEx.getConstraintName() != null && 
+                        hibernateEx.getConstraintName().contains("fk_incident_manual_user")) {
+                        throw new IllegalArgumentException(
+                            "존재하지 않는 사용자 ID입니다: " + request.getCreatedById() + 
+                            ". staff_user 테이블에 해당 user_id가 있는지 확인해주세요.");
+                    }
+                }
+                throw e;
+            } catch (Exception e) {
+                log.error("❌ [Fire] Unexpected error saving IncidentManual - incidentId: {}, createdById: {}, error: {}", 
+                        incident.getId(), request.getCreatedById(), e.getMessage(), e);
+                throw e;
+            }
         }
         
         return IncidentCreateResponse.success(incident.getId(), incidentCode);

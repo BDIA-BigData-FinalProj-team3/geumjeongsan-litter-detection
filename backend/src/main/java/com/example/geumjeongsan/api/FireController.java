@@ -193,10 +193,30 @@ public class FireController {
     @PostMapping("/create")
     public IncidentCreateResponse createFire(@RequestBody FireCreateRequest request) {
         try {
-            log.info("➕ [Fire] Creating new fire incident: {}", request);
+            log.info("➕ [Fire] Creating new fire incident - detectedAt: {}, locationDesc: {}, createdById: {}", 
+                    request.getDetectedAt(), request.getLocationDesc(), request.getCreatedById());
             return fireService.createFire(request);
+        } catch (IllegalArgumentException e) {
+            log.warn("⚠️ [Fire] Bad Request: {}", e.getMessage());
+            throw e; // @ExceptionHandler가 400으로 변환
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            log.error("❌ [Fire] DB constraint violation - createdById: {}, error: {}", 
+                    request.getCreatedById(), e.getMessage(), e);
+            // FK 제약 위반인 경우 더 명확한 메시지
+            String errorMsg = e.getMessage();
+            if (errorMsg != null && errorMsg.contains("foreign key")) {
+                throw new IllegalArgumentException(
+                    "데이터베이스 제약 조건 위반: user_id=" + request.getCreatedById() + 
+                    "가 staff_user 테이블에 존재하지 않습니다.");
+            }
+            throw new RuntimeException("데이터베이스 오류: " + e.getMessage(), e);
+        } catch (org.hibernate.exception.ConstraintViolationException e) {
+            log.error("❌ [Fire] Hibernate constraint violation - createdById: {}, constraint: {}, error: {}", 
+                    request.getCreatedById(), e.getConstraintName(), e.getMessage(), e);
+            throw new RuntimeException("데이터베이스 제약 조건 위반: " + e.getConstraintName(), e);
         } catch (Exception e) {
-            log.error("❌ [Fire] Failed to create fire: {}", e.getMessage(), e);
+            log.error("❌ [Fire] Internal Server Error - createdById: {}, error: {}", 
+                    request.getCreatedById(), e.getMessage(), e);
             throw e;
         }
     }
@@ -251,5 +271,17 @@ public class FireController {
             log.error("❌ [Fire] Failed to mark as false positive: {}", e.getMessage());
             throw e;
         }
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public org.springframework.http.ResponseEntity<Map<String, String>> handleIllegalArgumentException(IllegalArgumentException e) {
+        log.warn("⚠️ [Fire] Bad Request: {}", e.getMessage());
+        return org.springframework.http.ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(Exception.class)
+    public org.springframework.http.ResponseEntity<Map<String, String>> handleException(Exception e) {
+        log.error("❌ [Fire] Internal Server Error: {}", e.getMessage(), e);
+        return org.springframework.http.ResponseEntity.internalServerError().body(Map.of("error", "서버 오류: " + e.getMessage()));
     }
 }

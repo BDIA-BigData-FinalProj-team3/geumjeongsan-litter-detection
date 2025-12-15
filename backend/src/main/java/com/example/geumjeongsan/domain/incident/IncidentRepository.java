@@ -21,4 +21,7 @@ public interface IncidentRepository extends JpaRepository<Incident, Long> {
     // 같은 날짜, 같은 타입의 사건 개수 조회 (사건번호 일련번호 생성용)
     @Query("SELECT COUNT(i) FROM Incident i WHERE i.incidentType = :incidentType AND DATE(i.detectedAt) = :date")
     long countByIncidentTypeAndDetectedAtDate(@Param("incidentType") String incidentType, @Param("date") LocalDate date);
+    
+    // 특정 패턴으로 시작하는 가장 마지막 incident_code 조회 (예: 'F-251215-%')
+    Incident findTopByIncidentCodeStartingWithOrderByIncidentCodeDesc(String prefix);
 }

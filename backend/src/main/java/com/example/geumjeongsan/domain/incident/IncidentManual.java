@@ -24,13 +24,14 @@ public class IncidentManual {
     @JoinColumn(name = "incident_id", insertable = false, updatable = false)
     private Incident incident;
 
+    // DB DDL 기준: incident_manual(manual_description, manual_location, created_by_id NOT NULL)
     @Column(name = "manual_description", columnDefinition = "text")
     private String manualDescription;
 
     @Column(name = "manual_location", columnDefinition = "text")
     private String manualLocation;
 
-    @Column(name = "created_by_id")
+    @Column(name = "created_by_id", nullable = false)
     private Long createdById;
 
     @Column(name = "created_at")

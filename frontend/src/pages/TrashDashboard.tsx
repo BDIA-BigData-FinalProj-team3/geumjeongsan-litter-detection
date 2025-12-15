@@ -6,6 +6,7 @@ import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { getActiveTrashIncidents, getCompletedTrashIncidents, getTrashStats, getTrashHotspots, createTrash, updateTrashStatus, getTrashDetail, updateTrashDetail, type TrashStatsResponse, type HotspotResponse } from '../services/api';
+import { getCurrentUser } from '../services/auth';
 
 interface TrashDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -341,6 +342,10 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
     }
 
     try {
+      // 로그인한 사용자 정보 가져오기
+      const currentUser = getCurrentUser();
+      const createdById = currentUser?.userId || 1; // 로그인한 사용자 ID, 없으면 기본값 1
+      
       // Backend API 호출
       const result = await createTrash({
         detectedAt: new Date(newRecord.time).toISOString(),
@@ -349,6 +354,7 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
         memo: newRecord.memo || undefined,
         trashType: newRecord.trashType || undefined,
         amount: newRecord.amount || undefined,
+        createdById: createdById,
       });
       
       // 등록 성공

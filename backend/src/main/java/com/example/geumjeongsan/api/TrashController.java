@@ -254,4 +254,16 @@ public class TrashController {
             throw e;
         }
     }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public org.springframework.http.ResponseEntity<Map<String, String>> handleIllegalArgumentException(IllegalArgumentException e) {
+        log.warn("⚠️ [Trash] Bad Request: {}", e.getMessage());
+        return org.springframework.http.ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+    }
+
+    @ExceptionHandler(Exception.class)
+    public org.springframework.http.ResponseEntity<Map<String, String>> handleException(Exception e) {
+        log.error("❌ [Trash] Internal Server Error: {}", e.getMessage(), e);
+        return org.springframework.http.ResponseEntity.internalServerError().body(Map.of("error", "서버 오류: " + e.getMessage()));
+    }
 }

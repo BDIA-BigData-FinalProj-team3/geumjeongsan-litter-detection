@@ -6,6 +6,7 @@ import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { getAllIncidentsStats, getAllIncidentsList, getAllIncidentDetail, createEmergency, createFire, createTrash, createRockfall, getRockfallDetail, updateEmergencyStatus, updateFireStatus, updateTrashStatus, updateEmergencyDetail, updateFireDetail, updateTrashDetail, updateRockfallDetail } from '../services/api';
+import { getCurrentUser } from '../services/auth';
 
 interface AllIncidentsDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -1092,6 +1093,10 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                       return;
                     }
                     try {
+                      // 로그인한 사용자 정보 가져오기
+                      const currentUser = getCurrentUser();
+                      const createdById = currentUser?.userId || 1; // 로그인한 사용자 ID, 없으면 기본값 1
+                      
                       const result = await createEmergency({
                         detectedAt: new Date(emergencyRecord.time).toISOString(),
                         locationDesc: emergencyRecord.location,
@@ -1102,6 +1107,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                         patientGender: emergencyRecord.patientGender || undefined,
                         responseTeam: emergencyRecord.rescueTeam || undefined,
                         transferDest: emergencyRecord.transferHospital || undefined,
+                        createdById: createdById,
                       });
                       alert(`신규 응급 사건이 등록되었습니다. (사고코드: ${result.incidentCode})`);
                       setCanSendAlert(true);
@@ -1265,11 +1271,16 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                       return;
                     }
                     try {
+                      // 로그인한 사용자 정보 가져오기
+                      const currentUser = getCurrentUser();
+                      const createdById = currentUser?.userId || 1; // 로그인한 사용자 ID, 없으면 기본값 1
+                      
                       const result = await createFire({
                         detectedAt: new Date(fireRecord.time).toISOString(),
                         locationDesc: fireRecord.location,
                         severityLevel: fireRecord.severity.toUpperCase(),
                         memo: fireRecord.memo || undefined,
+                        createdById: createdById,
                       });
                       alert(`신규 화재 사건이 등록되었습니다. (사고코드: ${result.incidentCode})`);
                       setCanSendFireAlert(true);
@@ -1441,6 +1452,10 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                       return;
                     }
                     try {
+                      // 로그인한 사용자 정보 가져오기
+                      const currentUser = getCurrentUser();
+                      const createdById = currentUser?.userId || 1; // 로그인한 사용자 ID, 없으면 기본값 1
+                      
                       const result = await createTrash({
                         detectedAt: new Date(trashRecord.time).toISOString(),
                         locationDesc: trashRecord.location,
@@ -1448,6 +1463,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                         memo: trashRecord.memo || undefined,
                         trashType: trashRecord.trashType || undefined,
                         amount: trashRecord.amount || undefined,
+                        createdById: createdById,
                       });
                       alert(`신규 쓰레기 투기 사건이 등록되었습니다. (사고코드: ${result.incidentCode})`);
                       setShowTrashModal(false);
@@ -1629,6 +1645,10 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                   }
                   
                   try {
+                    // 로그인한 사용자 정보 가져오기
+                    const currentUser = getCurrentUser();
+                    const createdById = currentUser?.userId || 1; // 로그인한 사용자 ID, 없으면 기본값 1
+                    
                     const result = await createRockfall({
                       detectedAt: new Date(rockfallRecord.time).toISOString(),
                       locationDesc: rockfallRecord.location,
@@ -1638,6 +1658,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                       affectedAssetName: rockfallRecord.affectedAssetName || undefined,
                       damageDescription: rockfallRecord.damageDescription || undefined,
                       memo: rockfallRecord.memo || undefined,
+                      createdById: createdById,
                     });
                     alert(`신규 낙석 사건이 등록되었습니다. (사고코드: ${result.incidentCode})`);
                     setShowRockfallModal(false);

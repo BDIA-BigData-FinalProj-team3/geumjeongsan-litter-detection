@@ -294,11 +294,15 @@ public class RockfallService {
         
         // 수동 등록인 경우 IncidentManual 저장
         if ("MANUAL".equals(incident.getSourceType())) {
+            // DB: created_by_id NOT NULL. 값이 없으면 400 에러 반환
+            if (request.getCreatedById() == null) {
+                throw new IllegalArgumentException("createdById는 필수입니다.");
+            }
             IncidentManual manual = new IncidentManual();
             manual.setIncidentId(incident.getId());
             manual.setManualDescription(request.getMemo() != null ? request.getMemo() : "");
             manual.setManualLocation(request.getLocationDesc());
-            manual.setCreatedById(null); // TODO: 실제 사용자 ID 연동
+            manual.setCreatedById(request.getCreatedById());
             manual.setCreatedAt(OffsetDateTime.now());
             incidentManualRepository.save(manual);
         }

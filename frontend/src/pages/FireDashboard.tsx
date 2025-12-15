@@ -6,6 +6,7 @@ import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { getActiveFires, getCompletedFires, getFireStats, getFireHotspots, createFire, updateFireStatus, getFireDetail, updateFireDetail, type FireStatsResponse, type HotspotResponse } from '../services/api';
+import { getCurrentUser } from '../services/auth';
 
 interface FireDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -311,12 +312,17 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
     }
 
     try {
+      // 로그인한 사용자 정보 가져오기
+      const currentUser = getCurrentUser();
+      const createdById = currentUser?.userId || 1; // 로그인한 사용자 ID, 없으면 기본값 1
+      
       // Backend API 호출
       const result = await createFire({
         detectedAt: new Date(newRecord.time).toISOString(),
         locationDesc: newRecord.location,
         severityLevel: newRecord.severity.toUpperCase(),
         memo: newRecord.memo || undefined,
+        createdById: createdById,
       });
       
       // 등록 성공

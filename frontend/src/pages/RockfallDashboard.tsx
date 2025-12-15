@@ -4,6 +4,7 @@ import Sidebar from '../components/Sidebar';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getActiveRockfalls, getCompletedRockfalls, getRockfallStats, getRockfallHotspots, createRockfall, updateRockfallStatus, getAllIncidentDetail, getRockfallDetail, updateRockfallDetail, type RockfallStatsResponse, type HotspotResponse } from '../services/api';
+import { getCurrentUser } from '../services/auth';
 
 interface RockfallDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -1135,6 +1136,10 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
                     return;
                   }
                   try {
+                    // 로그인한 사용자 정보 가져오기
+                    const currentUser = getCurrentUser();
+                    const createdById = currentUser?.userId || 1; // 로그인한 사용자 ID, 없으면 기본값 1
+                    
                     const result = await createRockfall({
                       detectedAt: new Date(newRecord.time).toISOString(),
                       locationDesc: newRecord.location,
@@ -1144,6 +1149,7 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
                       affectedAssetName: newRecord.affectedAssetName || undefined,
                       damageDescription: newRecord.damageDescription || undefined,
                       memo: newRecord.memo || undefined,
+                      createdById: createdById,
                     });
                     alert(`신규 낙석 사건이 등록되었습니다. (사고코드: ${result.incidentCode})`);
                     setShowNewRecordModal(false);

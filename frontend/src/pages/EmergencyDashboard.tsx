@@ -6,6 +6,7 @@ import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { getActiveEmergencies, getCompletedEmergencies, getEmergencyStats, getEmergencyHotspots, getEmergencyIncidents, createEmergency, updateEmergencyStatus, getEmergencyDetail, updateEmergencyDetail, type EmergencyStatsResponse, type HotspotResponse, type IncidentListItem, type PageResponse } from '../services/api';
+import { getCurrentUser } from '../services/auth';
 
 interface EmergencyDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -346,6 +347,10 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
     }
 
     try {
+      // 로그인한 사용자 정보 가져오기
+      const currentUser = getCurrentUser();
+      const createdById = currentUser?.userId || 1; // 로그인한 사용자 ID, 없으면 기본값 1
+      
       // Backend API 호출
       const result = await createEmergency({
         detectedAt: new Date(newRecord.time).toISOString(),
@@ -357,6 +362,7 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
         patientGender: newRecord.patientGender || undefined,
         responseTeam: newRecord.rescueTeam || undefined,
         transferDest: newRecord.transferHospital || undefined,
+        createdById: createdById,
       });
       
       // 등록 성공
