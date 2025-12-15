@@ -2396,3 +2396,81 @@ export const getActiveStaff = async () => {
     throw error;
   }
 };
+
+// ==================== 오탐처리 API ====================
+
+/**
+ * 응급 사건 오탐 처리
+ * POST /api/emergency/{id}/false-positive
+ */
+export const markEmergencyAsFalsePositive = async (id: number, reason: string) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/emergency/${id}/false-positive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    });
+    if (!response.ok) throw new Error('Failed to mark emergency as false positive');
+    return response.json();
+  } catch (error) {
+    console.error('❌ [Emergency] Failed to mark as false positive:', error);
+    throw error;
+  }
+};
+
+/**
+ * 화재 사건 오탐 처리
+ * POST /api/fire/{id}/false-positive
+ */
+export const markFireAsFalsePositive = async (id: number, reason: string) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/fire/${id}/false-positive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    });
+    if (!response.ok) throw new Error('Failed to mark fire as false positive');
+    return response.json();
+  } catch (error) {
+    console.error('❌ [Fire] Failed to mark as false positive:', error);
+    throw error;
+  }
+};
+
+/**
+ * 쓰레기 사건 오탐 처리
+ * POST /api/trash/{id}/false-positive
+ */
+export const markTrashAsFalsePositive = async (id: number, reason: string) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/trash/${id}/false-positive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    });
+    if (!response.ok) throw new Error('Failed to mark trash as false positive');
+    return response.json();
+  } catch (error) {
+    console.error('❌ [Trash] Failed to mark as false positive:', error);
+    throw error;
+  }
+};
+
+/**
+ * 전체현황 사건 오탐 처리
+ * POST /api/all-incidents/{id}/false-positive
+ */
+export const markIncidentAsFalsePositive = async (id: number, reason: string) => {
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/all-incidents/${id}/false-positive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    });
+    if (!response.ok) throw new Error('Failed to mark incident as false positive');
+    return response.json();
+  } catch (error) {
+    console.error('❌ [AllIncidents] Failed to mark as false positive:', error);
+    throw error;
+  }
+};

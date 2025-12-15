@@ -34,6 +34,7 @@ public class IncidentService {
     private final EmergencyDetailRepository emergencyDetailRepository;
     private final IncidentActionRepository incidentActionRepository;
     private final IncidentManualRepository incidentManualRepository;
+    private final IncidentFalseReportRepository incidentFalseReportRepository;
     private final CCTVRepository cctvRepository;
     private final MapCCTVRepository mapCCTVRepository;
     private final MediaFileRepository mediaFileRepository;
@@ -46,6 +47,7 @@ public class IncidentService {
                          EmergencyDetailRepository emergencyDetailRepository,
                          IncidentActionRepository incidentActionRepository,
                          IncidentManualRepository incidentManualRepository,
+                         IncidentFalseReportRepository incidentFalseReportRepository,
                          CCTVRepository cctvRepository,
                          MapCCTVRepository mapCCTVRepository,
                          MediaFileRepository mediaFileRepository,
@@ -56,6 +58,7 @@ public class IncidentService {
         this.emergencyDetailRepository = emergencyDetailRepository;
         this.incidentActionRepository = incidentActionRepository;
         this.incidentManualRepository = incidentManualRepository;
+        this.incidentFalseReportRepository = incidentFalseReportRepository;
         this.cctvRepository = cctvRepository;
         this.mapCCTVRepository = mapCCTVRepository;
         this.mediaFileRepository = mediaFileRepository;
@@ -979,5 +982,49 @@ public class IncidentService {
                     .incidentId(media.getIncident() != null ? media.getIncident().getId() : null)
                     .build();
         }).collect(Collectors.toList());
+    }
+    
+    /**
+     * 오탐 처리 공통 메서드
+     * @param incidentId 사건 ID
+     * @param reason 오탐 사유
+     */
+    @Transactional
+    public void markAsFalsePositive(Long incidentId, String reason) {
+        // 1. Incident 조회 및 검증
+        Incident incident = incidentRepository.findById(incidentId)
+                .orElseThrow(() -> new RuntimeException("사건을 찾을 수 없습니다: " + incidentId));
+        
+        // AUTO (AI 자동 탐지)인 경우에만 오탐 처리 가능
+        if (!"AUTO".equals(incident.getSourceType())) {
+            throw new RuntimeException("AI 자동 탐지 사건만 오탐 처리할 수 있습니다.");
+        }
+        
+        // 2. Incident 상태 변경 (FALSE_POSITIVE 또는 RESOLVED)
+        String prevStatus = incident.getStatus();
+        incident.setStatus("RESOLVED");  // 또는 "FALSE_POSITIVE"라는 별도 상태 사용 가능
+        incident.setMemo((incident.getMemo() != null ? incident.getMemo() + "\n" : "") + 
+                        "[오탐 처리] " + (reason != null ? reason : "사유 없음"));
+        incident.setUpdatedAt(OffsetDateTime.now());
+        incidentRepository.save(incident);
+        
+        // 3. IncidentAction 생성
+        IncidentAction action = new IncidentAction();
+        action.setIncidentId(incidentId);
+        action.setActionType("FALSE_POSITIVE");
+        action.setPrevStatus(prevStatus);
+        action.setNextStatus("RESOLVED");
+        action.setResolvedAt(OffsetDateTime.now());
+        action.setMemo("오탐 처리: " + (reason != null ? reason : "사유 없음"));
+        action.setCreatedAt(OffsetDateTime.now());
+        // actorId는 추후 인증 시스템 구현 시 설정
+        incidentActionRepository.save(action);
+        
+        // 4. IncidentFalseReport 생성
+        IncidentFalseReport falseReport = new IncidentFalseReport();
+        falseReport.setActionId(action.getId());
+        falseReport.setReason(reason);
+        falseReport.setCreatedAt(OffsetDateTime.now());
+        incidentFalseReportRepository.save(falseReport);
     }
 }

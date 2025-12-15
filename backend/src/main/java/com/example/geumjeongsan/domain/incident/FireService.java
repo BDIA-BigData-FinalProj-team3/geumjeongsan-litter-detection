@@ -355,9 +355,17 @@ public class FireService {
             throw new RuntimeException("화재 사건이 아닙니다: " + id);
         }
         
+        // 변경 전 값 저장 (이력 기록용)
+        String prevMemo = incident.getMemo();
+        String prevSeverity = incident.getSeverityLevel();
+        
+        // 변경된 필드 추적
+        StringBuilder changedFields = new StringBuilder();
+        
         // incident 테이블 업데이트
-        if (memo != null) {
+        if (memo != null && !memo.equals(prevMemo)) {
             incident.setMemo(memo);
+            changedFields.append("메모, ");
         }
         if (severityLevel != null) {
             String dbSeverity = switch (severityLevel) {
@@ -366,10 +374,29 @@ public class FireService {
                 case "하", "LOW" -> "LOW";
                 default -> incident.getSeverityLevel();
             };
-            incident.setSeverityLevel(dbSeverity);
+            if (!dbSeverity.equals(prevSeverity)) {
+                incident.setSeverityLevel(dbSeverity);
+                changedFields.append("심각도, ");
+            }
         }
         incident.setUpdatedAt(OffsetDateTime.now());
         incidentRepository.save(incident);
+        
+        // incident_action 테이블에 수정 이력 기록
+        if (changedFields.length() > 0) {
+            // 마지막 ", " 제거
+            String changedFieldsStr = changedFields.toString().replaceAll(", $", "");
+            
+            IncidentAction action = new IncidentAction();
+            action.setIncidentId(id);
+            action.setActionType("DETAIL_UPDATED");
+            action.setPrevStatus(incident.getStatus());
+            action.setNextStatus(incident.getStatus());  // 상태는 변경되지 않음
+            action.setMemo("상세 정보 수정: " + changedFieldsStr);
+            action.setCreatedAt(OffsetDateTime.now());
+            // actorId는 추후 인증 시스템 구현 시 설정
+            incidentActionRepository.save(action);
+        }
     }
     
     private String getCurrentWindSpeedFromAPI() {

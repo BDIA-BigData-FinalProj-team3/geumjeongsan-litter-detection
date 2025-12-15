@@ -653,7 +653,7 @@ export default function Settings({ onNavigate }: SettingsProps) {
       )}
       <div className="flex-1 flex flex-col relative bg-white" style={{ marginLeft: sidebarOpen && !isMobile ? '317.56px' : '0px', transition: 'margin-left 0.3s' }}>
         {/* 상단바 */}
-        <div className="shadow-md px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
+        <div className="shadow-md px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)' }}>
           <div className="flex items-center gap-3">
             <HamburgerMenuButton onClick={() => setSidebarOpen(!sidebarOpen)} />
             <SettingsIcon className="w-6 h-6 text-gray-200" />
@@ -1164,7 +1164,7 @@ export default function Settings({ onNavigate }: SettingsProps) {
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={() => setSelectedEmployeeDetail(null)}>
           <div className="bg-white rounded-lg shadow-xl max-w-md w-full" onClick={(e) => e.stopPropagation()}>
             {/* 모달 헤더 */}
-            <div className="flex items-center justify-between p-6 border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
+            <div className="flex items-center justify-between p-6 border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)' }}>
               <h2 className="text-gray-100 text-lg font-semibold">직원 상세정보</h2>
               <button onClick={() => setSelectedEmployeeDetail(null)} className="text-gray-100 hover:text-white transition-colors">
                 <X className="w-6 h-6" />

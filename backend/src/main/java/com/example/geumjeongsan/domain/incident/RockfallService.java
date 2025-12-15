@@ -336,8 +336,21 @@ public class RockfallService {
             throw new RuntimeException("낙석 사건이 아닙니다: " + incidentId);
         }
 
-        if (memo != null) {
+        // 변경 전 값 저장 (이력 기록용)
+        String prevMemo = incident.getMemo();
+        String prevSeverity = incident.getSeverityLevel();
+        RockfallDetail detail = rockfallDetailRepository.findByIncidentId(incidentId).orElse(null);
+        String prevRockSizeClass = detail != null ? detail.getRockSizeClass() : null;
+        String prevAffectedAssetType = detail != null ? detail.getAffectedAssetType() : null;
+        String prevAffectedAssetName = detail != null ? detail.getAffectedAssetName() : null;
+        String prevDamageDescription = detail != null ? detail.getDamageDescription() : null;
+        
+        // 변경된 필드 추적
+        StringBuilder changedFields = new StringBuilder();
+
+        if (memo != null && !memo.equals(prevMemo)) {
             incident.setMemo(memo);
+            changedFields.append("메모, ");
         }
         if (severityLevel != null) {
             String dbSeverity = switch (severityLevel) {
@@ -346,32 +359,57 @@ public class RockfallService {
                 case "하", "LOW" -> "LOW";
                 default -> incident.getSeverityLevel();
             };
-            incident.setSeverityLevel(dbSeverity);
+            if (!dbSeverity.equals(prevSeverity)) {
+                incident.setSeverityLevel(dbSeverity);
+                changedFields.append("심각도, ");
+            }
         }
         incident.setUpdatedAt(OffsetDateTime.now());
         incidentRepository.save(incident);
 
-        RockfallDetail detail = rockfallDetailRepository.findByIncidentId(incidentId).orElse(null);
         if (detail == null) {
             // 기존 데이터가 없으면 생성 (incident_id UNIQUE)
             detail = new RockfallDetail();
             detail.setIncidentId(incidentId);
         }
 
-        if (rockSizeClass != null && !rockSizeClass.trim().isEmpty()) {
+        if (rockSizeClass != null && !rockSizeClass.trim().isEmpty() && !rockSizeClass.trim().equals(prevRockSizeClass)) {
             detail.setRockSizeClass(rockSizeClass.trim());
+            changedFields.append("암괴규모, ");
         }
-        if (affectedAssetType != null && !affectedAssetType.trim().isEmpty()) {
+        if (affectedAssetType != null && !affectedAssetType.trim().isEmpty() && !affectedAssetType.trim().equals(prevAffectedAssetType)) {
             detail.setAffectedAssetType(affectedAssetType.trim());
+            changedFields.append("피해대상유형, ");
         }
         if (affectedAssetName != null) {
-            detail.setAffectedAssetName(affectedAssetName.trim().isEmpty() ? null : affectedAssetName.trim());
+            String trimmedName = affectedAssetName.trim().isEmpty() ? null : affectedAssetName.trim();
+            if (!trimmedName.equals(prevAffectedAssetName)) {
+                detail.setAffectedAssetName(trimmedName);
+                changedFields.append("피해대상식별, ");
+            }
         }
-        if (damageDescription != null) {
+        if (damageDescription != null && !damageDescription.equals(prevDamageDescription)) {
             detail.setDamageDescription(damageDescription);
+            changedFields.append("피해설명, ");
         }
 
         rockfallDetailRepository.save(detail);
+        
+        // incident_action 테이블에 수정 이력 기록
+        if (changedFields.length() > 0) {
+            // 마지막 ", " 제거
+            String changedFieldsStr = changedFields.toString().replaceAll(", $", "");
+            
+            IncidentAction action = new IncidentAction();
+            action.setIncidentId(incidentId);
+            action.setActionType("DETAIL_UPDATED");
+            action.setPrevStatus(incident.getStatus());
+            action.setNextStatus(incident.getStatus());  // 상태는 변경되지 않음
+            action.setMemo("상세 정보 수정: " + changedFieldsStr);
+            action.setCreatedAt(OffsetDateTime.now());
+            // actorId는 추후 인증 시스템 구현 시 설정
+            incidentActionRepository.save(action);
+        }
     }
 }
 

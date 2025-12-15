@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -134,6 +135,25 @@ public class AllIncidentsController {
         }
         
         return new IncidentDetailDto(view, latitude, longitude);
+    }
+    
+    /**
+     * 사건 오탐 처리 (전체현황 페이지용)
+     * POST /api/all-incidents/{id}/false-positive
+     */
+    @PostMapping("/{id}/false-positive")
+    public Map<String, String> markIncidentAsFalsePositive(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> request) {
+        try {
+            log.info("🚫 [AllIncidents] Marking as false positive - id: {}", id);
+            String reason = request.get("reason");
+            incidentService.markAsFalsePositive(id, reason);
+            return Map.of("message", "오탐 처리 완료");
+        } catch (RuntimeException e) {
+            log.error("❌ [AllIncidents] Failed to mark as false positive: {}", e.getMessage());
+            throw e;
+        }
     }
 }
 

@@ -195,7 +195,7 @@ export default function EmergencyRecords({ onNavigate }: EmergencyRecordsProps) 
       
       <div className="flex-1 flex flex-col relative bg-white" style={{ marginLeft: sidebarOpen && !isMobile ? '317.56px' : '0px', transition: 'margin-left 0.3s' }}>
         {/* 상단바 */}
-        <div className="shadow-md px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
+        <div className="shadow-md px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)' }}>
           <div className="flex items-center gap-3">
             <HamburgerMenuButton onClick={() => setSidebarOpen(!sidebarOpen)} />
             <HeartPulse className="w-6 h-6 text-gray-200" />

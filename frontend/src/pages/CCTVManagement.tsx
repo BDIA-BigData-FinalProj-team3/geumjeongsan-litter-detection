@@ -903,7 +903,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       
       <div className="flex-1 flex flex-col relative bg-gray-50" style={{ marginLeft: sidebarOpen && !isMobile ? '317.56px' : '0px', transition: 'margin-left 0.3s ease-out' }}>
         {/* 상단바 */}
-        <div className="shadow-md px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
+        <div className="shadow-md px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)' }}>
           <div className="flex items-center gap-3">
             <HamburgerMenuButton onClick={() => setSidebarOpen(!sidebarOpen)} />
             <Camera className="w-6 h-6 text-gray-200" />

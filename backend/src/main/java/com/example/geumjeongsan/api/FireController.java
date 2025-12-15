@@ -233,4 +233,23 @@ public class FireController {
             throw e;
         }
     }
+    
+    /**
+     * 화재 사건 오탐 처리
+     * POST /api/fire/{id}/false-positive
+     */
+    @PostMapping("/{id}/false-positive")
+    public Map<String, String> markFireAsFalsePositive(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> request) {
+        try {
+            log.info("🚫 [Fire] Marking as false positive - id: {}", id);
+            String reason = request.get("reason");
+            incidentService.markAsFalsePositive(id, reason);
+            return Map.of("message", "오탐 처리 완료");
+        } catch (RuntimeException e) {
+            log.error("❌ [Fire] Failed to mark as false positive: {}", e.getMessage());
+            throw e;
+        }
+    }
 }

@@ -1,7 +1,7 @@
-@custom-variant dark (&:is(.dark *));
-
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap');
 @import url('https://hangeul.pstatic.net/hangeul_static/css/nanum-square.css');
+
+@custom-variant dark (&:is(.dark *));
 
 @font-face {
   font-family: 'NanumSquareBold';
@@ -53,6 +53,9 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+
+  /* EcoGuard 브랜드/헤더 컬러 (사건 상세/상단바 공통) */
+  --ecoguard-header-bg: #345eaa;
 }
 
 .dark {
@@ -90,6 +93,9 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.269 0 0);
   --sidebar-ring: oklch(0.439 0 0);
+
+  /* EcoGuard 브랜드/헤더 컬러 (다크에서도 동일 유지) */
+  --ecoguard-header-bg: #345eaa;
 }
 
 @theme inline {

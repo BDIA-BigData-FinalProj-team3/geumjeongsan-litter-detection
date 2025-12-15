@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Mountain, AlertTriangle, Clock, MapPin, HelpCircle, Search, ChevronDown, ChevronLeft, ChevronRight, Plus, X, ImageIcon, Video, Edit2 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
@@ -126,6 +126,39 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
   // 페이지네이션 적용
   const totalPages = Math.ceil(rockfalls.length / pageSize);
   const paginatedRockfalls = rockfalls.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+
+  // 공통(incident) 상세 캐시: 현재 페이지(10개)만 조회해서 테이블에 표시
+  const incidentBaseByIdRef = useRef<Record<number, any>>({});
+  const [incidentBaseById, setIncidentBaseById] = useState<Record<number, any>>({});
+
+  useEffect(() => {
+    const ids = paginatedRockfalls.map(r => r.id).filter(Boolean);
+    const missing = ids.filter(id => !incidentBaseByIdRef.current[id]);
+    if (missing.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      const results = await Promise.all(
+        missing.map(async (id) => {
+          try {
+            const base = await getAllIncidentDetail(id);
+            return { id, base };
+          } catch {
+            return { id, base: null };
+          }
+        })
+      );
+
+      if (cancelled) return;
+
+      for (const { id, base } of results) {
+        if (base) incidentBaseByIdRef.current[id] = base;
+      }
+      setIncidentBaseById({ ...incidentBaseByIdRef.current });
+    })();
+
+    return () => { cancelled = true; };
+  }, [paginatedRockfalls]);
 
   const toggleStatus = async (id: number, newStatus: string) => {
     try {
@@ -290,7 +323,7 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
       
       <div className="flex-1 flex flex-col relative bg-white" style={{ marginLeft: sidebarOpen && !isMobile ? '317.56px' : '0px', transition: 'margin-left 0.3s' }}>
         {/* 상단바 */}
-        <div className="shadow-md px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
+        <div className="shadow-md px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)' }}>
           <div className="flex items-center gap-3">
             <HamburgerMenuButton onClick={() => setSidebarOpen(!sidebarOpen)} />
             <Mountain className="w-6 h-6 text-gray-200" />
@@ -469,16 +502,18 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
                           />
                         </th>
                       )}
-                      <th className="px-6 py-3 text-left text-gray-600 text-sm">CCTV ID</th>
+                      <th className="px-6 py-3 text-left text-gray-600 text-sm">사고 코드</th>
+                      <th className="px-6 py-3 text-left text-gray-600 text-sm" style={{ minWidth: '130px', width: '130px' }}>탐지근거</th>
+                      <th className="px-6 py-3 text-left text-gray-600 text-sm">지역명/CCTV ID</th>
                       <th className="px-6 py-3 text-left text-gray-600 text-sm">발생시간</th>
                       {viewMode === 'completed' && (
                         <>
-                          <th className="px-6 py-3 text-left text-gray-600 text-sm">대응시각</th>
+                          <th className="px-6 py-3 text-left text-gray-600 text-sm">처리완료시각</th>
                           <th className="px-6 py-3 text-left text-gray-600 text-sm">소요시간</th>
                         </>
                       )}
-                      <th className="px-6 py-3 text-left text-gray-600 text-sm">규모</th>
                       <th className="px-6 py-3 text-left text-gray-600 text-sm">심각도</th>
+                      <th className="px-6 py-3 text-left text-gray-600 text-sm">암괴 규모</th>
                       {viewMode === 'active' && (
                         <th className="px-6 py-3 text-left text-gray-600 text-sm">상태</th>
                       )}
@@ -487,10 +522,17 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
                   </thead>
                   <tbody className="divide-y divide-gray-200">
                     {paginatedRockfalls.map((rockfall) => {
+                      const base = incidentBaseById[rockfall.id];
+                      const accidentCode = base?.accidentCode ?? `ROCK-${rockfall.id}`;
+                      const detectionBasis = base?.detectionBasis ?? '-';
+                      const locationText = base?.location ?? base?.locationDesc ?? '-';
+
                       const isHighlighted = highlightedCode && (
+                        accidentCode.toUpperCase().includes(highlightedCode.toUpperCase()) ||
                         (rockfall.cctvId && rockfall.cctvId.toUpperCase().includes(highlightedCode.toUpperCase())) ||
                         (rockfall.id && rockfall.id.toString() === highlightedCode)
                       );
+
                       return (
                       <tr 
                         key={rockfall.id} 
@@ -526,15 +568,29 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
                             />
                           </td>
                         )}
-                        <td className="px-6 py-4 text-gray-900">{rockfall.cctvId}</td>
+                        <td className="px-6 py-4 text-gray-900">{accidentCode}</td>
+                        <td className="px-6 py-4" style={{ minWidth: '130px', width: '130px' }}>
+                          <span className={`inline-flex items-center px-2 py-1 text-xs font-medium whitespace-nowrap ${
+                            detectionBasis?.includes('AI') || detectionBasis?.includes('자동')
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-gray-100 text-gray-700'
+                          }`} style={{ borderRadius: '0px' }}>
+                            {detectionBasis?.includes('AI') || detectionBasis?.includes('자동') ? 'AI 자동 탐지' : detectionBasis === '-' ? '-' : '수동 등록'}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="text-gray-900">{locationText}</div>
+                          {rockfall.cctvId && rockfall.cctvId !== '수동등록' && (
+                            <div className="text-xs text-gray-500">{rockfall.cctvId}</div>
+                          )}
+                        </td>
                         <td className="px-6 py-4 text-gray-600 text-sm">{rockfall.time}</td>
                         {viewMode === 'completed' && 'responseTime' in rockfall && (
                           <>
-                            <td className="px-6 py-4 text-gray-600 text-sm">{rockfall.responseTime}</td>
-                            <td className="px-6 py-4 text-gray-600">{rockfall.duration}</td>
+                            <td className="px-6 py-4 text-gray-600 text-sm">{rockfall.responseTime || '-'}</td>
+                            <td className="px-6 py-4 text-gray-600">{rockfall.duration || '-'}</td>
                           </>
                         )}
-                        <td className="px-6 py-4 text-gray-600">{rockfall.magnitude || '-'}</td>
                         <td className="px-6 py-4">
                           <span className={`px-2 py-1 text-xs ${
                             rockfall.severity === 'high' || rockfall.severity === '상'
@@ -546,6 +602,7 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
                             {rockfall.severity === 'high' ? '상' : rockfall.severity === 'medium' ? '중' : rockfall.severity === 'low' ? '하' : rockfall.severity}
                           </span>
                         </td>
+                        <td className="px-6 py-4 text-gray-600">{rockfall.magnitude || '-'}</td>
                         {viewMode === 'active' && (
                           <td className="px-6 py-4 overflow-visible" onClick={(e) => e.stopPropagation()}>
                             <div className="relative inline-block">
@@ -703,7 +760,7 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
       {selectedDetail && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={() => { setSelectedDetail(null); setIsEditing(false); setEditedDetail(null); }}>
             <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center justify-between p-6 border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
+            <div className="flex items-center justify-between p-6 border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)' }}>
               <h2 className="text-xl font-semibold text-gray-100">상세정보</h2>
               <button onClick={() => { setSelectedDetail(null); setIsEditing(false); setEditedDetail(null); }} className="text-gray-100 hover:text-white transition-colors">
                 <X className="w-6 h-6" />

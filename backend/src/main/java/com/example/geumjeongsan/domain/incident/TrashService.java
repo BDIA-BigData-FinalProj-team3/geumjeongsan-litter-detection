@@ -26,6 +26,7 @@ public class TrashService {
     private final IncidentSummaryRepository incidentSummaryRepository;
     private final IncidentActionRepository incidentActionRepository;
     private final IncidentManualRepository incidentManualRepository;
+    private final IncidentAutoRepository incidentAutoRepository;
     private final EntityManager entityManager;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
@@ -34,12 +35,14 @@ public class TrashService {
                        IncidentSummaryRepository incidentSummaryRepository,
                        IncidentActionRepository incidentActionRepository,
                        IncidentManualRepository incidentManualRepository,
+                       IncidentAutoRepository incidentAutoRepository,
                        EntityManager entityManager) {
         this.incidentRepository = incidentRepository;
         this.trashDetailRepository = trashDetailRepository;
         this.incidentSummaryRepository = incidentSummaryRepository;
         this.incidentActionRepository = incidentActionRepository;
         this.incidentManualRepository = incidentManualRepository;
+        this.incidentAutoRepository = incidentAutoRepository;
         this.entityManager = entityManager;
     }
 
@@ -332,9 +335,20 @@ public class TrashService {
             throw new RuntimeException("쓰레기 사건이 아닙니다: " + id);
         }
         
+        // 변경 전 값 저장 (이력 기록용)
+        String prevMemo = incident.getMemo();
+        String prevSeverity = incident.getSeverityLevel();
+        TrashDetail detail = trashDetailRepository.findByIncidentId(id).orElse(null);
+        String prevTrashType = detail != null ? detail.getMainCategory() : null;
+        String prevAmount = detail != null ? detail.getObjectAmount() : null;
+        
+        // 변경된 필드 추적
+        StringBuilder changedFields = new StringBuilder();
+        
         // incident 테이블 업데이트
-        if (memo != null) {
+        if (memo != null && !memo.equals(prevMemo)) {
             incident.setMemo(memo);
+            changedFields.append("메모, ");
         }
         if (severityLevel != null) {
             String dbSeverity = switch (severityLevel) {
@@ -343,23 +357,41 @@ public class TrashService {
                 case "하", "LOW" -> "LOW";
                 default -> incident.getSeverityLevel();
             };
-            incident.setSeverityLevel(dbSeverity);
+            if (!dbSeverity.equals(prevSeverity)) {
+                incident.setSeverityLevel(dbSeverity);
+                changedFields.append("심각도, ");
+            }
         }
         incident.setUpdatedAt(OffsetDateTime.now());
         incidentRepository.save(incident);
         
         // trash_detail 테이블 업데이트
-        TrashDetail detail = trashDetailRepository.findByIncidentId(id)
-                .orElse(null);
-        
         if (detail != null) {
-            if (trashType != null && !trashType.isEmpty()) {
+            if (trashType != null && !trashType.isEmpty() && !trashType.equals(prevTrashType)) {
                 detail.setMainCategory(trashType);
+                changedFields.append("쓰레기종류, ");
             }
-            if (amount != null && !amount.isEmpty()) {
+            if (amount != null && !amount.isEmpty() && !amount.equals(prevAmount)) {
                 detail.setObjectAmount(amount);
+                changedFields.append("양, ");
             }
             trashDetailRepository.save(detail);
+        }
+        
+        // incident_action 테이블에 수정 이력 기록
+        if (changedFields.length() > 0) {
+            // 마지막 ", " 제거
+            String changedFieldsStr = changedFields.toString().replaceAll(", $", "");
+            
+            IncidentAction action = new IncidentAction();
+            action.setIncidentId(id);
+            action.setActionType("DETAIL_UPDATED");
+            action.setPrevStatus(incident.getStatus());
+            action.setNextStatus(incident.getStatus());  // 상태는 변경되지 않음
+            action.setMemo("상세 정보 수정: " + changedFieldsStr);
+            action.setCreatedAt(OffsetDateTime.now());
+            // actorId는 추후 인증 시스템 구현 시 설정
+            incidentActionRepository.save(action);
         }
     }
 
@@ -472,6 +504,132 @@ public class TrashService {
             manual.setCreatedAt(OffsetDateTime.now());
             incidentManualRepository.save(manual);
         }
+        
+        return IncidentCreateResponse.success(incident.getId(), incidentCode);
+    }
+
+    /**
+     * Gemini 분석 결과로부터 자동 탐지 쓰레기 사건 등록
+     * 
+     * @param geminiJson Gemini 응답에서 추출한 JSON 객체 (Map 형태)
+     * @param cctvId CCTV ID (선택, null 가능)
+     * @param locationDesc 발생 위치 설명 (선택)
+     * @return 생성된 사건 정보
+     */
+    @Transactional
+    public IncidentCreateResponse createTrashFromGemini(
+            java.util.Map<String, Object> geminiJson,
+            Long cctvId,
+            String locationDesc) {
+        
+        // JSON 구조 파싱
+        @SuppressWarnings("unchecked")
+        java.util.Map<String, Object> incidentMap = (java.util.Map<String, Object>) geminiJson.get("incident");
+        @SuppressWarnings("unchecked")
+        java.util.Map<String, Object> trashDetailMap = (java.util.Map<String, Object>) geminiJson.get("trash_detail");
+        @SuppressWarnings("unchecked")
+        java.util.Map<String, Object> incidentAutoMap = (java.util.Map<String, Object>) geminiJson.get("incident_auto");
+        
+        if (incidentMap == null) {
+            throw new IllegalArgumentException("Gemini 응답에 incident 정보가 없습니다.");
+        }
+        
+        // incident_type 확인
+        String incidentType = (String) incidentMap.get("incident_type");
+        if (!"TRASH".equals(incidentType)) {
+            throw new IllegalArgumentException("쓰레기 사건이 아닙니다: " + incidentType);
+        }
+        
+        // 1. Incident 생성
+        Incident incident = new Incident();
+        incident.setIncidentType("TRASH");
+        incident.setSourceType("AUTO");
+        incident.setStatus("PENDING");
+        incident.setCctvId(cctvId);
+        incident.setDetectedAt(OffsetDateTime.now());
+        incident.setLocationDesc(locationDesc != null ? locationDesc : "CCTV 자동 탐지");
+        incident.setCreatedAt(OffsetDateTime.now());
+        incident.setUpdatedAt(OffsetDateTime.now());
+        
+        // severity_level 변환 (VERY_HIGH, HIGH, MEDIUM, LOW, VERY_LOW -> DB 형식)
+        String severityLevel = (String) incidentMap.get("severity_level");
+        if (severityLevel != null) {
+            severityLevel = severityLevel.toUpperCase();
+            // VERY_HIGH -> HIGH, VERY_LOW -> LOW로 정규화
+            if ("VERY_HIGH".equals(severityLevel)) {
+                severityLevel = "HIGH";
+            } else if ("VERY_LOW".equals(severityLevel)) {
+                severityLevel = "LOW";
+            }
+            incident.setSeverityLevel(severityLevel);
+        } else {
+            incident.setSeverityLevel("MEDIUM");
+        }
+        
+        // Incident 저장
+        incident = incidentRepository.save(incident);
+        
+        // 2. 사고 코드 생성 (T-YYMMDD-001A)
+        LocalDate date = incident.getDetectedAt().toLocalDate();
+        long count = incidentRepository.countByIncidentTypeAndDetectedAtDate("TRASH", date);
+        String sequence = String.format("%03d", count);
+        String incidentCode = String.format("T-%s-%sA",
+            incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd")),
+            sequence
+        );
+        
+        incident.setIncidentCode(incidentCode);
+        incident = incidentRepository.save(incident);
+        
+        // 3. TrashDetail 생성
+        if (trashDetailMap != null) {
+            TrashDetail detail = new TrashDetail();
+            detail.setIncidentId(incident.getId());
+            detail.setMainCategory((String) trashDetailMap.get("main_category"));
+            detail.setObjectAmount((String) trashDetailMap.get("object_amount"));
+            detail.setCreatedAt(OffsetDateTime.now());
+            trashDetailRepository.save(detail);
+        }
+        
+        // 4. IncidentAuto 생성
+        if (incidentAutoMap != null) {
+            IncidentAuto incidentAuto = new IncidentAuto();
+            incidentAuto.setIncidentId(incident.getId());
+            incidentAuto.setDetectionModel("gemini-1.5-flash");
+            incidentAuto.setDetectionVersion("1.0");
+            
+            Object confidenceObj = incidentAutoMap.get("detection_confidence");
+            if (confidenceObj != null) {
+                if (confidenceObj instanceof Number) {
+                    incidentAuto.setDetectionConfidence(((Number) confidenceObj).doubleValue());
+                } else if (confidenceObj instanceof String) {
+                    try {
+                        incidentAuto.setDetectionConfidence(Double.parseDouble((String) confidenceObj));
+                    } catch (NumberFormatException e) {
+                        incidentAuto.setDetectionConfidence(0.0);
+                    }
+                }
+            }
+            
+            incidentAuto.setConfidenceReason((String) incidentAutoMap.get("confidence_reason"));
+            incidentAuto.setSeverityReason((String) incidentAutoMap.get("severity_level_reason"));
+            incidentAuto.setDetectedFeatures((String) incidentAutoMap.get("detected_features"));
+            incidentAuto.setAutoCreatedAt(OffsetDateTime.now());
+            incidentAutoRepository.save(incidentAuto);
+        }
+        
+        // 5. IncidentAction 로그 저장 (CREATED)
+        IncidentAction action = new IncidentAction();
+        action.setIncidentId(incident.getId());
+        action.setActionType("CREATED");
+        action.setPrevStatus(null);
+        action.setNextStatus("PENDING");
+        action.setActorId(null);
+        action.setAcknowledgedAt(null);
+        action.setResolvedAt(null);
+        action.setMemo("Gemini AI 자동 탐지");
+        action.setCreatedAt(OffsetDateTime.now());
+        incidentActionRepository.save(action);
         
         return IncidentCreateResponse.success(incident.getId(), incidentCode);
     }

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Video, Camera, Map, Edit2, Save, Play } from 'lucide-react';
 import { MapContainer, TileLayer, Marker } from 'react-leaflet';
 import L from 'leaflet';
+import { markIncidentAsFalsePositive } from '../services/api';
 
 // 백엔드 IncidentDetailDto와 일치하는 인터페이스
 interface IncidentDetail {
@@ -80,6 +81,7 @@ interface IncidentDetailModalProps {
   onSave: () => void;
   onCancel: () => void;
   onFieldChange: (field: string, value: string) => void;
+  onFalsePositiveComplete?: () => void; // 오탐 처리 완료 후 콜백
 }
 
 export default function IncidentDetailModal({
@@ -91,17 +93,22 @@ export default function IncidentDetailModal({
   onEditClick,
   onSave,
   onCancel,
-  onFieldChange
+  onFieldChange,
+  onFalsePositiveComplete
 }: IncidentDetailModalProps) {
   const [selectedFrameIndex, setSelectedFrameIndex] = useState<number | null>(null);
   const [showVideoModal, setShowVideoModal] = useState(false);
   const [showImageModal, setShowImageModal] = useState(false);
+  const [showFalseReportModal, setShowFalseReportModal] = useState(false);
+  const [falseReportReason, setFalseReportReason] = useState('');
+
+  const incidentHeaderBg = 'var(--ecoguard-header-bg)';
 
   const headerColors = {
-    emergency: '#345eaa', // 수동등록과 동일하게 통일
-    fire: '#345eaa',      // 수동등록과 동일하게 통일
-    trash: '#345eaa',     // 수동등록과 동일하게 통일
-    rockfall: '#345eaa'   // 수동등록과 동일하게 통일
+    emergency: incidentHeaderBg,
+    fire: incidentHeaderBg,
+    trash: incidentHeaderBg,
+    rockfall: incidentHeaderBg
   };
 
   const headerTitles = {
@@ -120,6 +127,28 @@ export default function IncidentDetailModal({
 
   // AI 자동 탐지인지 확인 (백엔드에서 제공)
   const isAIDetection = detail.isAIDetection || false;
+
+  // 오탐처리 핸들러
+  const handleFalsePositive = async () => {
+    if (!falseReportReason.trim()) {
+      alert('오탐 사유를 입력해주세요.');
+      return;
+    }
+
+    try {
+      await markIncidentAsFalsePositive(detail.id, falseReportReason);
+      alert('오탐 처리되었습니다.');
+      setShowFalseReportModal(false);
+      setFalseReportReason('');
+      if (onFalsePositiveComplete) {
+        onFalsePositiveComplete();
+      }
+      onClose();
+    } catch (error) {
+      console.error('오탐 처리 실패:', error);
+      alert('오탐 처리에 실패했습니다.');
+    }
+  };
 
   // 낙석 + 수동등록이면 1번 캡쳐 스타일 (지도 없이 이미지/영상 박스만)
   const isManualRockfall = type === 'rockfall' && (
@@ -602,6 +631,7 @@ export default function IncidentDetailModal({
                   </button>
                   {isAIDetection && (
                     <button 
+                      onClick={() => setShowFalseReportModal(true)}
                       className="flex-1 px-4 py-2 bg-red-500 text-white hover:bg-red-600 transition-colors" 
                       style={{ borderRadius: '0px' }}
                     >
@@ -614,6 +644,59 @@ export default function IncidentDetailModal({
           </div>
         </div>
       </div>
+
+      {/* 오탐 처리 모달 */}
+      {showFalseReportModal && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" 
+          style={{ zIndex: 20000, padding: '16px' }} 
+          onClick={() => { setShowFalseReportModal(false); setFalseReportReason(''); }}
+        >
+          <div 
+            className="bg-white shadow-xl w-full" 
+            style={{ borderRadius: '8px', maxWidth: '28rem' }} 
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 모달 헤더 */}
+            <div className="p-6 border-b border-gray-200">
+              <h2 className="text-xl font-semibold text-gray-900">오탐 처리</h2>
+              <p className="text-sm text-gray-600 mt-2">오탐 사유를 입력해주세요.</p>
+            </div>
+
+            {/* 모달 내용 */}
+            <div className="p-6">
+              <textarea
+                value={falseReportReason}
+                onChange={(e) => setFalseReportReason(e.target.value)}
+                placeholder="예: 실제 화재가 아닌 일시적인 연기로 확인됨"
+                className="w-full h-32 px-3 py-2 border border-gray-300 focus:outline-none focus:ring-2 focus:ring-red-500 resize-none"
+                style={{ borderRadius: '0px' }}
+              />
+            </div>
+
+            {/* 모달 버튼 */}
+            <div className="flex gap-3 p-6 border-t border-gray-200">
+              <button
+                onClick={() => {
+                  setShowFalseReportModal(false);
+                  setFalseReportReason('');
+                }}
+                className="flex-1 px-4 py-3 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors"
+                style={{ borderRadius: '0px' }}
+              >
+                취소
+              </button>
+              <button
+                onClick={handleFalsePositive}
+                className="flex-1 px-4 py-3 bg-red-500 text-white hover:bg-red-600 transition-colors"
+                style={{ borderRadius: '0px' }}
+              >
+                확인
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 비디오 모달 (큰 화면에서 재생) */}
       {showVideoModal && detail.clipUrl && (

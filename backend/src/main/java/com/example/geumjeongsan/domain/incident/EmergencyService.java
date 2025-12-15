@@ -503,9 +503,21 @@ public class EmergencyService {
             throw new RuntimeException("응급 기록이 아닙니다: " + id);
         }
         
+        // 변경 전 값 저장 (이력 기록용)
+        String prevMemo = incident.getMemo();
+        String prevSeverity = incident.getSeverityLevel();
+        EmergencyDetail detail = emergencyDetailRepository.findByIncidentId(id).orElse(null);
+        String prevPatientName = detail != null ? detail.getPatientName() : null;
+        String prevPatientGender = detail != null ? detail.getPatientGender() : null;
+        String prevTransferHospital = detail != null ? detail.getTransferDest() : null;
+        
+        // 변경된 필드 추적
+        StringBuilder changedFields = new StringBuilder();
+        
         // incident 테이블 업데이트
-        if (memo != null) {
+        if (memo != null && !memo.equals(prevMemo)) {
             incident.setMemo(memo);
+            changedFields.append("메모, ");
         }
         if (severityLevel != null) {
             String dbSeverity = switch (severityLevel) {
@@ -514,18 +526,19 @@ public class EmergencyService {
                 case "하", "LOW" -> "LOW";
                 default -> incident.getSeverityLevel();
             };
-            incident.setSeverityLevel(dbSeverity);
+            if (!dbSeverity.equals(prevSeverity)) {
+                incident.setSeverityLevel(dbSeverity);
+                changedFields.append("심각도, ");
+            }
         }
         incident.setUpdatedAt(OffsetDateTime.now());
         incidentRepository.save(incident);
         
         // emergency_detail 테이블 업데이트
-        EmergencyDetail detail = emergencyDetailRepository.findByIncidentId(id)
-                .orElse(null);
-        
         if (detail != null) {
-            if (patientName != null && !patientName.isEmpty() && !"미상".equals(patientName)) {
+            if (patientName != null && !patientName.isEmpty() && !"미상".equals(patientName) && !patientName.equals(prevPatientName)) {
                 detail.setPatientName(patientName);
+                changedFields.append("환자명, ");
             }
             if (patientGender != null && !patientGender.isEmpty() && !"미상".equals(patientGender)) {
                 String dbGender = switch (patientGender) {
@@ -533,12 +546,32 @@ public class EmergencyService {
                     case "여성", "여" -> "F";
                     default -> patientGender;
                 };
-                detail.setPatientGender(dbGender);
+                if (!dbGender.equals(prevPatientGender)) {
+                    detail.setPatientGender(dbGender);
+                    changedFields.append("환자성별, ");
+                }
             }
-            if (transferHospital != null && !transferHospital.isEmpty()) {
+            if (transferHospital != null && !transferHospital.isEmpty() && !transferHospital.equals(prevTransferHospital)) {
                 detail.setTransferDest(transferHospital);
+                changedFields.append("이송병원, ");
             }
             emergencyDetailRepository.save(detail);
+        }
+        
+        // incident_action 테이블에 수정 이력 기록
+        if (changedFields.length() > 0) {
+            // 마지막 ", " 제거
+            String changedFieldsStr = changedFields.toString().replaceAll(", $", "");
+            
+            IncidentAction action = new IncidentAction();
+            action.setIncidentId(id);
+            action.setActionType("DETAIL_UPDATED");
+            action.setPrevStatus(incident.getStatus());
+            action.setNextStatus(incident.getStatus());  // 상태는 변경되지 않음
+            action.setMemo("상세 정보 수정: " + changedFieldsStr);
+            action.setCreatedAt(OffsetDateTime.now());
+            // actorId는 추후 인증 시스템 구현 시 설정
+            incidentActionRepository.save(action);
         }
     }
 

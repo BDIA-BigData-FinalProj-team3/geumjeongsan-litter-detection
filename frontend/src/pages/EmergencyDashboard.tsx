@@ -476,7 +476,7 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
       
       <div className="flex-1 flex flex-col relative bg-white" style={{ marginLeft: sidebarOpen && !isMobile ? '317.56px' : '0px', transition: 'margin-left 0.3s' }}>
         {/* 상단바 */}
-        <div className="shadow-md px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
+        <div className="shadow-md px-6 py-4 flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)' }}>
           <div className="flex items-center gap-3">
             <HamburgerMenuButton onClick={() => setSidebarOpen(!sidebarOpen)} />
             <HeartPulse className="w-6 h-6 text-gray-200" />
@@ -905,12 +905,29 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
               onSave={handleSave}
               onCancel={handleCancel}
               onFieldChange={handleFieldChange}
+              onFalsePositiveComplete={async () => {
+                // 오탐 처리 후 데이터 다시 로드
+                const [active, completed, statsData, hotspotsData] = await Promise.all([
+                  getActiveEmergencies(),
+                  getCompletedEmergencies(),
+                  getEmergencyStats(),
+                  getEmergencyHotspots('this_month', 1),
+                ]);
+                const filteredActive = active.filter(e => e.type === '응급');
+                const filteredCompleted = completed.filter(e => e.type === '응급');
+                const filteredActiveFinal = filteredActive.filter(e => !completedIncidents.has(e.cctvId));
+                setActiveEmergencies(filteredActiveFinal);
+                setCompletedEmergencies(filteredCompleted);
+                setEmergencyCount(filteredActiveFinal.length);
+                setStats(statsData);
+                setHotspots(hotspotsData);
+              }}
             />
           ) : (
             /* 수동 등록 - 간단한 모달 */
             <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={() => setSelectedDetail(null)}>
               <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-                <div className="flex items-center justify-between p-6 border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
+                <div className="flex items-center justify-between p-6 border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)' }}>
                   <h2 className="text-xl font-semibold text-gray-100">상세정보</h2>
                   <button onClick={() => { setSelectedDetail(null); setIsEditing(false); }} className="text-gray-100 hover:text-white transition-colors">
                     <X className="w-6 h-6" />

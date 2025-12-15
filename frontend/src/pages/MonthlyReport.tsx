@@ -453,7 +453,7 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
       
       <div className="flex-1 flex flex-col overflow-hidden relative bg-gray-50" style={{ marginLeft: sidebarOpen && !isMobile ? '317.56px' : '0px', transition: 'margin-left 0.3s' }}>
         {/* Header */}
-        <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm screen-only" style={{ backgroundColor: '#345eaa' }}>
+        <div className="border-b border-gray-200 px-6 py-4 flex items-center justify-between shadow-sm screen-only" style={{ backgroundColor: 'var(--ecoguard-header-bg)' }}>
           <div className="flex items-center gap-3">
             <HamburgerMenuButton onClick={() => setSidebarOpen(!sidebarOpen)} />
             <FileText className="w-6 h-6 text-gray-200" />

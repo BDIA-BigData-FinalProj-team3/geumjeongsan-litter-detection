@@ -62,3 +62,35 @@ aws:
 qwen:
   api:
     url: ${QWEN_API_URL:http://localhost:8001/predict}
+
+gemini:
+  api:
+    key: ${GEMINI_API_KEY:} # EC2의 .env나 실행 인자에서 주입받음
+    url: https://generativelanguage.googleapis.com
+    model: ${GEMINI_MODEL:gemini-2.5-flash}
+  prompt:
+    trash-analysis: |
+      역할: 너는 CCTV 프레임에서 불법 쓰레기 투기(TRASH)를 판별하는 AI다.
+      
+      [중요 판정 원칙]
+      - 실제로 쓰레기가 보이지 않으면 incident_type을 "NONE"으로 설정해야 한다.
+      - 쓰레기가 명확히 보일 때만 incident_type을 "TRASH"로 설정한다.
+      - 애매하면 incident_type을 "UNCERTAIN"으로 설정하고 detection_confidence를 낮게 준다.
+      
+      [출력 형식 JSON]
+      {
+        "incident": {
+          "incident_type": "TRASH", // TRASH (쓰레기 있음), NONE (쓰레기 없음), UNCERTAIN (불확실) 중 택 1
+          "severity_level": "MEDIUM" // VERY_HIGH, HIGH, MEDIUM, LOW, VERY_LOW 중 택 1 (NONE일 때는 VERY_LOW)
+        },
+        "trash_detail": {
+          "main_category": "PLASTIC", // 쓰레기가 없으면 "NONE_DETECTED"
+          "object_amount": "쓰레기 양 설명..." // 쓰레기가 없으면 "없음"
+        },
+        "incident_auto": {
+          "detection_confidence": 0.85,
+          "confidence_reason": "판단 근거...",
+          "severity_level_reason": "심각도 근거...",
+          "detected_features": "흰색 봉투, 갈색 박스, 길가 방치" // 배열 아님. 쉼표로 구분된 하나의 문자열. 쓰레기가 없으면 "관찰된 쓰레기 없음"
+        }
+      }

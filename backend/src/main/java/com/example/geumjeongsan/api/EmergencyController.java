@@ -270,4 +270,27 @@ public class EmergencyController {
                     .body(Map.of("error", e.getMessage(), "details", e.getClass().getSimpleName()));
         }
     }
+    
+    /**
+     * 응급 사건 오탐 처리
+     * POST /api/emergency/{id}/false-positive
+     */
+    @PostMapping("/{id}/false-positive")
+    public ResponseEntity<?> markEmergencyAsFalsePositive(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> request) {
+        try {
+            log.info("🚫 [Emergency] Marking as false positive - id: {}", id);
+            String reason = request.get("reason");
+            incidentService.markAsFalsePositive(id, reason);
+            return ResponseEntity.ok(Map.of("message", "오탐 처리 완료"));
+        } catch (RuntimeException e) {
+            log.error("❌ [Emergency] Failed to mark as false positive: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            log.error("❌ [Emergency] Failed to mark as false positive: {}", e.getMessage(), e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
 }

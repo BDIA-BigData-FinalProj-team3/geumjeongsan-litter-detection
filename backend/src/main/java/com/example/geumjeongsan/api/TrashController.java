@@ -235,4 +235,23 @@ public class TrashController {
             throw e;
         }
     }
+    
+    /**
+     * 쓰레기 사건 오탐 처리
+     * POST /api/trash/{id}/false-positive
+     */
+    @PostMapping("/{id}/false-positive")
+    public Map<String, String> markTrashAsFalsePositive(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> request) {
+        try {
+            log.info("🚫 [Trash] Marking as false positive - id: {}", id);
+            String reason = request.get("reason");
+            incidentService.markAsFalsePositive(id, reason);
+            return Map.of("message", "오탐 처리 완료");
+        } catch (RuntimeException e) {
+            log.error("❌ [Trash] Failed to mark as false positive: {}", e.getMessage());
+            throw e;
+        }
+    }
 }

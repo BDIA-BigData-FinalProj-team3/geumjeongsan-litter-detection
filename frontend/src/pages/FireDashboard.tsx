@@ -425,7 +425,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
       
       <div className="flex-1 flex flex-col relative bg-white" style={{ marginLeft: sidebarOpen && !isMobile ? '317.56px' : '0px', transition: 'margin-left 0.3s' }}>
         {/* 상단바 - 반응형 */}
-        <div className="shadow-md flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#345eaa', padding: isMobile ? '12px 16px' : '16px 24px' }}>
+        <div className="shadow-md flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)', padding: isMobile ? '12px 16px' : '16px 24px' }}>
           <div className="flex items-center" style={{ gap: isMobile ? '8px' : '12px' }}>
             <HamburgerMenuButton onClick={() => setSidebarOpen(!sidebarOpen)} />
             <Flame className={isMobile ? 'w-5 h-5 text-gray-200' : 'w-6 h-6 text-gray-200'} />
@@ -810,7 +810,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={() => setSelectedDetail(null)}>
           <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             {/* 모달 헤더 */}
-            <div className="flex items-center justify-between p-6 border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
+            <div className="flex items-center justify-between p-6 border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)' }}>
               <h2 className="text-xl font-semibold text-gray-100">상세정보</h2>
               <button onClick={() => setSelectedDetail(null)} className="text-gray-100 hover:text-white transition-colors">
                 <X className="w-6 h-6" />
@@ -1067,9 +1067,6 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                         <Edit2 className="w-4 h-4" />
                         수정
                       </button>
-                      <button className="flex-1 px-4 py-2 bg-red-500 text-white hover:bg-red-600 transition-colors" style={{ borderRadius: '0px' }}>
-                        오탐처리
-                      </button>
                     </>
                   )}
                 </div>
@@ -1091,16 +1088,33 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
               isEditing={isEditing}
               editedDetail={editedDetail as any}
               onClose={() => { setSelectedDetail(null); setIsEditing(false); }}
-              onEditClick={() => { setEditedDetail(selectedDetail); setIsEditing(true); }}
-              onSave={() => { if (editedDetail) { setSelectedDetail(editedDetail); setIsEditing(false); } }}
-              onCancel={() => { setEditedDetail(selectedDetail); setIsEditing(false); }}
-              onFieldChange={(field, value) => { if (editedDetail) { setEditedDetail({...editedDetail, [field]: value}); } }}
+              onEditClick={handleEditClick}
+              onSave={handleSave}
+              onCancel={handleCancel}
+              onFieldChange={handleFieldChange}
+              onFalsePositiveComplete={async () => {
+                // 오탐 처리 후 데이터 다시 로드
+                const [active, completed, statsData, hotspotsData] = await Promise.all([
+                  getActiveFires(),
+                  getCompletedFires(),
+                  getFireStats(),
+                  getFireHotspots('this_month', 1),
+                ]);
+                const filteredActive = active.filter(f => f.type === '화재');
+                const filteredCompleted = completed.filter(f => f.type === '화재');
+                const filteredActiveFinal = filteredActive.filter(f => !completedIncidents.has(f.cctvId));
+                setActiveFires(filteredActiveFinal);
+                setCompletedFires(filteredCompleted);
+                setFireCount(filteredActiveFinal.length);
+                setStats(statsData);
+                setHotspots(hotspotsData);
+              }}
             />
           ) : (
             /* 수동 등록 - 간단한 모달 */
             <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={() => setSelectedDetail(null)}>
               <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-                <div className="flex items-center justify-between p-6 border-b border-gray-200" style={{ backgroundColor: '#345eaa' }}>
+                <div className="flex items-center justify-between p-6 border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)' }}>
                   <h2 className="text-xl font-semibold text-gray-100">상세정보</h2>
                   <button onClick={() => { setSelectedDetail(null); setIsEditing(false); }} className="text-gray-100 hover:text-white transition-colors">
                     <X className="w-6 h-6" />

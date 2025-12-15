@@ -3703,7 +3703,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" style={{ zIndex: 10000, padding: isMobile ? '0' : '16px' }} onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }}>
           <div className="bg-white shadow-xl w-full overflow-y-auto" style={{ maxWidth: isMobile ? '100vw' : '1100px', maxHeight: isMobile ? '100vh' : '95vh', borderRadius: isMobile ? '0' : '8px' }} onClick={(e) => e.stopPropagation()}>
             {/* 모달 헤더 */}
-            <div className="flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#DC2626', padding: isMobile ? '12px 16px' : '16px' }}>
+            <div className="flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)', padding: isMobile ? '12px 16px' : '16px' }}>
               <h2 className="font-semibold text-white" style={{ fontSize: isMobile ? '18px' : '20px' }}>화재 상세정보</h2>
               <button onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }} className="text-white hover:text-gray-200 transition-colors">
                 <X className={isMobile ? 'w-5 h-5' : 'w-6 h-6'} />
@@ -4018,7 +4018,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" style={{ zIndex: 10000, padding: isMobile ? '0' : '16px' }} onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }}>
           <div className="bg-white shadow-xl w-full overflow-y-auto" style={{ maxWidth: isMobile ? '100vw' : '1100px', maxHeight: isMobile ? '100vh' : '95vh', borderRadius: isMobile ? '0' : '8px' }} onClick={(e) => e.stopPropagation()}>
             {/* 모달 헤더 */}
-            <div className="flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#9333EA', padding: isMobile ? '12px 16px' : '16px' }}>
+            <div className="flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)', padding: isMobile ? '12px 16px' : '16px' }}>
               <h2 className="font-semibold text-white" style={{ fontSize: isMobile ? '18px' : '20px' }}>응급 상세정보</h2>
               <button onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }} className="text-white hover:text-gray-200 transition-colors">
                 <X className={isMobile ? 'w-5 h-5' : 'w-6 h-6'} />
@@ -4392,7 +4392,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" style={{ zIndex: 10000, padding: isMobile ? '0' : '16px' }} onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }}>
           <div className="bg-white shadow-xl w-full overflow-y-auto" style={{ maxWidth: isMobile ? '100vw' : '1100px', maxHeight: isMobile ? '100vh' : '95vh', borderRadius: isMobile ? '0' : '8px' }} onClick={(e) => e.stopPropagation()}>
             {/* 모달 헤더 */}
-            <div className="flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: '#10B981', padding: isMobile ? '12px 16px' : '16px' }}>
+            <div className="flex items-center justify-between border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)', padding: isMobile ? '12px 16px' : '16px' }}>
               <h2 className="font-semibold text-white" style={{ fontSize: isMobile ? '18px' : '20px' }}>쓰레기 투기 상세정보</h2>
               <button onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }} className="text-white hover:text-gray-200 transition-colors">
                 <X className={isMobile ? 'w-5 h-5' : 'w-6 h-6'} />
@@ -4921,11 +4921,31 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                 취소
               </button>
               <button
-                onClick={() => {
-                  // TODO: 실제 오탐 처리 API 호출
-                  alert('오탐 처리되었습니다.\n사유: ' + (falseReportReason || '(사유 없음)'));
-                  setShowFalseReportModal(false);
-                  setFalseReportReason('');
+                onClick={async () => {
+                  if (!incidentDetailPopup?.detail?.id) {
+                    alert('사건 ID를 찾을 수 없습니다.');
+                    return;
+                  }
+
+                  try {
+                    await markIncidentAsFalsePositive(incidentDetailPopup.detail.id, falseReportReason);
+                    alert('오탐 처리되었습니다.');
+                    setShowFalseReportModal(false);
+                    setFalseReportReason('');
+                    setIncidentDetailPopup(null);
+                    
+                    // 데이터 다시 로드
+                    const [active, stats] = await Promise.all([
+                      getAllIncidentsList('active'),
+                      getAllIncidentsStats(),
+                    ]);
+                    const filteredActiveFinal = active.filter(i => !completedIncidents.has(i.cctvId));
+                    setIncidents(filteredActiveFinal);
+                    setKpiStats(stats);
+                  } catch (error) {
+                    console.error('오탐 처리 실패:', error);
+                    alert('오탐 처리에 실패했습니다.');
+                  }
                 }}
                 className="flex-1 px-4 py-3 bg-red-500 text-white hover:bg-red-600 transition-colors"
                 style={{ borderRadius: '0px' }}
