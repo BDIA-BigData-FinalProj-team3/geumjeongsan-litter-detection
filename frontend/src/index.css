@@ -3571,3 +3571,19 @@ html {
     opacity: 0.8;
   }
 }
+
+/* ========================================
+   금정산 맵 - 전문가급 비네팅 효과
+   ======================================== */
+
+/* 금정산 경계 밖 영역 - 전문가급 비네팅 효과 */
+.dim-mask-outside {
+  filter: saturate(0.3) blur(0.5px); /* 채도 낮추고 약간 블러 */
+  mix-blend-mode: multiply; /* 곱하기 블렌드로 더 자연스럽게 */
+  transition: opacity 0.5s ease; /* 부드러운 전환 */
+}
+
+/* 위성 지도 타일 채도 낮추기 (경계 밖과 더 어울리도록) */
+.leaflet-tile-container {
+  transition: filter 0.3s ease;
+}

@@ -16,10 +16,19 @@ public class RockfallDashboardResponse {
     private Long todayCount;           // 당일 발생 건수
     private Long pendingCount;         // 처리 대기중 건수
     private Double avgResponseTime;    // 평균 대응시간 (분)
-    private List<String> riskAreas;    // 위험지역 위치
+    private List<RiskArea> riskAreas;  // 위험지역 위치 + 발생 건수
     
     // 목록
     private List<RockfallIncidentItem> activeIncidents;    // 발생
     private List<RockfallIncidentItem> resolvedIncidents;  // 처리완료
+    
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class RiskArea {
+        private String address;      // 위치
+        private Long incidentCount;  // 발생 건수
+    }
 }
 

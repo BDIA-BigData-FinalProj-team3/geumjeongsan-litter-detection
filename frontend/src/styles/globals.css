@@ -237,6 +237,18 @@ html {
   font-size: var(--font-size);
 }
 
+@media (min-width: 1921px) {
+  body {
+    overflow-x: hidden;
+  }
+  
+  #root {
+    width: 1920px;
+    transform: scale(calc(100vw / 1920));
+    transform-origin: top left;
+  }
+}
+
 /* Leaflet 마커 애니메이션 */
 @keyframes pulse {
   0%, 100% {

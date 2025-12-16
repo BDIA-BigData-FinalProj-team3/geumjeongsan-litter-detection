@@ -1077,7 +1077,10 @@ export const getRockfallHotspots = async (
     // 백엔드에 별도 hotspots API가 없어서 dashboard의 riskAreas로 대체
     const dashboard = await getRockfallDashboard();
     const areas = dashboard?.riskAreas || [];
-    return areas.slice(0, limit).map((address) => ({ address }));
+    return areas.slice(0, limit).map((area) => ({
+      address: area.address,
+      incidentCount: area.incidentCount
+    }));
   } catch (error) {
     console.error('Error fetching rockfall hotspots:', error);
     return [];
@@ -1357,8 +1360,11 @@ export const getEmergencyStats = async (): Promise<EmergencyStatsResponse> => {
  * 사고다발구간 조회 (간단한 형식)
  */
 export interface HotspotResponse {
-  location: string;
-  count: number;
+  location?: string;
+  count?: number;
+  address?: string;
+  cctvCode?: string;
+  incidentCount?: number;
 }
 
 export const getEmergencyHotspots = async (

@@ -71,8 +71,8 @@ public class RockfallService {
             }
         }
 
-        // 위험지역 위치 (쿼리 실패해도 대시보드는 살아있게)
-        List<String> riskAreas = List.of();
+        // 위험지역 위치 + 발생 건수 (쿼리 실패해도 대시보드는 살아있게)
+        List<RockfallDashboardResponse.RiskArea> riskAreas = List.of();
         try {
             String riskAreaSql = "SELECT COALESCE(c.location_desc, c.name, 'CCTV-' || TO_CHAR(c.cctv_id, 'FM000')), COUNT(*) as cnt " +
                                 "FROM incident i " +
@@ -85,7 +85,10 @@ public class RockfallService {
             @SuppressWarnings("unchecked")
             List<Object[]> riskResults = riskQuery.getResultList();
             riskAreas = riskResults.stream()
-                    .map(row -> (String) row[0])
+                    .map(row -> RockfallDashboardResponse.RiskArea.builder()
+                            .address((String) row[0])
+                            .incidentCount(((Number) row[1]).longValue())
+                            .build())
                     .collect(Collectors.toList());
         } catch (Exception ignore) {
             // TODO: 필요하면 Logger 추가해서 에러 로그 남기기

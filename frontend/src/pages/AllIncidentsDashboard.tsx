@@ -65,6 +65,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
   const [isEditing, setIsEditing] = useState(false);
   const [editedDetail, setEditedDetail] = useState<AllIncidentDetail | null>(null);
   const [searchCode, setSearchCode] = useState('');
+  const [searchQuery, setSearchQuery] = useState(''); // 통합 검색어 저장
   const [highlightedCode, setHighlightedCode] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState<number | null>(null);
@@ -128,7 +129,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
   
   // 페이지네이션
   const [currentPage, setCurrentPage] = useState(0);
-  const pageSize = 10;
+  const pageSize = 8;
   
   // viewMode 변경 시 페이지 리셋
   useEffect(() => {
@@ -186,8 +187,20 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
 
   const incidents = viewMode === 'active' ? activeIncidents : completedIncidentsList;
 
-  const filteredIncidents = highlightedCode 
-    ? incidents.filter(e => e.accidentCode.toUpperCase() === highlightedCode.toUpperCase())
+  // 통합 검색 필터링
+  const filteredIncidents = searchQuery.trim()
+    ? incidents.filter(incident => {
+        const query = searchQuery.toLowerCase();
+        return (
+          incident.type?.toLowerCase().includes(query) ||
+          incident.accidentCode?.toUpperCase().includes(searchQuery.toUpperCase()) ||
+          incident.cctvId?.toLowerCase().includes(query) ||
+          incident.location?.toLowerCase().includes(query) ||
+          incident.handler?.toLowerCase().includes(query) ||
+          incident.status?.toLowerCase().includes(query) ||
+          incident.severity?.toLowerCase().includes(query)
+        );
+      })
     : incidents;
   
   // 페이지네이션 적용
@@ -358,37 +371,60 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
     setEditedDetail(null);
   };
 
-  const handleFieldChange = (field: keyof AllIncidentDetail, value: string) => {
+  const handleFieldChange = (field: string, value: string) => {
     if (editedDetail) {
       setEditedDetail({ ...editedDetail, [field]: value });
     }
   };
 
-  const handleSearch = (code: string) => {
+  const handleSearch = (query: string) => {
     setSearchError(null);
-    const trimmedCode = code.trim();
-    if (!trimmedCode) {
+    const trimmedQuery = query.trim();
+    setSearchQuery(trimmedQuery); // 검색어 저장
+    setCurrentPage(0); // 첫 페이지로 리셋
+    
+    if (!trimmedQuery) {
       setHighlightedCode(null);
       setSelectedDetail(null);
       return;
     }
 
-    const upperCode = trimmedCode.toUpperCase();
-    const allIncidents = [...activeIncidents, ...completedIncidentsList];
-    const found = allIncidents.find(e => e.accidentCode.toUpperCase() === upperCode);
-    
-    if (found) {
-      setHighlightedCode(upperCode);
-      if (completedIncidentsList.find(e => e.id === found.id)) {
-        setViewMode('completed');
+    // 검색 결과 확인
+    const currentIncidents = viewMode === 'active' ? activeIncidents : completedIncidentsList;
+    const lowerQuery = trimmedQuery.toLowerCase();
+    const hasResults = currentIncidents.some(incident => 
+      incident.type?.toLowerCase().includes(lowerQuery) ||
+      incident.accidentCode?.toUpperCase().includes(trimmedQuery.toUpperCase()) ||
+      incident.cctvId?.toLowerCase().includes(lowerQuery) ||
+      incident.location?.toLowerCase().includes(lowerQuery) ||
+      incident.handler?.toLowerCase().includes(lowerQuery) ||
+      incident.status?.toLowerCase().includes(lowerQuery) ||
+      incident.severity?.toLowerCase().includes(lowerQuery)
+    );
+
+    if (!hasResults) {
+      // 다른 모드에서 결과가 있는지 확인
+      const otherIncidents = viewMode === 'active' ? completedIncidentsList : activeIncidents;
+      const hasResultsInOther = otherIncidents.some(incident => 
+        incident.type?.toLowerCase().includes(lowerQuery) ||
+        incident.accidentCode?.toUpperCase().includes(trimmedQuery.toUpperCase()) ||
+        incident.cctvId?.toLowerCase().includes(lowerQuery) ||
+        incident.location?.toLowerCase().includes(lowerQuery) ||
+        incident.handler?.toLowerCase().includes(lowerQuery) ||
+        incident.status?.toLowerCase().includes(lowerQuery) ||
+        incident.severity?.toLowerCase().includes(lowerQuery)
+      );
+
+      if (hasResultsInOther) {
+        // 다른 모드로 전환
+        setViewMode(viewMode === 'active' ? 'completed' : 'active');
       } else {
-        setViewMode('active');
+        setHighlightedCode(null);
+        setSelectedDetail(null);
       }
     } else {
       setHighlightedCode(null);
       setSelectedDetail(null);
-      setSearchError('검색 결과가 없습니다.');
-      setTimeout(() => setSearchError(null), 3000);
     }
   };
 
@@ -397,6 +433,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
       case '화재': return <Flame className="w-4 h-4" />;
       case '응급': return <HeartPulse className="w-4 h-4" />;
       case '쓰레기': return <Trash2 className="w-4 h-4" />;
+      case '낙석': return <Mountain className="w-4 h-4" />;
       default: return <AlertTriangle className="w-4 h-4" />;
     }
   };
@@ -406,6 +443,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
       case '화재': return 'bg-red-100 text-red-700';
       case '응급': return 'bg-orange-100 text-orange-700';
       case '쓰레기': return 'bg-green-100 text-green-700';
+      case '낙석': return 'bg-amber-100 text-amber-700';
       default: return 'bg-gray-100 text-gray-700';
     }
   };
@@ -443,11 +481,11 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
         </div>
 
         <div className="flex-1">
-          <div className="p-6 bg-gray-50 min-h-screen">
+          <div className="p-4 bg-gray-50">
             <div className="max-w-7xl mx-auto">
               {/* KPI Cards - 높이 줄임 */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-                <div className="bg-white p-4 shadow-sm border border-gray-200 rounded-lg">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-2">
+                <div className="bg-white py-2 px-4 shadow-sm border border-gray-200 rounded-lg">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm text-gray-600">당일 발생</span>
                     <AlertTriangle className="w-4 h-4 text-red-500" />
@@ -455,7 +493,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                   <div className="text-gray-900 text-xl font-semibold">{stats.todayCount}건</div>
                 </div>
 
-                <div className="bg-white p-4 shadow-sm border border-gray-200 rounded-lg">
+                <div className="bg-white py-2 px-4 shadow-sm border border-gray-200 rounded-lg">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm text-gray-600">대기중</span>
                     <Activity className="w-4 h-4 text-orange-500" />
@@ -463,7 +501,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                   <div className="text-gray-900 text-xl font-semibold">{stats.pendingCount}건</div>
                 </div>
 
-                <div className="bg-white p-4 shadow-sm border border-gray-200 rounded-lg">
+                <div className="bg-white py-2 px-4 shadow-sm border border-gray-200 rounded-lg">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm text-gray-600">월 평균 처리 시간</span>
                     <Clock className="w-4 h-4 text-blue-500" />
@@ -471,9 +509,10 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                   <div className="text-gray-900 text-xl font-semibold">{stats.avgResponseTimeFormatted}</div>
                 </div>
 
-                <div className="bg-white p-4 shadow-sm border border-gray-200 rounded-lg relative">
+                <div className="bg-white py-2 px-4 shadow-sm border border-gray-200 rounded-lg relative">
                   <div 
-                    className="absolute top-2 right-2"
+                    className="absolute right-2"
+                    style={{ bottom: '4px' }}
                     onMouseEnter={() => setShowTooltip(true)}
                     onMouseLeave={() => setShowTooltip(false)}
                   >
@@ -499,7 +538,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
 
               {/* 전체 사건 목록 */}
               <div className="bg-white shadow-sm border border-gray-200" style={{ borderRadius: '0px' }}>
-                <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+                <div className="px-6 py-3 border-b border-gray-200 flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <h2 className="text-gray-900">전체 사건 목록</h2>
                     <span className="text-sm text-gray-600">총 {filteredIncidents.length}건</span>
@@ -533,26 +572,34 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                         type="text"
                         value={searchCode}
                         onChange={(e) => {
-                          setSearchCode(e.target.value);
+                          const value = e.target.value;
+                          setSearchCode(value);
                           setSearchError(null);
+                          // 입력이 비워지면 검색도 초기화
+                          if (!value.trim()) {
+                            setSearchQuery('');
+                            setCurrentPage(0);
+                          }
                         }}
                         onKeyPress={(e) => {
                           if (e.key === 'Enter') {
                             handleSearch(searchCode);
                           }
                         }}
-                        placeholder="사고 코드 검색"
-                        className={`px-3 py-1.5 pr-8 text-sm border focus:outline-none focus:ring-2 ${
+                        placeholder="유형, 사고코드, CCTV ID 등 검색"
+                        className={`pl-3 pr-10 py-1.5 text-sm border focus:outline-none focus:ring-2 ${
                           searchError ? 'border-red-300 focus:ring-red-500' : 'border-gray-300 focus:ring-emerald-500'
                         }`}
-                        style={{ borderRadius: '9999px', width: '200px' }}
+                        style={{ borderRadius: '9999px', width: '240px' }}
                       />
                       <button
+                        type="button"
                         onClick={(e) => {
                           e.stopPropagation();
+                          e.preventDefault();
                           handleSearch(searchCode);
                         }}
-                        className="absolute right-1 top-1/2 transform -translate-y-1/2 p-1 hover:bg-gray-100 rounded-full"
+                        className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1.5 hover:bg-gray-100 rounded-full transition-colors"
                         style={{ borderRadius: '9999px' }}
                       >
                         <Search className="w-4 h-4 text-gray-500" />
@@ -588,12 +635,11 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                   </div>
                 </div>
                 
-                <div className="overflow-x-auto overflow-y-visible">
-                  <table className="w-full" style={{ tableLayout: 'fixed' }}>
+                <table className="w-full" style={{ tableLayout: 'auto' }}>
                     <thead className="bg-gray-50 border-b border-gray-200">
                       <tr>
                         {viewMode === 'active' && (
-                          <th className="px-6 py-3 text-center text-gray-600 text-sm w-16">
+                          <th className="px-3 py-2 text-center text-gray-600 text-sm w-16">
                             <input 
                               type="checkbox" 
                               checked={selectedIds.length === activeIncidents.length && activeIncidents.length > 0}
@@ -602,29 +648,43 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                             />
                           </th>
                         )}
-                        <th className="px-6 py-3 text-left text-gray-600 text-sm" style={{ minWidth: '150px', width: '150px' }}>유형</th>
-                        <th className="px-6 py-3 text-left text-gray-600 text-sm">사고 코드</th>
-                        <th className="px-6 py-3 text-left text-gray-600 text-sm" style={{ minWidth: '130px', width: '130px' }}>탐지근거</th>
-                        <th className="px-6 py-3 text-left text-gray-600 text-sm">지역명/CCTV ID</th>
-                        <th className="px-6 py-3 text-left text-gray-600 text-sm">발생시간</th>
+                        <th className="px-3 py-2 text-left text-gray-600 text-sm" style={{ minWidth: '140px' }}>유형</th>
+                        <th className="px-3 py-2 text-left text-gray-600 text-sm" style={{ minWidth: '150px' }}>사고 코드</th>
+                        <th className="px-3 py-2 text-left text-gray-600 text-sm" style={{ minWidth: '110px' }}>등록 방식</th>
+                        <th className="px-3 py-2 text-left text-gray-600 text-sm" style={{ minWidth: '180px' }}>지역명/CCTV ID</th>
+                        <th className="px-3 py-2 text-left text-gray-600 text-sm" style={{ minWidth: '150px' }}>발생시간</th>
                         {viewMode === 'completed' && (
                           <>
-                            <th className="px-6 py-3 text-left text-gray-600 text-sm">처리완료시각</th>
-                            <th className="px-6 py-3 text-left text-gray-600 text-sm">소요시간</th>
+                            <th className="px-3 py-2 text-left text-gray-600 text-sm" style={{ minWidth: '150px' }}>처리완료시각</th>
+                            <th className="px-3 py-2 text-left text-gray-600 text-sm" style={{ minWidth: '100px' }}>소요시간</th>
                           </>
                         )}
                         {viewMode === 'active' && (
-                          <th className="px-6 py-3 text-left text-gray-600 text-sm">심각도</th>
+                          <th className="px-3 py-2 text-left text-gray-600 text-sm" style={{ minWidth: '80px' }}>심각도</th>
                         )}
                         {viewMode === 'active' && (
-                          <th className="px-6 py-3 text-left text-gray-600 text-sm">상태</th>
+                          <th className="px-3 py-2 text-left text-gray-600 text-sm" style={{ minWidth: '100px' }}>상태</th>
                         )}
-                        <th className="px-6 py-3 text-left text-gray-600 text-sm">처리자</th>
+                        <th className="px-3 py-2 text-left text-gray-600 text-sm" style={{ minWidth: '100px' }}>처리자</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
-                      {paginatedIncidents.map((incident) => {
-                        const isHighlighted = highlightedCode && incident.accidentCode.toUpperCase() === highlightedCode.toUpperCase();
+                      {paginatedIncidents.length === 0 ? (
+                        <tr>
+                          <td 
+                            colSpan={viewMode === 'active' ? 9 : 8} 
+                            className="px-6 py-12 text-center"
+                          >
+                            <div className="flex flex-col items-center gap-3">
+                              <Search className="w-12 h-12 text-gray-300" />
+                              <p className="text-gray-500 text-lg font-medium">검색 결과가 없습니다</p>
+                              <p className="text-gray-400 text-sm">다른 검색어로 시도해보세요</p>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
+                        paginatedIncidents.map((incident) => {
+                          const isHighlighted = highlightedCode && incident.accidentCode.toUpperCase() === highlightedCode.toUpperCase();
                         return (
                         <tr 
                           key={incident.id} 
@@ -658,7 +718,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                           }}
                         >
                           {viewMode === 'active' && (
-                            <td className="px-6 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                            <td className="px-3 py-2 text-center" onClick={(e) => e.stopPropagation()}>
                               <input 
                                 type="checkbox" 
                                 checked={selectedIds.includes(incident.id)}
@@ -667,14 +727,14 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                               />
                             </td>
                           )}
-                          <td className="px-6 py-4" style={{ minWidth: '150px', width: '150px' }}>
-                            <span className={`inline-flex items-center gap-1.5 px-3 py-1 text-xs font-semibold whitespace-nowrap ${getTypeColor(incident.type)}`} style={{ borderRadius: '0px' }}>
+                          <td className="px-3 py-2" style={{ minWidth: '140px' }}>
+                            <span className={`items-center gap-1.5 px-3 py-1 text-xs font-semibold whitespace-nowrap ${getTypeColor(incident.type)}`} style={{ borderRadius: '0px', display: 'inline-flex' }}>
                               {getTypeIcon(incident.type)}
                               {incident.type}
                             </span>
                           </td>
-                          <td className="px-6 py-4 text-gray-900">{incident.accidentCode}</td>
-                          <td className="px-6 py-4" style={{ minWidth: '130px', width: '130px' }}>
+                          <td className="px-3 py-2 text-gray-900" style={{ minWidth: '150px' }}>{incident.accidentCode}</td>
+                          <td className="px-3 py-2" style={{ minWidth: '110px' }}>
                             <span className={`inline-flex items-center px-2 py-1 text-xs font-medium whitespace-nowrap ${
                               incident.detectionBasis?.includes('AI') || incident.detectionBasis?.includes('자동')
                                 ? 'bg-blue-100 text-blue-700'
@@ -683,19 +743,19 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                               {incident.detectionBasis?.includes('AI') || incident.detectionBasis?.includes('자동') ? 'AI 자동 탐지' : '수동 등록'}
                             </span>
                           </td>
-                          <td className="px-6 py-4">
+                          <td className="px-3 py-2" style={{ minWidth: '180px' }}>
                             <div className="text-gray-900">{incident.location}</div>
                             <div className="text-xs text-gray-500">{incident.cctvId}</div>
                           </td>
-                          <td className="px-6 py-4 text-gray-600 text-sm">{incident.time}</td>
+                          <td className="px-3 py-2 text-gray-600 text-sm" style={{ minWidth: '150px' }}>{incident.time}</td>
                           {viewMode === 'completed' && (
                             <>
-                              <td className="px-6 py-4 text-gray-600 text-sm">{incident.responseTime || '-'}</td>
-                              <td className="px-6 py-4 text-gray-600">{incident.duration || '-'}</td>
+                              <td className="px-3 py-2 text-gray-600 text-sm" style={{ minWidth: '150px' }}>{incident.responseTime || '-'}</td>
+                              <td className="px-3 py-2 text-gray-600" style={{ minWidth: '100px' }}>{incident.duration || '-'}</td>
                             </>
                           )}
                           {viewMode === 'active' && (
-                            <td className="px-6 py-4">
+                            <td className="px-3 py-2" style={{ minWidth: '80px' }}>
                               <span className={`px-2 py-1 text-xs ${
                                 incident.severity === '상' 
                                   ? 'bg-red-100 text-red-700' 
@@ -708,7 +768,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                             </td>
                           )}
                           {viewMode === 'active' && (
-                            <td className="px-6 py-4 overflow-visible" onClick={(e) => e.stopPropagation()}>
+                            <td className="px-3 py-2 overflow-visible" onClick={(e) => e.stopPropagation()} style={{ minWidth: '100px' }}>
                               <div className="relative inline-block">
                                 <button 
                                   onClick={(e) => {
@@ -777,17 +837,17 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                               </div>
                             </td>
                           )}
-                          <td className="px-6 py-4 text-gray-600">{incident.handler}</td>
+                          <td className="px-3 py-2 text-gray-600" style={{ minWidth: '100px' }}>{incident.handler}</td>
                         </tr>
                         );
-                      })}
+                      })
+                      )}
                     </tbody>
                   </table>
-                </div>
                 
                 {/* 페이지네이션 - 2페이지 이상일 때만 표시 */}
                 {totalPages > 1 && (
-                  <div className="flex items-center justify-end gap-4 px-6 py-4 border-t border-gray-200 bg-white">
+                  <div className="flex items-center justify-end gap-4 px-6 py-2 border-t border-gray-200 bg-white">
                     <div className="text-sm text-gray-600">
                       {currentPage + 1} / {totalPages} 페이지
                     </div>
@@ -1717,7 +1777,8 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                   getAllIncidentsList('completed'),
                   getAllIncidentsStats(),
                 ]);
-                const filteredActiveFinal = active.filter(i => !completedIncidents.has(i.cctvId));
+                const completedCctvIds = new Set(completed.map(c => c.cctvId));
+                const filteredActiveFinal = active.filter(i => !completedCctvIds.has(i.cctvId));
                 setActiveIncidents(filteredActiveFinal);
                 setCompletedIncidentsList(completed);
                 setStats(statsData);
@@ -1746,7 +1807,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                         <div><label className="text-sm text-gray-600">심각도</label><p className="mt-1"><span className={`px-2 py-1 text-xs ${selectedDetail.severity === '상' ? 'bg-red-100 text-red-700' : selectedDetail.severity === '중' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}`} style={{ borderRadius: '0px' }}>{selectedDetail.severity}</span></p></div>
                         <div><label className="text-sm text-gray-600">상태</label><p className="text-gray-900 mt-1">{selectedDetail.status}</p></div>
                         <div><label className="text-sm text-gray-600">처리자</label><p className="text-gray-900 mt-1">{selectedDetail.handler}</p></div>
-                        <div><label className="text-sm text-gray-600">탐지근거</label><p className="text-gray-900 mt-1">수동 등록</p></div>
+                        <div><label className="text-sm text-gray-600">등록 방식</label><p className="text-gray-900 mt-1">수동 등록</p></div>
                       </div>
                       {/* 오른쪽 열 - 추가 정보 */}
                       <div className="flex-1 space-y-4">
