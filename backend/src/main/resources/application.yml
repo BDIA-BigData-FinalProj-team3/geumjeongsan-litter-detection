@@ -3,6 +3,11 @@ spring:
     url: ${DATABASE_URL}
     username: ${DATABASE_USERNAME}
     password: ${DATABASE_PASSWORD}
+  servlet:
+    multipart:
+      # 로컬 영상 업로드(테스트용)에서 413(Request Entity Too Large) 방지
+      max-file-size: 500MB
+      max-request-size: 500MB
   jpa:
     hibernate:
       ddl-auto: none
@@ -18,8 +23,19 @@ spring:
 
 server: 
   port: 8080
+  tomcat:
+    # 일부 환경에서 multipart 요청이 413으로 막히는 경우를 대비
+    max-http-form-post-size: 20MB
+    max-swallow-size: 20MB
 
 app:
+  # FFmpeg 실행 커맨드/경로 (기본: PATH의 ffmpeg)
+  # Windows 로컬에서 PATH 문제가 있으면 app.ffmpeg.command를 절대경로로 설정 가능
+  # 예) app:
+  #       ffmpeg:
+  #         command: C:/bin/ffmpeg.exe
+  ffmpeg:
+    command: ${FFMPEG_COMMAND:ffmpeg}
   deployment:
     time: ${DEPLOYMENT_TIME:}
   build:

@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.util.List;
 
@@ -52,46 +53,81 @@ public class GeminiService {
             return "Error: Prompt cannot be empty.";
         }
 
-        String requestUrl = baseUrl + "/v1beta/models/" + model + ":generateContent?key=" + apiKey;
         GeminiRequest requestBody = GeminiRequest.create(prompt, base64Images);
 
         try {
-            log.info("🤖 [Gemini] Calling API with {} image(s)", 
-                    base64Images != null ? base64Images.size() : 0);
+            int maxAttempts = 3;
+            long backoffMs = 1500;
 
-            String rawResponse = webClientBuilder.build()
-                    .post()
-                    .uri(requestUrl)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(requestBody)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block(); // 동기 호출 (비동기 필요시 subscribe 사용)
+            // 2.5 계열이 503을 자주 내면 1.5로 fallback (키/프로젝트 정책에 따라 허용 모델이 다를 수 있음)
+            String[] candidateModels = new String[] { model };
+            Exception lastException = null;
 
-            // JSON 파싱해서 텍스트만 추출
-            // 구조: candidates[0].content.parts[0].text
-            JsonNode root = objectMapper.readTree(rawResponse);
-            
-            if (!root.has("candidates") || root.get("candidates").isEmpty()) {
-                log.error("❌ [Gemini] No candidates in response: {}", rawResponse);
-                return "Error: No response from Gemini API";
+            for (String candidateModel : candidateModels) {
+                String requestUrl = baseUrl + "/v1beta/models/" + candidateModel + ":generateContent?key=" + apiKey;
+                for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+                    try {
+                        log.info("🤖 [Gemini] Calling API model={} attempt={} ({} image(s))",
+                                candidateModel, attempt, base64Images != null ? base64Images.size() : 0);
+
+                        String rawResponse = webClientBuilder.build()
+                                .post()
+                                .uri(requestUrl)
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .bodyValue(requestBody)
+                                .retrieve()
+                                .bodyToMono(String.class)
+                                .block(); // 동기 호출
+
+                        // JSON 파싱해서 텍스트만 추출
+                        // 구조: candidates[0].content.parts[0].text
+                        JsonNode root = objectMapper.readTree(rawResponse);
+
+                        if (!root.has("candidates") || root.get("candidates").isEmpty()) {
+                            log.error("❌ [Gemini] No candidates in response: {}", rawResponse);
+                            return "Error: No response from Gemini API";
+                        }
+
+                        JsonNode candidate = root.get("candidates").get(0);
+                        if (!candidate.has("content") || !candidate.get("content").has("parts")) {
+                            log.error("❌ [Gemini] Invalid response structure: {}", rawResponse);
+                            return "Error: Invalid response structure from Gemini API";
+                        }
+
+                        JsonNode parts = candidate.get("content").get("parts");
+                        if (parts.isEmpty() || !parts.get(0).has("text")) {
+                            log.error("❌ [Gemini] No text in response: {}", rawResponse);
+                            return "Error: No text in Gemini response";
+                        }
+
+                        String result = parts.get(0).get("text").asText();
+                        log.info("✅ [Gemini] Analysis completed successfully (model={})", candidateModel);
+                        return result;
+                    } catch (WebClientResponseException e) {
+                        lastException = e;
+                        int status = e.getStatusCode().value();
+                        // 503/429는 일시 장애/쿼터로 재시도 가치 있음
+                        if ((status == 503 || status == 429) && attempt < maxAttempts) {
+                            log.warn("⚠️ [Gemini] Temporary error status={} model={} attempt={} -> retry in {}ms",
+                                    status, candidateModel, attempt, backoffMs);
+                            try { Thread.sleep(backoffMs); } catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
+                            continue;
+                        }
+                        log.error("❌ [Gemini] API call failed status={} body={}", status, e.getResponseBodyAsString());
+                        break; // 다음 모델 후보로 넘어감
+                    } catch (Exception e) {
+                        lastException = e;
+                        log.warn("⚠️ [Gemini] API call failed model={} attempt={} err={}",
+                                candidateModel, attempt, e.getMessage());
+                        break; // 다음 모델 후보로 넘어감
+                    }
+                }
             }
 
-            JsonNode candidate = root.get("candidates").get(0);
-            if (!candidate.has("content") || !candidate.get("content").has("parts")) {
-                log.error("❌ [Gemini] Invalid response structure: {}", rawResponse);
-                return "Error: Invalid response structure from Gemini API";
+            if (lastException != null) {
+                return "Error: " + lastException.getMessage();
             }
-
-            JsonNode parts = candidate.get("content").get("parts");
-            if (parts.isEmpty() || !parts.get(0).has("text")) {
-                log.error("❌ [Gemini] No text in response: {}", rawResponse);
-                return "Error: No text in Gemini response";
-            }
-
-            String result = parts.get(0).get("text").asText();
-            log.info("✅ [Gemini] Analysis completed successfully");
-            return result;
+            return "Error: Gemini API call failed";
 
         } catch (Exception e) {
             log.error("❌ [Gemini] API Call Failed", e);

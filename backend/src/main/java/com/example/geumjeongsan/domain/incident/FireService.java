@@ -7,17 +7,28 @@ import com.example.geumjeongsan.api.dto.FireIncidentItem;
 import com.example.geumjeongsan.api.dto.FireStatsDto;
 import com.example.geumjeongsan.api.dto.HotspotDto;
 import com.example.geumjeongsan.api.dto.IncidentCreateResponse;
+import com.example.geumjeongsan.domain.cctv.CCTV;
+import com.example.geumjeongsan.domain.cctv.CCTVRepository;
+import com.example.geumjeongsan.domain.weather.Weather;
+import com.example.geumjeongsan.service.RealtimeSseService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import lombok.extern.slf4j.Slf4j;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -30,8 +41,16 @@ public class FireService {
     private final FireHotspotCctvRepository fireHotspotCctvRepository;
     private final IncidentActionRepository incidentActionRepository;
     private final IncidentManualRepository incidentManualRepository;
+    private final CCTVRepository cctvRepository;
+    private final IncidentAutoRepository incidentAutoRepository;
+    private final RealtimeSseService realtimeSseService;
     private final EntityManager entityManager;
+    private final ObjectMapper objectMapper;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final ZoneOffset KST = ZoneOffset.ofHours(9);
+
+    @Value("${gemini.api.model:gemini}")
+    private String geminiModelName;
 
     public FireService(IncidentRepository incidentRepository,
                       FireDetailRepository fireDetailRepository,
@@ -39,14 +58,219 @@ public class FireService {
                       FireHotspotCctvRepository fireHotspotCctvRepository,
                       IncidentActionRepository incidentActionRepository,
                       IncidentManualRepository incidentManualRepository,
-                      EntityManager entityManager) {
+                      CCTVRepository cctvRepository,
+                      IncidentAutoRepository incidentAutoRepository,
+                      RealtimeSseService realtimeSseService,
+                      EntityManager entityManager,
+                      ObjectMapper objectMapper) {
         this.incidentRepository = incidentRepository;
         this.fireDetailRepository = fireDetailRepository;
         this.incidentSummaryRepository = incidentSummaryRepository;
         this.fireHotspotCctvRepository = fireHotspotCctvRepository;
         this.incidentActionRepository = incidentActionRepository;
         this.incidentManualRepository = incidentManualRepository;
+        this.cctvRepository = cctvRepository;
+        this.incidentAutoRepository = incidentAutoRepository;
+        this.realtimeSseService = realtimeSseService;
         this.entityManager = entityManager;
+        this.objectMapper = objectMapper;
+    }
+
+    private String resolveCctvCode(Long cctvId) {
+        if (cctvId == null) return "수동등록";
+        try {
+            return cctvRepository.findById(cctvId)
+                    .map(CCTV::getCctvCode)
+                    .orElse(String.format("CCTV-%03d", cctvId));
+        } catch (Exception e) {
+            return String.format("CCTV-%03d", cctvId);
+        }
+    }
+
+    private void publishAfterCommit(String eventName, Map<String, Object> payload) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    realtimeSseService.publish(eventName, payload);
+                }
+            });
+        } else {
+            realtimeSseService.publish(eventName, payload);
+        }
+    }
+
+    private static String normalizeSeverityFromRiskLevel(String riskLevelKorean) {
+        if (riskLevelKorean == null) return "MEDIUM";
+        return switch (riskLevelKorean.trim()) {
+            case "심각" -> "HIGH";
+            case "경계" -> "MEDIUM";
+            case "주의" -> "LOW";
+            case "안전" -> "LOW";
+            default -> "MEDIUM";
+        };
+    }
+
+    private static String joinFeatures(Object v) {
+        if (v == null) return null;
+        try {
+            if (v instanceof java.util.List<?> list) {
+                return list.stream()
+                        .map(x -> x == null ? "" : x.toString())
+                        .filter(s -> !s.isBlank())
+                        .collect(Collectors.joining(", "));
+            }
+        } catch (Exception ignore) {}
+        return v.toString();
+    }
+
+    /**
+     * 파이썬 fire_detector.py 결과(JSON Map)로 AUTO 화재 사건 저장
+     */
+    @Transactional
+    public IncidentCreateResponse createFireFromAiAnalysis(
+            Map<String, Object> aiJson,
+            Long cctvId,
+            String locationDesc,
+            Weather weather
+    ) throws Exception {
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> ar = (Map<String, Object>) aiJson.get("analysis_result");
+        if (ar == null) {
+            throw new IllegalArgumentException("AI 결과에 analysis_result가 없습니다.");
+        }
+
+        boolean isFire = Boolean.TRUE.equals(ar.get("is_fire_detected"));
+        if (!isFire) {
+            throw new IllegalArgumentException("화재 감지 결과가 아닙니다(is_fire_detected=false).");
+        }
+
+        OffsetDateTime now = OffsetDateTime.now(KST);
+
+        // 1) Incident 생성
+        Incident incident = new Incident();
+        incident.setIncidentType("FIRE");
+        incident.setSourceType("AUTO");
+        incident.setStatus("PENDING");
+        incident.setCctvId(cctvId);
+        incident.setDetectedAt(now);
+        incident.setLocationDesc(locationDesc != null ? locationDesc : "CCTV 자동 탐지(화재)");
+        incident.setCreatedAt(now);
+        incident.setUpdatedAt(now);
+
+        String riskLevel = ar.get("risk_level") != null ? ar.get("risk_level").toString() : null;
+        incident.setSeverityLevel(normalizeSeverityFromRiskLevel(riskLevel));
+
+        // JSON 원문 저장
+        incident.setMemo(objectMapper.writeValueAsString(aiJson));
+
+        // incident_code: F-YYMMDD-XXXA
+        String dateStr = incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd"));
+        String prefix = String.format("F-%s-", dateStr);
+        Incident lastIncident = incidentRepository.findTopByIncidentCodeStartingWithOrderByIncidentCodeDesc(prefix);
+        int nextSequence = 1;
+        if (lastIncident != null && lastIncident.getIncidentCode() != null) {
+            String lastCode = lastIncident.getIncidentCode();
+            try {
+                String[] parts = lastCode.split("-");
+                if (parts.length >= 3) {
+                    String seqPart = parts[2].substring(0, 3);
+                    nextSequence = Integer.parseInt(seqPart) + 1;
+                }
+            } catch (Exception ignored) {
+                nextSequence = 1;
+            }
+        }
+        String sequence = String.format("%03d", nextSequence);
+        incident.setIncidentCode(String.format("%s%sA", prefix, sequence));
+
+        incident = incidentRepository.save(incident);
+
+        // 2) FireDetail 생성
+        FireDetail detail = new FireDetail();
+        detail.setIncidentId(incident.getId());
+        detail.setCreatedAt(now);
+        detail.setSpreadDirection(ar.get("spread_direction") != null ? ar.get("spread_direction").toString() : null);
+        detail.setSpreadRisk(ar.get("spread_risk_level") != null ? ar.get("spread_risk_level").toString() : null);
+
+        String message = ar.get("message") != null ? ar.get("message").toString() : null;
+        String confidenceReason = ar.get("detection_confidence_reason") != null ? ar.get("detection_confidence_reason").toString() : null;
+        String smokeRegion = ar.get("smoke_region") != null ? ar.get("smoke_region").toString() : null;
+        String features = joinFeatures(ar.get("detected_features"));
+
+        StringBuilder note = new StringBuilder();
+        if (message != null && !message.isBlank()) note.append(message);
+        if (confidenceReason != null && !confidenceReason.isBlank()) note.append(note.length() > 0 ? "\n" : "").append("근거: ").append(confidenceReason);
+        if (smokeRegion != null && !smokeRegion.isBlank()) note.append(note.length() > 0 ? "\n" : "").append("연기영역: ").append(smokeRegion);
+        if (features != null && !features.isBlank()) note.append(note.length() > 0 ? "\n" : "").append("특징: ").append(features);
+        detail.setNote(note.length() > 0 ? note.toString() : null);
+        detail.setNearbyRisks(features);
+
+        // 날씨 -> windSpeed/windInfo 세팅(best-effort)
+        if (weather != null && weather.getWindSpeed() != null) {
+            try {
+                BigDecimal kmh = weather.getWindSpeed().multiply(new BigDecimal("3.6"));
+                detail.setWindSpeed(kmh);
+                String wi = (weather.getWindDirection() != null ? weather.getWindDirection() : "")
+                        + " " + kmh.setScale(1, java.math.RoundingMode.HALF_UP) + "km/h"
+                        + (weather.getHumidity() != null ? (" (습도 " + weather.getHumidity() + "%)") : "");
+                detail.setWindInfo(wi.trim());
+            } catch (Exception ignore) {}
+        }
+
+        fireDetailRepository.save(detail);
+
+        // 3) IncidentAuto 생성 (confidence/model 등)
+        IncidentAuto auto = new IncidentAuto();
+        auto.setIncidentId(incident.getId());
+        auto.setDetectionModel(geminiModelName != null ? geminiModelName : "gemini");
+        auto.setDetectionVersion("fire_detector.py");
+        auto.setLocationDesc(locationDesc);
+        auto.setIsValid(true);
+        auto.setAutoCreatedAt(now);
+
+        Object confObj = ar.get("confidence_score");
+        if (confObj instanceof Number n) {
+            auto.setDetectionConfidence(n.doubleValue());
+        } else if (confObj != null) {
+            try {
+                auto.setDetectionConfidence(Double.parseDouble(confObj.toString()));
+            } catch (Exception ignored) {
+                auto.setDetectionConfidence(0.0);
+            }
+        }
+        auto.setConfidenceReason(confidenceReason);
+        auto.setSeverityReason(riskLevel != null ? ("risk_level=" + riskLevel + ", spread_risk=" + (detail.getSpreadRisk() != null ? detail.getSpreadRisk() : "")) : null);
+        auto.setDetectedFeatures(features);
+        incidentAutoRepository.save(auto);
+
+        // 4) IncidentAction 로그 저장 (CREATED)
+        IncidentAction action = new IncidentAction();
+        action.setIncidentId(incident.getId());
+        action.setActionType("CREATED");
+        action.setPrevStatus(null);
+        action.setNextStatus("PENDING");
+        action.setActorId(null);
+        action.setAcknowledgedAt(null);
+        action.setResolvedAt(null);
+        action.setMemo("AI 자동 탐지(화재)");
+        action.setCreatedAt(now);
+        incidentActionRepository.save(action);
+
+        // 5) 실시간 이벤트 발행 (커밋 후)
+        publishAfterCommit("incident.created", Map.of(
+                "incidentId", incident.getId(),
+                "incidentCode", incident.getIncidentCode(),
+                "incidentType", incident.getIncidentType(),
+                "status", incident.getStatus(),
+                "detectedAt", incident.getDetectedAt() != null ? incident.getDetectedAt().toString() : null,
+                "cctvId", incident.getCctvId(),
+                "locationDesc", incident.getLocationDesc(),
+                "sourceType", incident.getSourceType()
+        ));
+
+        return IncidentCreateResponse.success(incident.getId(), incident.getIncidentCode());
     }
 
     // 화재 현황 + 목록 조회
@@ -170,7 +394,7 @@ public class FireService {
 
         return FireIncidentItem.builder()
                 .id(incident.getId())
-                .cctvId(String.format("CCTV-%03d", incident.getCctvId()))
+                .cctvId(resolveCctvCode(incident.getCctvId()))
                 .incidentTime(incident.getDetectedAt().format(DATE_FORMATTER))
                 .severity(severity)
                 .windSpeed(windSpeed)

@@ -9,6 +9,8 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.example.geumjeongsan.domain.cctv.CCTV;
+import com.example.geumjeongsan.domain.cctv.CCTVRepository;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -23,6 +25,7 @@ public class RockfallService {
     private final RockfallDetailRepository rockfallDetailRepository;
     private final IncidentActionRepository incidentActionRepository;
     private final IncidentManualRepository incidentManualRepository;
+    private final CCTVRepository cctvRepository;
     private final EntityManager entityManager;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
@@ -30,12 +33,25 @@ public class RockfallService {
                           RockfallDetailRepository rockfallDetailRepository,
                           IncidentActionRepository incidentActionRepository,
                           IncidentManualRepository incidentManualRepository,
+                          CCTVRepository cctvRepository,
                           EntityManager entityManager) {
         this.incidentRepository = incidentRepository;
         this.rockfallDetailRepository = rockfallDetailRepository;
         this.incidentActionRepository = incidentActionRepository;
         this.incidentManualRepository = incidentManualRepository;
+        this.cctvRepository = cctvRepository;
         this.entityManager = entityManager;
+    }
+
+    private String resolveCctvCode(Long cctvId) {
+        if (cctvId == null) return "수동등록";
+        try {
+            return cctvRepository.findById(cctvId)
+                    .map(CCTV::getCctvCode)
+                    .orElse(String.format("CCTV-%03d", cctvId));
+        } catch (Exception e) {
+            return String.format("CCTV-%03d", cctvId);
+        }
     }
 
     // 낙석 현황 + 목록 조회
@@ -164,7 +180,7 @@ public class RockfallService {
 
         return RockfallIncidentItem.builder()
                 .id(incident.getId())
-                .cctvId(incident.getCctvId() != null ? String.format("CCTV-%03d", incident.getCctvId()) : "수동등록")
+                .cctvId(resolveCctvCode(incident.getCctvId()))
                 .incidentTime(incident.getDetectedAt() != null ? incident.getDetectedAt().format(DATE_FORMATTER) : "-")
                 .magnitude(magnitude)
                 .severity(severity)

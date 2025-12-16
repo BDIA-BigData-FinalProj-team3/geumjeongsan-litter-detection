@@ -6,6 +6,7 @@ import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import { getMonthlyStats, getMajorIncidents, getAvailableReportMonths } from '../services/api';
 import { getCurrentUser } from '../services/auth';
 import { mockMonthlyStats } from '../services/mock';
+import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import {
   safePct,
   labelIncidentType,
@@ -24,6 +25,7 @@ interface MonthlyReportProps {
 }
 
 export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
+  const { refreshKey } = useRealtimeNotification();
   // 오늘 날짜 기준 발행일 문자열
   const today = new Date();
   const publishDateStr = `${today.getFullYear()}년 ${today.getMonth() + 1}월 ${today.getDate()}일`;
@@ -147,7 +149,7 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
     };
     
     loadReportData();
-  }, [selectedMonth]);
+  }, [selectedMonth, refreshKey]);
 
   // 최초 1회: 가능한 월 목록 로드
   useEffect(() => {

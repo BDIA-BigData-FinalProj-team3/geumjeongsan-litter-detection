@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Plus, Edit2, Trash2, X, Search, Calendar, HeartPulse, User, LogOut } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';

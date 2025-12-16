@@ -5,6 +5,7 @@ import { IncidentCountProvider } from './contexts/IncidentCountContext';
 import { AuthProvider } from './contexts/AuthContext';
 import { RealtimeNotificationProvider } from './contexts/RealtimeNotificationContext';
 import { useEffect } from 'react';
+import { Toaster } from 'sonner';
 
 export default function App() {
   // 브라우저 알림 권한 요청
@@ -24,6 +25,13 @@ export default function App() {
           <RealtimeNotificationProvider>
             <IncidentCountProvider>
               <RouterProvider router={router} />
+              {/* 전역 토스트 출력기 */}
+              <Toaster
+                position="top-right"
+                richColors
+                closeButton
+                duration={3500}
+              />
             </IncidentCountProvider>
           </RealtimeNotificationProvider>
         </AuthProvider>

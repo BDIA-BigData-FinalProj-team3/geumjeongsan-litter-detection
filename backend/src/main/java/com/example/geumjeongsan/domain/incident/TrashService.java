@@ -10,9 +10,16 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import com.example.geumjeongsan.service.RealtimeSseService;
+import com.example.geumjeongsan.domain.cctv.CCTV;
+import com.example.geumjeongsan.domain.cctv.CCTVRepository;
 
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -28,7 +35,13 @@ public class TrashService {
     private final IncidentManualRepository incidentManualRepository;
     private final IncidentAutoRepository incidentAutoRepository;
     private final EntityManager entityManager;
+    private final RealtimeSseService realtimeSseService;
+    private final CCTVRepository cctvRepository;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final ZoneOffset KST = ZoneOffset.ofHours(9);
+
+    @Value("${gemini.api.model:gemini}")
+    private String geminiModelName;
 
     public TrashService(IncidentRepository incidentRepository,
                        TrashDetailRepository trashDetailRepository,
@@ -36,7 +49,9 @@ public class TrashService {
                        IncidentActionRepository incidentActionRepository,
                        IncidentManualRepository incidentManualRepository,
                        IncidentAutoRepository incidentAutoRepository,
-                       EntityManager entityManager) {
+                       EntityManager entityManager,
+                       RealtimeSseService realtimeSseService,
+                       CCTVRepository cctvRepository) {
         this.incidentRepository = incidentRepository;
         this.trashDetailRepository = trashDetailRepository;
         this.incidentSummaryRepository = incidentSummaryRepository;
@@ -44,6 +59,41 @@ public class TrashService {
         this.incidentManualRepository = incidentManualRepository;
         this.incidentAutoRepository = incidentAutoRepository;
         this.entityManager = entityManager;
+        this.realtimeSseService = realtimeSseService;
+        this.cctvRepository = cctvRepository;
+    }
+
+    private String resolveCctvCode(Long cctvId) {
+        if (cctvId == null) return "수동등록";
+        try {
+            return cctvRepository.findById(cctvId)
+                    .map(CCTV::getCctvCode)
+                    .orElse(String.format("CCTV-%03d", cctvId));
+        } catch (Exception e) {
+            return String.format("CCTV-%03d", cctvId);
+        }
+    }
+
+    private String resolveCctvCodeOrNull(Long cctvId) {
+        if (cctvId == null) return null;
+        try {
+            return cctvRepository.findById(cctvId).map(CCTV::getCctvCode).orElse(null);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private void publishAfterCommit(String eventName, java.util.Map<String, Object> payload) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    realtimeSseService.publish(eventName, payload);
+                }
+            });
+        } else {
+            realtimeSseService.publish(eventName, payload);
+        }
     }
 
     // 쓰레기 현황 + 목록 조회
@@ -158,7 +208,7 @@ public class TrashService {
 
         return TrashIncidentItem.builder()
                 .id(incident.getId())
-                .cctvId(String.format("CCTV-%03d", incident.getCctvId()))
+                .cctvId(resolveCctvCode(incident.getCctvId()))
                 .incidentTime(incident.getDetectedAt().format(DATE_FORMATTER))
                 .type(type)
                 .severity(severity)
@@ -205,7 +255,7 @@ public class TrashService {
         }
         
         // 시간 업데이트
-        OffsetDateTime now = OffsetDateTime.now();
+        OffsetDateTime now = OffsetDateTime.now(KST);
         if ("IN_PROGRESS".equals(incident.getStatus()) && incident.getAcknowledgedAt() == null) {
             incident.setAcknowledgedAt(now);
         }
@@ -277,7 +327,7 @@ public class TrashService {
             default -> incident.getStatus();
         };
         incident.setStatus(newStatus);
-        incident.setUpdatedAt(OffsetDateTime.now()); // ✅ updated_at 자동 설정
+        incident.setUpdatedAt(OffsetDateTime.now(KST)); // ✅ updated_at 자동 설정
         
         // 처리자 이름 업데이트
         if (handlerName != null && !handlerName.isEmpty()) {
@@ -285,7 +335,7 @@ public class TrashService {
         }
         
         // 시간 업데이트
-        OffsetDateTime now = OffsetDateTime.now();
+        OffsetDateTime now = OffsetDateTime.now(KST);
         if ("IN_PROGRESS".equals(newStatus) && incident.getAcknowledgedAt() == null) {
             incident.setAcknowledgedAt(now);
         }
@@ -320,6 +370,18 @@ public class TrashService {
             action.setCreatedAt(now);
             incidentActionRepository.save(action);
         }
+
+        // ✅ 실시간 이벤트 (상태 변경)
+        publishAfterCommit("incident.updated", java.util.Map.of(
+                "incidentId", incident.getId(),
+                "incidentCode", incident.getIncidentCode(),
+                "incidentType", incident.getIncidentType(),
+                "status", incident.getStatus(),
+                "detectedAt", incident.getDetectedAt() != null ? incident.getDetectedAt().toString() : null,
+                "cctvId", incident.getCctvId(),
+                "locationDesc", incident.getLocationDesc(),
+                "sourceType", incident.getSourceType()
+        ));
     }
     
     /**
@@ -362,7 +424,7 @@ public class TrashService {
                 changedFields.append("심각도, ");
             }
         }
-        incident.setUpdatedAt(OffsetDateTime.now());
+        incident.setUpdatedAt(OffsetDateTime.now(KST));
         incidentRepository.save(incident);
         
         // trash_detail 테이블 업데이트
@@ -389,7 +451,7 @@ public class TrashService {
             action.setPrevStatus(incident.getStatus());
             action.setNextStatus(incident.getStatus());  // 상태는 변경되지 않음
             action.setMemo("상세 정보 수정: " + changedFieldsStr);
-            action.setCreatedAt(OffsetDateTime.now());
+            action.setCreatedAt(OffsetDateTime.now(KST));
             // actorId는 추후 인증 시스템 구현 시 설정
             incidentActionRepository.save(action);
         }
@@ -450,8 +512,8 @@ public class TrashService {
         incident.setLocationDesc(request.getLocationDesc());
         incident.setMemo(request.getMemo());
         incident.setCctvId(null); // ✅ 수동 등록은 CCTV ID 없음
-        incident.setCreatedAt(OffsetDateTime.now());
-        incident.setUpdatedAt(OffsetDateTime.now());
+        incident.setCreatedAt(OffsetDateTime.now(KST));
+        incident.setUpdatedAt(OffsetDateTime.now(KST));
         
         // 1. 사고 코드 생성 (T-YYMMDD-001A 또는 T-YYMMDD-001M)
         String dateStr = incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd"));
@@ -488,7 +550,7 @@ public class TrashService {
         detail.setMainCategory(request.getTrashType());
         detail.setObjectAmount(request.getAmount());
         detail.setNote(request.getMemo());
-        detail.setCreatedAt(OffsetDateTime.now());
+        detail.setCreatedAt(OffsetDateTime.now(KST));
         
         trashDetailRepository.save(detail);
         
@@ -503,7 +565,7 @@ public class TrashService {
         action.setAcknowledgedAt(null);
         action.setResolvedAt(null);
         action.setMemo("신규 쓰레기 사건 등록");
-        action.setCreatedAt(OffsetDateTime.now());
+        action.setCreatedAt(OffsetDateTime.now(KST));
         incidentActionRepository.save(action);
         
         // 수동 등록인 경우 IncidentManual 저장
@@ -517,7 +579,7 @@ public class TrashService {
             manual.setManualDescription(request.getMemo() != null ? request.getMemo() : "");
             manual.setManualLocation(request.getLocationDesc());
             manual.setCreatedById(request.getCreatedById());
-            manual.setCreatedAt(OffsetDateTime.now());
+            manual.setCreatedAt(OffsetDateTime.now(KST));
             incidentManualRepository.save(manual);
         }
         
@@ -550,7 +612,7 @@ public class TrashService {
             throw new IllegalArgumentException("Gemini 응답에 incident 정보가 없습니다.");
         }
         
-        // incident_type 확인
+        // incident_type 확인 (원복: TRASH만 저장)
         String incidentType = (String) incidentMap.get("incident_type");
         if (!"TRASH".equals(incidentType)) {
             throw new IllegalArgumentException("쓰레기 사건이 아닙니다: " + incidentType);
@@ -562,10 +624,10 @@ public class TrashService {
         incident.setSourceType("AUTO");
         incident.setStatus("PENDING");
         incident.setCctvId(cctvId);
-        incident.setDetectedAt(OffsetDateTime.now());
+        incident.setDetectedAt(OffsetDateTime.now(KST));
         incident.setLocationDesc(locationDesc != null ? locationDesc : "CCTV 자동 탐지");
-        incident.setCreatedAt(OffsetDateTime.now());
-        incident.setUpdatedAt(OffsetDateTime.now());
+        incident.setCreatedAt(OffsetDateTime.now(KST));
+        incident.setUpdatedAt(OffsetDateTime.now(KST));
         
         // severity_level 변환 (VERY_HIGH, HIGH, MEDIUM, LOW, VERY_LOW -> DB 형식)
         String severityLevel = (String) incidentMap.get("severity_level");
@@ -616,7 +678,7 @@ public class TrashService {
             detail.setIncidentId(incident.getId());
             detail.setMainCategory((String) trashDetailMap.get("main_category"));
             detail.setObjectAmount((String) trashDetailMap.get("object_amount"));
-            detail.setCreatedAt(OffsetDateTime.now());
+            detail.setCreatedAt(OffsetDateTime.now(KST));
             trashDetailRepository.save(detail);
         }
         
@@ -624,8 +686,11 @@ public class TrashService {
         if (incidentAutoMap != null) {
             IncidentAuto incidentAuto = new IncidentAuto();
             incidentAuto.setIncidentId(incident.getId());
-            incidentAuto.setDetectionModel("gemini-1.5-flash");
+            // 모델/버전: Gemini로 고정(설정된 모델명 기록)
+            incidentAuto.setDetectionModel(geminiModelName != null ? geminiModelName : "gemini");
             incidentAuto.setDetectionVersion("1.0");
+            incidentAuto.setLocationDesc(locationDesc);
+            incidentAuto.setIsValid(true);
             
             Object confidenceObj = incidentAutoMap.get("detection_confidence");
             if (confidenceObj != null) {
@@ -643,7 +708,7 @@ public class TrashService {
             incidentAuto.setConfidenceReason((String) incidentAutoMap.get("confidence_reason"));
             incidentAuto.setSeverityReason((String) incidentAutoMap.get("severity_level_reason"));
             incidentAuto.setDetectedFeatures((String) incidentAutoMap.get("detected_features"));
-            incidentAuto.setAutoCreatedAt(OffsetDateTime.now());
+            incidentAuto.setAutoCreatedAt(OffsetDateTime.now(KST));
             incidentAutoRepository.save(incidentAuto);
         }
         
@@ -657,8 +722,21 @@ public class TrashService {
         action.setAcknowledgedAt(null);
         action.setResolvedAt(null);
         action.setMemo("Gemini AI 자동 탐지");
-        action.setCreatedAt(OffsetDateTime.now());
+        action.setCreatedAt(OffsetDateTime.now(KST));
         incidentActionRepository.save(action);
+
+        // ✅ 실시간 이벤트 발행 (커밋 후)
+        publishAfterCommit("incident.created", java.util.Map.of(
+                "incidentId", incident.getId(),
+                "incidentCode", incident.getIncidentCode(),
+                "incidentType", incident.getIncidentType(),
+                "status", incident.getStatus(),
+                "detectedAt", incident.getDetectedAt() != null ? incident.getDetectedAt().toString() : null,
+                "cctvId", incident.getCctvId(),
+                "cctvCode", resolveCctvCodeOrNull(incident.getCctvId()),
+                "locationDesc", incident.getLocationDesc(),
+                "sourceType", incident.getSourceType()
+        ));
         
         return IncidentCreateResponse.success(incident.getId(), incidentCode);
     }

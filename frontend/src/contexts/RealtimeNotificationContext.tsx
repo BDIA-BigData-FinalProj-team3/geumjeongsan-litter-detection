@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
+import BACKEND_URL from '../config/api';
 
 // 알림 타입 정의
 export interface RealtimeNotification {
@@ -17,6 +19,7 @@ export interface RealtimeNotification {
 interface RealtimeNotificationContextType {
   notifications: RealtimeNotification[];
   unreadCount: number;
+  refreshKey: number; // 전 화면 refetch 트리거
   addNotification: (notification: Omit<RealtimeNotification, 'id' | 'timestamp' | 'read'>) => void;
   markAsRead: (id: string) => void;
   markAllAsRead: () => void;
@@ -28,43 +31,131 @@ const RealtimeNotificationContext = createContext<RealtimeNotificationContextTyp
 
 export const RealtimeNotificationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [notifications, setNotifications] = useState<RealtimeNotification[]>([]);
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
-  // 폴링 방식으로 새로운 사건 확인 (실제로는 WebSocket 사용 권장)
+  // 너무 잦은 refetch 방지: refreshKey를 쿨다운으로 배치 처리
+  const refreshCooldownMs = 800;
+  const lastRefreshAtRef = useRef(0);
+  const refreshTimerRef = useRef<number | null>(null);
+
+  const scheduleRefresh = () => {
+    const now = Date.now();
+    const nextAllowed = lastRefreshAtRef.current + refreshCooldownMs;
+
+    // 이미 타이머가 있으면 그대로 둠(추가 이벤트는 "묶임")
+    if (refreshTimerRef.current != null) return;
+
+    const delay = Math.max(0, nextAllowed - now);
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null;
+      lastRefreshAtRef.current = Date.now();
+      setRefreshKey((k) => k + 1);
+    }, delay);
+  };
+
+  const playBeep = (kind: RealtimeNotification['type']) => {
+    try {
+      const AudioCtx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext | undefined;
+      if (!AudioCtx) return;
+
+      const ctx = new AudioCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      const freq =
+        kind === 'fire' ? 880 :
+        kind === 'emergency' ? 740 :
+        kind === 'trash' ? 520 : 660;
+
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+
+      // 짧고 확실하게: 0.12s, 부드러운 페이드 인/아웃
+      const now = ctx.currentTime;
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.18, now + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.13);
+
+      osc.onended = () => {
+        try { ctx.close(); } catch {}
+      };
+    } catch {
+      // 오디오 실패는 무시 (브라우저 정책/권한 등)
+    }
+  };
+
+  const toastIncident = (n: { type: RealtimeNotification['type']; title: string; message: string }) => {
+    const t = n.type;
+    if (t === 'fire') toast.error(n.title, { description: n.message });
+    else if (t === 'emergency') toast.warning(n.title, { description: n.message });
+    else if (t === 'trash') toast.message(n.title, { description: n.message });
+    else toast(n.title, { description: n.message });
+  };
+
+  // ✅ SSE로 실시간 사건 이벤트 구독
   useEffect(() => {
-    const checkNewIncidents = async () => {
+    const url = `${BACKEND_URL}/api/realtime/stream`;
+    const es = new EventSource(url, { withCredentials: true } as any);
+    eventSourceRef.current = es;
+
+    const onIncident = (e: MessageEvent) => {
+      // 이벤트 폭주 시에도 화면 재조회는 쿨다운으로 묶어서 1번만
+      scheduleRefresh();
       try {
-        // TODO: 실제 API 호출로 교체
-        // const response = await fetch('/api/incidents/recent?since=' + lastCheckTime);
-        // const newIncidents = await response.json();
-        
-        // 임시 데모용 - 랜덤하게 새 알림 생성 (10% 확률)
-        if (Math.random() < 0.1) {
-          const types: ('fire' | 'emergency' | 'trash')[] = ['fire', 'emergency', 'trash'];
-          const randomType = types[Math.floor(Math.random() * types.length)];
-          const cctvIds = ['CCTV-001', 'CCTV-002', 'CCTV-003', 'CCTV-004', 'CCTV-005'];
-          const randomCCTV = cctvIds[Math.floor(Math.random() * cctvIds.length)];
-          
-          addNotification({
-            type: randomType,
-            title: randomType === 'fire' ? '화재 발생' : randomType === 'emergency' ? '응급 상황 발생' : '쓰레기 투기 발생',
-            message: `${randomCCTV}에서 ${randomType === 'fire' ? '화재가' : randomType === 'emergency' ? '응급 상황이' : '쓰레기 투기가'} 감지되었습니다.`,
-            cctvId: randomCCTV,
-            location: '금정산 등산로',
-            confidence: `${Math.floor(Math.random() * 30 + 70)}%`,
-          });
-        }
-      } catch (error) {
-        console.error('Failed to check new incidents:', error);
+        const payload = JSON.parse(e.data);
+        const type = String(payload?.incidentType ?? '');
+        const mappedType: RealtimeNotification['type'] =
+          type === 'FIRE' ? 'fire' :
+          type === 'EMERGENCY' ? 'emergency' :
+          type === 'TRASH' ? 'trash' : 'system';
+
+        const title =
+          mappedType === 'trash' ? '쓰레기 사건 발생' :
+          mappedType === 'fire' ? '화재 발생' :
+          mappedType === 'emergency' ? '응급 상황 발생' : '사건 변경';
+
+        const message = `${payload?.incidentCode ?? '사건'} (${payload?.status ?? ''})`;
+
+        // 체감: 토스트 + 비프
+        toastIncident({ type: mappedType, title, message });
+        playBeep(mappedType);
+
+        addNotification({
+          type: mappedType,
+          title,
+          message,
+          incidentId: typeof payload?.incidentId === 'number' ? payload.incidentId : undefined,
+          // ✅ 화면 표시는 항상 cctvCode 우선. (없으면 임시로 DB-ID를 표시)
+          cctvId:
+            (typeof payload?.cctvCode === 'string' && payload.cctvCode.trim() ? payload.cctvCode.trim() :
+            (payload?.cctvId != null ? `CCTV(DB-${String(payload.cctvId)})` : undefined)),
+          location: payload?.locationDesc ?? undefined,
+        });
+      } catch {
+        // ignore parse error
       }
     };
 
-    // 5초마다 폴링
-    pollingIntervalRef.current = setInterval(checkNewIncidents, 5000);
+    es.addEventListener('incident.created', onIncident);
+    es.addEventListener('incident.updated', onIncident);
+
+    es.onerror = () => {
+      // SSE 끊기면 브라우저가 자동 재연결을 시도함.
+      // 여기서는 별도 처리 없이 둠.
+    };
 
     return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
+      try { es.close(); } catch {}
+      eventSourceRef.current = null;
+      if (refreshTimerRef.current != null) {
+        try { window.clearTimeout(refreshTimerRef.current); } catch {}
+        refreshTimerRef.current = null;
       }
     };
   }, []);
@@ -88,15 +179,7 @@ export const RealtimeNotificationProvider: React.FC<{ children: React.ReactNode 
       });
     }
 
-    // 사운드 재생 (선택사항)
-    try {
-      const audio = new Audio('/notification-sound.mp3');
-      audio.play().catch(() => {
-        // 오디오 재생 실패는 무시
-      });
-    } catch (error) {
-      // 오디오 재생 실패는 무시
-    }
+    // 사운드/토스트는 SSE 수신 시점에서 처리 (여기서는 저장만)
   };
 
   const markAsRead = (id: string) => {
@@ -128,6 +211,7 @@ export const RealtimeNotificationProvider: React.FC<{ children: React.ReactNode 
       value={{
         notifications,
         unreadCount,
+        refreshKey,
         addNotification,
         markAsRead,
         markAllAsRead,

@@ -8,6 +8,7 @@ import com.example.geumjeongsan.api.dto.MediaFileResponse;
 import com.example.geumjeongsan.api.dto.QwenAnalysisResponse;
 import com.example.geumjeongsan.domain.incident.IncidentService;
 import com.example.geumjeongsan.domain.incident.TrashService;
+import com.example.geumjeongsan.domain.cctv.CCTVRepository;
 import com.example.geumjeongsan.service.GeminiService;
 import com.example.geumjeongsan.service.S3Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,7 +21,9 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -39,6 +42,7 @@ public class CCTVController {
 
     private final IncidentService incidentService;
     private final TrashService trashService;
+    private final CCTVRepository cctvRepository;
     private final RestTemplate restTemplate;
     private final S3Service s3Service;
     private final GeminiService geminiService;
@@ -60,13 +64,49 @@ public class CCTVController {
     @Value("${gemini.prompt.trash-analysis:이 CCTV 프레임에서 불법 쓰레기 투기(TRASH)를 판별해줘.}")
     private String trashAnalysisPrompt;
 
-    public CCTVController(IncidentService incidentService, TrashService trashService, RestTemplate restTemplate, S3Service s3Service, GeminiService geminiService, ObjectMapper objectMapper) {
+    /**
+     * FFmpeg 실행 커맨드/경로
+     * - 기본값: "ffmpeg" (PATH에서 찾음)
+     * - 로컬 Windows에서 PATH가 안 잡히는 경우를 대비해, 아래 extractFrames에서 known 경로를 자동 탐색합니다.
+     */
+    @Value("${app.ffmpeg.command:ffmpeg}")
+    private String configuredFfmpegCommand;
+
+    public CCTVController(IncidentService incidentService,
+                          TrashService trashService,
+                          CCTVRepository cctvRepository,
+                          RestTemplate restTemplate,
+                          S3Service s3Service,
+                          GeminiService geminiService,
+                          ObjectMapper objectMapper) {
         this.incidentService = incidentService;
         this.trashService = trashService;
+        this.cctvRepository = cctvRepository;
         this.restTemplate = restTemplate;
         this.s3Service = s3Service;
         this.geminiService = geminiService;
         this.objectMapper = objectMapper;
+    }
+
+    private Long resolveCctvId(Long cctvId, String cctvCode) {
+        if (cctvId != null) return cctvId;
+        if (cctvCode == null || cctvCode.isBlank()) return null;
+
+        String normalized = cctvCode.trim();
+        // 숫자만 들어오면 CCTV-XXX로 정규화
+        if (normalized.matches("^\\d+$")) {
+            try {
+                int n = Integer.parseInt(normalized);
+                normalized = String.format("CCTV-%03d", n);
+            } catch (Exception ignored) {}
+        }
+        normalized = normalized.toUpperCase();
+        try {
+            return cctvRepository.findByCctvCode(normalized).map(c -> c.getId()).orElse(null);
+        } catch (Exception e) {
+            log.warn("⚠️ [CCTV] Failed to resolve cctvId from cctvCode={}: {}", normalized, e.getMessage());
+            return null;
+        }
     }
 
     @GetMapping
@@ -259,6 +299,7 @@ public class CCTVController {
      */
     private QwenAnalysisResponse parseQwenResponse(Map<String, Object> qwenBody, String cctvCode) {
         // incident 정보 추출
+        @SuppressWarnings("unchecked")
         Map<String, Object> incident = (Map<String, Object>) qwenBody.get("incident");
         Integer severityLevel = incident != null && incident.get("severity_level") != null
                 ? ((Number) incident.get("severity_level")).intValue()
@@ -268,6 +309,7 @@ public class CCTVController {
         boolean hasTrash = severityLevel >= 1;
         
         // trash_detail 정보 추출
+        @SuppressWarnings("unchecked")
         Map<String, Object> trashDetail = (Map<String, Object>) qwenBody.get("trash_detail");
         String mainCategory = trashDetail != null && trashDetail.get("main_category") != null
                 ? (String) trashDetail.get("main_category")
@@ -277,6 +319,7 @@ public class CCTVController {
                 : "";
         
         // incident_auto 정보 추출
+        @SuppressWarnings("unchecked")
         Map<String, Object> incidentAuto = (Map<String, Object>) qwenBody.get("incident_auto");
         Double detectionConfidence = incidentAuto != null && incidentAuto.get("detection_confidence") != null
                 ? ((Number) incidentAuto.get("detection_confidence")).doubleValue()
@@ -351,7 +394,8 @@ public class CCTVController {
     public ResponseEntity<?> analyzeImage(
             @RequestParam("file") MultipartFile imageFile,
             @RequestParam(value = "prompt", required = false) String customPrompt,
-            @RequestParam(value = "cctvId", required = false) Long cctvId) {
+            @RequestParam(value = "cctvId", required = false) Long cctvId,
+            @RequestParam(value = "cctvCode", required = false) String cctvCode) {
         try {
             log.info("🖼️ [CCTV] Analyzing image file for trash: {}", imageFile.getOriginalFilename());
             
@@ -382,9 +426,10 @@ public class CCTVController {
                     if ("TRASH".equals(incidentType)) {
                         try {
                             log.info("💾 [CCTV] Saving TRASH incident to database");
+                            Long resolvedCctvId = resolveCctvId(cctvId, cctvCode);
                             var createResponse = trashService.createTrashFromGemini(
                                     parsedJson,
-                                    cctvId,
+                                    resolvedCctvId,
                                     "CCTV 자동 탐지"
                             );
                             savedToDb = true;
@@ -465,7 +510,10 @@ public class CCTVController {
     @PostMapping("/test/analyze-local-video")
     public ResponseEntity<?> analyzeLocalVideo(
             @RequestParam("file") MultipartFile videoFile,
-            @RequestParam(value = "prompt", required = false) String customPrompt) {
+            @RequestParam(value = "prompt", required = false) String customPrompt,
+            @RequestParam(value = "cctvId", required = false) Long cctvId,
+            @RequestParam(value = "cctvCode", required = false) String cctvCode,
+            @RequestParam(value = "locationDesc", required = false) String locationDesc) {
         File tempVideo = null;
         File tempDir = null;
         
@@ -504,17 +552,58 @@ public class CCTVController {
             // 5. 프롬프트 설정 (기본값 또는 사용자 지정)
             String prompt = customPrompt != null && !customPrompt.isEmpty() 
                     ? customPrompt 
-                    : fallenAnalysisPrompt;
+                    : trashAnalysisPrompt;
             
             // 6. Gemini API 호출
             log.info("🤖 [CCTV] Calling Gemini API with {} frames", base64Images.size());
             String geminiResult = geminiService.analyze(prompt, base64Images);
-            
-            return ResponseEntity.ok(Map.of(
-                    "success", true,
-                    "message", geminiResult,
-                    "framesAnalyzed", base64Images.size()
-            ));
+
+            // 7. Gemini 응답 JSON 추출 + TRASH면 DB 저장
+            Map<String, Object> parsedJson = extractJsonFromGeminiResponse(geminiResult);
+            boolean savedToDb = false;
+            String incidentCode = null;
+            Long incidentId = null;
+
+            if (parsedJson != null) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> incidentMap = (Map<String, Object>) parsedJson.get("incident");
+                    if (incidentMap != null) {
+                        String incidentType = (String) incidentMap.get("incident_type");
+                        // 원복: TRASH만 저장
+                        if ("TRASH".equals(incidentType)) {
+                            log.info("💾 [CCTV] Saving TRASH incident to database (video)");
+                            Long resolvedCctvId = resolveCctvId(cctvId, cctvCode);
+                            var createResponse = trashService.createTrashFromGemini(
+                                    parsedJson,
+                                    resolvedCctvId,
+                                    (locationDesc != null && !locationDesc.isBlank())
+                                            ? locationDesc
+                                            : "CCTV 자동 탐지(비디오)"
+                            );
+                            savedToDb = true;
+                            incidentCode = createResponse.getIncidentCode();
+                            incidentId = createResponse.getIncidentId();
+                            log.info("✅ [CCTV] Incident saved to DB: {} (id={})", incidentCode, incidentId);
+                        } else {
+                            log.info("ℹ️ [CCTV] Incident type is not TRASH -> skip DB save: {}", incidentType);
+                        }
+                    }
+                } catch (Exception e) {
+                    log.error("❌ [CCTV] Failed to save incident to DB (video)", e);
+                }
+            }
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("message", geminiResult);
+            response.put("framesAnalyzed", base64Images.size());
+            response.put("parsedJson", parsedJson);
+            response.put("savedToDb", savedToDb);
+            if (incidentCode != null) response.put("incidentCode", incidentCode);
+            if (incidentId != null) response.put("incidentId", incidentId);
+
+            return ResponseEntity.ok(response);
             
         } catch (Exception e) {
             log.error("❌ [CCTV] Failed to analyze local video", e);
@@ -534,7 +623,27 @@ public class CCTVController {
         List<File> frames = new ArrayList<>();
         
         // FFmpeg 명령어 (Windows/Linux 모두 지원)
-        String ffmpegCommand = "ffmpeg";
+        // - 기본: PATH의 ffmpeg
+        // - Windows 로컬에서 PATH가 꼬인 경우를 대비해 known 경로를 fallback으로 사용
+        String ffmpegCommand = configuredFfmpegCommand != null ? configuredFfmpegCommand.trim() : "ffmpeg";
+        if (ffmpegCommand.isEmpty()) ffmpegCommand = "ffmpeg";
+
+        boolean isWindows = System.getProperty("os.name", "").toLowerCase().contains("win");
+        if ("ffmpeg".equalsIgnoreCase(ffmpegCommand) && isWindows) {
+            String[] candidates = new String[] {
+                    "C:\\\\bin\\\\ffmpeg.exe",
+                    "C:\\\\ffmpeg\\\\bin\\\\ffmpeg.exe"
+            };
+            for (String candidate : candidates) {
+                File f = new File(candidate);
+                if (f.exists() && f.isFile()) {
+                    ffmpegCommand = f.getAbsolutePath();
+                    break;
+                }
+            }
+        }
+
+        log.info("🎞️ [CCTV] Using ffmpeg command: {}", ffmpegCommand);
         
         // 각 프레임 추출 (0초, 5초, 10초, 15초...)
         for (int i = 0; i < frameCount; i++) {
@@ -545,6 +654,8 @@ public class CCTVController {
                 ProcessBuilder pb = new ProcessBuilder(
                         ffmpegCommand,
                         "-y", // 덮어쓰기
+                        "-hide_banner",
+                        "-loglevel", "error",
                         "-ss", String.valueOf(timeSeconds), // 시작 시간
                         "-i", videoFile.getAbsolutePath(), // 입력 파일
                         "-frames:v", "1", // 1장만 추출
@@ -555,13 +666,25 @@ public class CCTVController {
                 
                 pb.redirectErrorStream(true);
                 Process process = pb.start();
+                
+                // ffmpeg 출력(에러 포함) 캡쳐: 실패 원인 파악용
+                String ffmpegOut = "";
+                try (InputStream is = process.getInputStream()) {
+                    byte[] bytes = is.readAllBytes();
+                    if (bytes != null && bytes.length > 0) {
+                        ffmpegOut = new String(bytes, StandardCharsets.UTF_8);
+                    }
+                } catch (Exception ignore) {
+                    // best-effort
+                }
                 int exitCode = process.waitFor();
                 
                 if (exitCode == 0 && outputFile.exists() && outputFile.length() > 0) {
                     frames.add(outputFile);
                     log.debug("✅ [CCTV] Frame extracted: {} ({}s)", outputFile.getName(), timeSeconds);
                 } else {
-                    log.warn("⚠️ [CCTV] Failed to extract frame at {}s", timeSeconds);
+                    log.warn("⚠️ [CCTV] Failed to extract frame at {}s (exitCode={}, out={})",
+                            timeSeconds, exitCode, (ffmpegOut == null ? "" : ffmpegOut));
                 }
             } catch (Exception e) {
                 log.error("❌ [CCTV] Error extracting frame at {}s", timeSeconds, e);

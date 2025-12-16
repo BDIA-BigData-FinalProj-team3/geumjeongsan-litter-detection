@@ -310,7 +310,7 @@ export default function IncidentDetailModal({
               {detail.cctvId && detail.cctvId !== '수동등록' && (
                 <div>
                   <label className="text-sm text-gray-600">CCTV ID</label>
-                  <p className="text-gray-900 mt-1">{detail.cctvId}</p>
+                  <p className="text-gray-900 mt-1">{detail.cctvCode || detail.cctvId}</p>
                 </div>
               )}
               <div>

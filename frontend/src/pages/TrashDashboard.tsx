@@ -5,6 +5,7 @@ import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
+import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { getActiveTrashIncidents, getCompletedTrashIncidents, getTrashStats, getTrashHotspots, createTrash, updateTrashStatus, getTrashDetail, updateTrashDetail, type TrashStatsResponse, type HotspotResponse } from '../services/api';
 import { getCurrentUser } from '../services/auth';
 
@@ -31,6 +32,7 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const { setTrashCount, addCompletedIncident, completedIncidents } = useIncidentCount();
+  const { refreshKey } = useRealtimeNotification();
   
   // 반응형: 화면 크기 감지
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
@@ -122,7 +124,7 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
     };
     
     loadTrashData();
-  }, [completedIncidents]);
+  }, [completedIncidents, refreshKey]);
 
   // 초기 카운트 설정 및 activeTrashIncidents 변경 시 카운트 업데이트
   useEffect(() => {

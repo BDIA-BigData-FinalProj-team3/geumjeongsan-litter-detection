@@ -42,7 +42,14 @@ public class IncidentAuto {
     @Column(name = "detected_features", columnDefinition = "text")
     private String detectedFeatures;
 
-    @Column(name = "auto_created_at")
+    // DB 컬럼명은 created_at (auto_created_at 컬럼은 없음)
+    @Column(name = "created_at")
     private OffsetDateTime autoCreatedAt;
+
+    @Column(name = "location_desc", columnDefinition = "text")
+    private String locationDesc;
+
+    @Column(name = "is_valid")
+    private Boolean isValid;
 }
 

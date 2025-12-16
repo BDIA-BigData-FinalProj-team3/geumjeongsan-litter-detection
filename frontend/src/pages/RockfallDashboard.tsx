@@ -3,6 +3,7 @@ import { Mountain, AlertTriangle, Clock, MapPin, HelpCircle, Search, ChevronDown
 import Sidebar from '../components/Sidebar';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { getActiveRockfalls, getCompletedRockfalls, getRockfallStats, getRockfallHotspots, createRockfall, updateRockfallStatus, getAllIncidentDetail, getRockfallDetail, updateRockfallDetail, type RockfallStatsResponse, type HotspotResponse } from '../services/api';
 import { getCurrentUser } from '../services/auth';
 
@@ -26,6 +27,7 @@ interface HotspotResponse {
 export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { refreshKey } = useRealtimeNotification();
   
   // 반응형: 화면 크기 감지
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
@@ -113,7 +115,7 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
     };
     
     loadRockfallData();
-  }, []);
+  }, [refreshKey]);
 
   // viewMode에 따라 필터링
   const rockfallsByStatus = viewMode === 'active' ? activeRockfalls : completedRockfalls;

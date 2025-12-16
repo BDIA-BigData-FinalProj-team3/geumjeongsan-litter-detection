@@ -5,12 +5,14 @@ import { PieChart, Pie, Cell, ResponsiveContainer, LineChart, Line, XAxis, YAxis
 import { getDailyStats, getAllMonthlyData, getAvgResponseTime, getCCTVSummary, getIncidentStats, getCctvUptime, getModelAccuracy, getResponseTime, type StatsOverviewResponse, type CctvUptimePoint, type ModelAccuracyPoint, type ResponseTimeOverview } from '../services/api';
 import { cctvSummary } from '../services/common';
 import DateRangePicker, { DateRangeState, formatDateRange } from '../components/DateRangePicker';
+import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 
 interface DashboardProps {
   onNavigate: (screen: string) => void;
 }
 
 export default function Dashboard({ onNavigate }: DashboardProps) {
+  const { refreshKey } = useRealtimeNotification();
   // 반응형: 화면 크기 감지
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
   const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
@@ -270,7 +272,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
     };
     
     loadDashboardData();
-  }, [dateRange]);
+  }, [dateRange, refreshKey]);
 
   // ✅ 상단 당일 카드 데이터는 기간 변경과 무관하므로 1회만 로드
   useEffect(() => {
@@ -285,7 +287,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [refreshKey]);
 
   // ✅ 상단 당일 카드 "AI 탐지"는 하루 1회 캐시해서 재사용 (기간 변경 때 재호출 금지)
   useEffect(() => {

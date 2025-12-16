@@ -8,6 +8,7 @@ import com.example.geumjeongsan.api.dto.EmergencyResponse;
 import com.example.geumjeongsan.api.dto.FireResponse;
 import com.example.geumjeongsan.api.dto.MapDataResponse;
 import com.example.geumjeongsan.api.dto.MediaFileResponse;
+import com.example.geumjeongsan.domain.cctv.CCTV;
 import com.example.geumjeongsan.domain.cctv.CCTVRepository;
 import com.example.geumjeongsan.domain.cctv.MapCCTV;
 import com.example.geumjeongsan.domain.cctv.MapCCTVRepository;
@@ -22,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
@@ -41,6 +43,29 @@ public class IncidentService {
     private final EntityManager entityManager;
     private final ObjectMapper objectMapper;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
+    // 화면 표시는 항상 cctvCode를 우선
+    private String resolveCctvCode(Long cctvId) {
+        if (cctvId == null) return "수동등록";
+        try {
+            return cctvRepository.findById(cctvId)
+                    .map(CCTV::getCctvCode)
+                    .orElse(String.format("CCTV-%03d", cctvId));
+        } catch (Exception e) {
+            return String.format("CCTV-%03d", cctvId);
+        }
+    }
+
+    private static String toKstIso(OffsetDateTime t) {
+        if (t == null) return null;
+        try {
+            return t.atZoneSameInstant(KST).toOffsetDateTime().toString();
+        } catch (Exception e) {
+            // fallback: 기존 방식
+            return t.toString();
+        }
+    }
 
     public IncidentService(IncidentRepository incidentRepository, 
                          EmergencyDetailRepository emergencyDetailRepository,
@@ -153,7 +178,7 @@ public class IncidentService {
 
         return FireResponse.builder()
                 .id(incident.getId())
-                .cctvId(String.format("CCTV-%03d", incident.getCctvId()))
+                .cctvId(resolveCctvCode(incident.getCctvId()))
                 .time(incident.getDetectedAt().format(DATE_FORMATTER))
                 .status(status)
                 .severity(severity)
@@ -255,7 +280,7 @@ public class IncidentService {
 
         return com.example.geumjeongsan.api.dto.TrashResponse.builder()
                 .id(incident.getId())
-                .cctvId(String.format("CCTV-%03d", incident.getCctvId()))
+                .cctvId(resolveCctvCode(incident.getCctvId()))
                 .time(incident.getDetectedAt().format(DATE_FORMATTER))
                 .status(status)
                 .severity(severity)
@@ -309,7 +334,7 @@ public class IncidentService {
 
         return com.example.geumjeongsan.api.dto.RockfallResponse.builder()
                 .id(incident.getId())
-                .cctvId(String.format("CCTV-%03d", incident.getCctvId()))
+                .cctvId(resolveCctvCode(incident.getCctvId()))
                 .time(incident.getDetectedAt().format(DATE_FORMATTER))
                 .status(status)
                 .severity(severity)
@@ -563,7 +588,7 @@ public class IncidentService {
                 .age(patientAge != null && !patientAge.isEmpty() ? Integer.parseInt(patientAge.replaceAll("[^0-9]", "0")) : null)
                 .gender(gender != null ? gender : "")
                 .location(location != null ? location : "")
-                .cctvId(String.format("CCTV-%03d", incident.getCctvId()))
+                .cctvId(resolveCctvCode(incident.getCctvId()))
                 .incidentTime(incident.getDetectedAt().format(DATE_FORMATTER))
                 .symptoms(symptoms != null ? symptoms : "")
                 .severity(severity)
@@ -704,11 +729,11 @@ public class IncidentService {
                     .isActive(view.getIsActive())
                     .powerStatus(view.getPowerStatus())
                     .healthStatus(view.getHealthStatus())
-                    .lastHeartbeat(view.getLastHeartbeat() != null ? view.getLastHeartbeat().format(DATE_FORMATTER) : null)
+                    .lastHeartbeat(toKstIso(view.getLastHeartbeat()))
                     .longitude(longitude)
                     .latitude(latitude)
                     .incidentCount(view.getIncidentCount())
-                    .lastIncidentTime(view.getLastIncidentAt() != null ? view.getLastIncidentAt().format(DATE_FORMATTER) : null)
+                    .lastIncidentTime(toKstIso(view.getLastIncidentAt()))
                     .lastIncidentType(view.getLastIncidentType())
                     .build();
         }).collect(Collectors.toList());
@@ -749,11 +774,11 @@ public class IncidentService {
                 .isActive(view.getIsActive())
                 .powerStatus(view.getPowerStatus())
                 .healthStatus(view.getHealthStatus())
-                .lastHeartbeat(view.getLastHeartbeat() != null ? view.getLastHeartbeat().format(DATE_FORMATTER) : null)
+                .lastHeartbeat(toKstIso(view.getLastHeartbeat()))
                 .longitude(longitude)
                 .latitude(latitude)
                 .incidentCount(view.getIncidentCount())
-                .lastIncidentTime(view.getLastIncidentAt() != null ? view.getLastIncidentAt().format(DATE_FORMATTER) : null)
+                .lastIncidentTime(toKstIso(view.getLastIncidentAt()))
                 .lastIncidentType(view.getLastIncidentType())
                 .build();
     }
@@ -847,7 +872,7 @@ public class IncidentService {
             
             return MapDataResponse.IncidentMarker.builder()
                     .id(id)
-                    .cctvId(String.format("CCTV-%03d", cctvId))
+                    .cctvId(resolveCctvCode(cctvId))
                     .incidentType(incidentType)
                     .severity(severity)
                     .status(status)
@@ -934,9 +959,8 @@ public class IncidentService {
             };
             
             // detectedAt을 문자열로 변환
-            String detectedAtStr = view.getDetectedAt() != null 
-                ? view.getDetectedAt().format(DATE_FORMATTER)
-                : "";
+            String detectedAtStr = toKstIso(view.getDetectedAt());
+            if (detectedAtStr == null) detectedAtStr = "";
             
             CCTVIncidentDetailResponse.IncidentDetail detail = CCTVIncidentDetailResponse.IncidentDetail.builder()
                     .id(view.getIncidentId())
@@ -970,8 +994,7 @@ public class IncidentService {
                     .fileId(media.getId())
                     .url(media.getUrl())
                     .fileType(media.getFileType())
-                    .capturedAt(media.getCapturedAt() != null ? 
-                        media.getCapturedAt().format(DATE_FORMATTER) : null)
+                    .capturedAt(toKstIso(media.getCapturedAt()))
                     .incidentId(media.getIncident() != null ? media.getIncident().getId() : null)
                     .build();
         }).collect(Collectors.toList());

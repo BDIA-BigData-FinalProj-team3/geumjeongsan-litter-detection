@@ -18,6 +18,7 @@ import TrashMarkerIcon from '../components/TrashMarkerIcon';
 import CCTVOnMarkerIcon from '../components/CCTVOnMarkerIcon';
 import CCTVOffMarkerIcon from '../components/CCTVOffMarkerIcon';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
+import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { getFireNotifications, getEmergencyNotifications, getTrashNotifications, getHelicopterLocations, getHotspots, getCCTVVideoClips, getCCTVMedia, getCCTVList, getActiveIncidents, getIncidentMarkers, getCCTVStatus, getMainMapWeather, getCCTVIncidents, getTrails, getRiskMapHeatmap, getFireDetail, getEmergencyDetail, getTrashDetail, getRockfallRiskData, type RiskMapHeatmapItem, type RockfallRiskItem } from '../services/api';
 import { getRockfallRiskColor, getRockfallRiskColorWithOpacity, getRockfallRiskLevel } from '../utils/rockfallColors';
 import type { VideoClip } from '../services/mock';
@@ -320,6 +321,7 @@ function FitBoundsOnCulturalRockfall({
 export default function MainMap({ onNavigate }: MainMapProps) {
   const navigate = useNavigate();
   const { setEmergencyCount, setFireCount, setTrashCount, completedIncidents, addCompletedIncident, setAllNotifications } = useIncidentCount();
+  const { refreshKey } = useRealtimeNotification();
   
   // 반응형: 화면 크기 감지 (먼저 선언)
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
@@ -1070,7 +1072,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     };
     
     loadMapData();
-  }, []);
+  }, [refreshKey]);
 
   // 등산로 데이터 로드
   useEffect(() => {
@@ -1198,7 +1200,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     };
     
     loadViewData();
-  }, [activeView]);
+  }, [activeView, refreshKey]);
 
   // 사고다발구간 데이터 로드 (기존)
   useEffect(() => {

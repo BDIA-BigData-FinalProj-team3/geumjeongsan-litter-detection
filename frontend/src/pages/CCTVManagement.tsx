@@ -3,7 +3,7 @@ import Sidebar from '../components/Sidebar';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import IncidentDetailModal from '../components/IncidentDetailModal';
 import { X, ArrowLeft, Search, ChevronDown, ArrowUpDown, Maximize, Camera, Flame, Trash2, AlertCircle, Download, Play, HeartPulse } from 'lucide-react';
-import { useIncidentCount } from '../contexts/IncidentCountContext';
+import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { cctvList, getCCTVLocation, getOffCCTVCodes, getCCTVByCode } from '../services/common';
 import { getCCTVList, analyzeFallenVideo, type FallenAnalysisResponse } from '../services/api';
 import API_BASE_URL, { INGEST_HLS_URL } from '../config/api';
@@ -25,11 +25,20 @@ interface CCTVManagementProps {
 }
 
 interface CCTVData {
+  // 화면 표시용 코드 (예: "CCTV-095")
   id: string;
+  // DB 조회용 PK (예: 33) - "id로 조회, code로 표시" 원칙
+  dbId?: number;
   location: string;
   installDate: string;
   model: string;
   type: string;
+  // backend VIEW(`/api/cctv`)에서 내려오는 값들(선택)
+  resolution?: string;
+  powerStatus?: string;
+  incidentCount?: number;
+  lastIncidentTime?: string | null;
+  lastIncidentType?: string | null;
 }
 
 interface Event {
@@ -47,7 +56,7 @@ interface Event {
 }
 
 export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CCTVManagementProps) {
-  const { allNotifications } = useIncidentCount();
+  const { refreshKey } = useRealtimeNotification();
   
   // 반응형: 화면 크기 감지
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
@@ -107,6 +116,16 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([]);
   const [selectedPowers, setSelectedPowers] = useState<string[]>([]);
 
+  // ✅ Load CCTV list from backend (TDZ 방지: initialSelected useEffect보다 먼저 선언되어야 함)
+  const [backendCCTVs, setBackendCCTVs] = useState<any[]>([]);
+  useEffect(() => {
+    const loadCCTVs = async () => {
+      const cctvs = await getCCTVList();
+      setBackendCCTVs(cctvs);
+    };
+    loadCCTVs();
+  }, [refreshKey]);
+
   // CCTV ID에 맞는 비디오 매핑
   const cctvVideoMap: Record<string, string> = {
     'CCTV-001': cctv001DemoVideo,
@@ -129,17 +148,26 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
 
   // Set initial selected CCTV if provided
   useEffect(() => {
-    if (initialSelectedCCTVId) {
-      const location = getCCTVLocation(initialSelectedCCTVId);
-      setSelectedCCTV({
-        id: initialSelectedCCTVId,
-        location,
-        installDate: '2024-01-15',
-        model: 'HD-2000X',
-        type: '고정',
-      });
-    }
-  }, [initialSelectedCCTVId]);
+    if (!initialSelectedCCTVId) return;
+
+    // backendCCTVs가 준비되면 code로 매칭해서 dbId를 확보
+    const fromDb = backendCCTVs.find((c: any) => c?.cctvCode === initialSelectedCCTVId);
+    const location = fromDb?.locationDesc || fromDb?.name || getCCTVLocation(initialSelectedCCTVId);
+
+    setSelectedCCTV({
+      id: initialSelectedCCTVId, // 표시용 code
+      dbId: typeof fromDb?.id === 'number' ? fromDb.id : undefined, // 조회용 id
+      location,
+      installDate: fromDb?.installDate || '2024-01-15',
+      model: fromDb?.modelName || 'HD-2000X',
+      type: '고정',
+      resolution: fromDb?.resolution,
+      powerStatus: fromDb?.powerStatus,
+      incidentCount: typeof fromDb?.incidentCount === 'number' ? fromDb.incidentCount : undefined,
+      lastIncidentTime: fromDb?.lastIncidentTime ?? null,
+      lastIncidentType: fromDb?.lastIncidentType ?? null,
+    });
+  }, [initialSelectedCCTVId, backendCCTVs]);
 
   // 더미 비디오가 있는 CCTV가 선택되면 자동으로 재생
   useEffect(() => {
@@ -169,7 +197,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
             if (result.result && result.result.fallen_events > 0) {
               const newEvent: Event = {
                 id: `fallen-${Date.now()}`,
-                time: new Date().toLocaleString('ko-KR'),
+                time: new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false }),
                 type: 'emergency',
                 confidence: '95%',
                 location: selectedCCTV.location,
@@ -318,16 +346,6 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     return () => clearInterval(interval);
   }, []);
 
-  // Load CCTV list from backend
-  const [backendCCTVs, setBackendCCTVs] = useState<any[]>([]);
-  useEffect(() => {
-    const loadCCTVs = async () => {
-      const cctvs = await getCCTVList();
-      setBackendCCTVs(cctvs);
-    };
-    loadCCTVs();
-  }, []);
-
   // Load incidents for selected CCTV from backend
   useEffect(() => {
     const loadCCTVIncidents = async () => {
@@ -337,9 +355,26 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       }
       
       try {
-        // CCTV ID 추출 (CCTV-001 → 1)
-        const cctvIdNum = parseInt(selectedCCTV.id.replace('CCTV-', ''));
-        const response = await fetch(`${API_BASE_URL}/api/cctv/${cctvIdNum}/incidents`);
+        // ✅ "id로 조회, code로 표시": incidents 조회는 DB PK로만
+        let cctvDbId: number | undefined = selectedCCTV.dbId;
+
+        // dbId가 없으면 backendCCTVs에서 code로 찾아서 보강
+        if (cctvDbId == null) {
+          const fromDb = backendCCTVs.find((c: any) => c?.cctvCode === selectedCCTV.id);
+          if (typeof fromDb?.id === 'number') {
+            cctvDbId = fromDb.id;
+            // 한 번만 보강(무한루프 방지: 값이 없을 때만)
+            setSelectedCCTV((prev) => (prev ? { ...prev, dbId: cctvDbId } : prev));
+          }
+        }
+
+        if (cctvDbId == null) {
+          // 아직 dbId를 못 찾았으면(초기 로딩 타이밍) 조회 보류
+          setCctvIncidents([]);
+          return;
+        }
+
+        const response = await fetch(`${API_BASE_URL}/api/cctv/${cctvDbId}/incidents`);
         
         if (response.ok) {
           const incidents = await response.json();
@@ -354,7 +389,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     };
     
     loadCCTVIncidents();
-  }, [selectedCCTV]);
+  }, [selectedCCTV, refreshKey, backendCCTVs]);
 
   // Generate CCTV thumbnails - 100% DB 기반 (VIEW 데이터 사용)
   const cctvThumbnails = backendCCTVs.map(cctv => {
@@ -377,6 +412,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     
     return { 
       id: cctv.cctvCode,
+      dbId: cctv.id,
       time: cctv.lastIncidentTime || '-',
       detecting: !!detecting,
       power: powerStatus,
@@ -406,38 +442,6 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     return a.id.localeCompare(b.id);
   });
 
-  // 선택된 CCTV의 이벤트 목록 가져오기
-  const getEventsForCCTV = (cctvId: string): Event[] => {
-    return allNotifications
-      .filter(notification => notification.cctvId === cctvId)
-      .map(notification => {
-        // 응급도 계산 (confidence 기반)
-        const confidenceNum = parseInt(notification.confidence);
-        const severity = confidenceNum >= 80 ? '상' : confidenceNum >= 60 ? '중' : '하';
-        
-        // 신고가능성지수 계산
-        const reportProb = confidenceNum >= 75 ? '높음' : confidenceNum >= 50 ? '보통' : '낮음';
-        
-        // 요약설명 생성
-        const summaries: Record<string, string> = {
-          fire: `${notification.location}에서 화재 징후가 탐지되었습니다. 즉시 확인이 필요합니다.`,
-          emergency: `${notification.location}에서 응급상황이 발생했습니다. 신속한 대응이 필요합니다.`,
-          trash: `${notification.location}에서 불법 쓰레기 투기가 발견되었습니다.`
-        };
-        
-        return {
-          id: notification.id,
-          time: notification.time,
-          type: notification.type,
-          confidence: notification.confidence,
-          location: notification.location,
-          severity,
-          reportProbability: reportProb,
-          summary: summaries[notification.type] || '이벤트가 탐지되었습니다.'
-        };
-      });
-  };
-
   // DB에서 가져온 이벤트 + 분석 결과 이벤트 합치기
   const dbEvents = cctvIncidents.map((incident: any) => ({
     id: incident.incidentCode || `incident-${incident.incidentId}`,
@@ -453,6 +457,41 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     qwenResponse: null
   }));
   const events = [...dbEvents, ...analysisEvents];
+
+  // ✅ [핵심] "최근 이벤트면 자동 팝업"을 DB 이벤트 기준으로 동작시키기
+  useEffect(() => {
+    if (!selectedCCTV) {
+      // CCTV가 선택되지 않았으면 팝업 닫기
+      setSelectedEvent(null);
+      return;
+    }
+
+    // 아직 DB 이벤트가 안 내려왔으면(로딩 중) 아무것도 안 띄움
+    if (!cctvIncidents || cctvIncidents.length === 0) {
+      return;
+    }
+
+    // DB 이벤트를 여기서 직접 계산 (의존성 문제 방지)
+    const dbEventsForPopup = cctvIncidents.map((incident: any) => ({
+      id: incident.incidentCode || `incident-${incident.incidentId}`,
+      time: incident.detectedAt,
+      type: incident.incidentType?.toLowerCase() || 'unknown',
+      confidence: incident.detectionConfidence ? `${Math.round(incident.detectionConfidence * 100)}%` : '-',
+      location: incident.locationDesc || selectedCCTV?.location || '',
+      severity: incident.severity || '중',
+      reportProbability: '-',
+      summary: incident.locationDesc || '',
+      clipUrl: null,
+      frameUrls: [],
+      qwenResponse: null
+    }));
+
+    // 아직 확인(ack) 안 한 이벤트 중 가장 최신 이벤트 1개를 자동 팝업
+    const unacked = dbEventsForPopup.find(e => !acknowledgedEvents.has(e.id));
+    if (unacked) {
+      setSelectedEvent(unacked as any);
+    }
+  }, [selectedCCTV?.id, selectedCCTV?.location, cctvIncidents, refreshKey, acknowledgedEvents]);
 
   // CCTV 현황 데이터 - 100% DB 기반 (VIEW 데이터만 사용)
   const cctvStatusDataRaw = backendCCTVs.map(cctv => {
@@ -644,12 +683,15 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   // Filter log data based on selected CCTV
   const filteredLogData = selectedCCTV ? logData.filter(log => log.id === selectedCCTV.id) : logData;
 
-  const handleCCTVClick = (cctvId: string) => {
+  const handleCCTVClick = (cctvId: string, dbId?: number) => {
     // DB에서 실제 CCTV 데이터 찾기
-    const cctvFromDB = backendCCTVs.find(c => c.cctvCode === cctvId);
+    const cctvFromDB =
+      (dbId != null ? backendCCTVs.find((c: any) => c?.id === dbId) : undefined) ||
+      backendCCTVs.find((c: any) => c?.cctvCode === cctvId);
     
     const cctvData = {
       id: cctvId,
+      dbId: typeof cctvFromDB?.id === 'number' ? cctvFromDB.id : dbId,
       location: cctvFromDB?.locationDesc || cctvFromDB?.name || cctvId,
       installDate: cctvFromDB?.installDate || '-',
       model: cctvFromDB?.modelName || '-',
@@ -662,12 +704,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     };
     setSelectedCCTV(cctvData);
     
-    // 새 이벤트가 있으면 자동으로 팝업 표시
-    const cctvEvents = getEventsForCCTV(cctvId);
-    const newEvent = cctvEvents.find(e => !acknowledgedEvents.has(e.id));
-    if (newEvent) {
-      setSelectedEvent(newEvent);
-    }
+    // ✅ 자동 팝업은 위의 useEffect에서 처리 (DB 이벤트 기준)
   };
 
   const handleEventAcknowledge = () => {
@@ -794,7 +831,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
           if (result.hasTrash) {
             const newEvent: Event = {
               id: `qwen-${Date.now()}`,
-              time: result.time || new Date().toLocaleString('ko-KR'),
+              time: result.time || new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false }),
               type: 'trash',
               confidence: result.confidence || '0%',
               location: result.location || selectedCCTV.location,
@@ -855,7 +892,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       if (result.result && result.result.fallen_events > 0) {
         const newEvent: Event = {
           id: `fallen-${Date.now()}`,
-          time: new Date().toLocaleString('ko-KR'),
+          time: new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false }),
           type: 'emergency',
           confidence: '95%',
           location: selectedCCTV.location,
@@ -1009,23 +1046,31 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                       {(!isPlayingVideo || (!dummyCCTVIds.includes(selectedCCTV.id) && selectedCCTV.id !== liveStreamCCTVId)) && (
                         <>
                           <span className="text-white">{selectedCCTV.id} - Live Feed</span>
-                          {/* Power status indicator */}
+                          {/* 상태 점: 기본 전원(on=초록/off=회색), 미해결 사건이 있으면 빨강 우선 */}
                           {(() => {
                             const cctvData = backendCCTVs.find(b => b.cctvCode === selectedCCTV.id);
                             let bgColor: string;
                             if (dummyCCTVIds.includes(selectedCCTV.id)) {
                               bgColor = '#ef4444'; // red-500
                             } else {
+                              // 사건(미해결) 우선 표시: VIEW의 incidentCount/lastIncidentTime 기준
+                              const hasIncident = !!(cctvData && (cctvData.incidentCount || 0) > 0 && cctvData.lastIncidentTime);
+
                               // powerStatus를 안전하게 체크 (대소문자 무시)
                               const powerStatus = cctvData?.powerStatus 
                                 ? String(cctvData.powerStatus).toLowerCase().trim() 
                                 : 'off';
-                              bgColor = powerStatus === 'on' ? '#22c55e' : '#9ca3af'; // green-500 or gray-400
+                              bgColor = hasIncident
+                                ? '#ef4444' // red-500
+                                : (powerStatus === 'on' ? '#22c55e' : '#9ca3af'); // green-500 or gray-400
                             }
                             
                             return (
                               <div 
-                                className="absolute top-4 left-4 w-4 h-4 rounded-full" 
+                                className={`absolute top-4 left-4 w-4 h-4 rounded-full ${(() => {
+                                  const hasIncident = !!(cctvData && (cctvData.incidentCount || 0) > 0 && cctvData.lastIncidentTime);
+                                  return hasIncident ? 'animate-pulse' : '';
+                                })()}`}
                                 style={{ 
                                   backgroundColor: bgColor,
                                   border: '2px solid white' 
@@ -1168,7 +1213,9 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                     const formatDetectionTime = (time?: string | null) => {
                       if (!time) return '-';
                       try {
+                        // 백엔드가 ISO(+09:00)로 내려주는 경우/기존 문자열 모두 대응
                         const d = new Date(time);
+                        if (Number.isNaN(d.getTime())) return String(time);
                         return d.toLocaleString('ko-KR', {
                           year: 'numeric',
                           month: '2-digit',
@@ -1176,6 +1223,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                           hour: '2-digit',
                           minute: '2-digit',
                           hour12: false,
+                          timeZone: 'Asia/Seoul',
                         }).replace(/\./g, '.').replace(/,/g, '');
                       } catch {
                         return time;
@@ -1185,7 +1233,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                     return (
                       <div
                         key={cctv.id}
-                        onClick={() => handleCCTVClick(cctv.id)}
+                        onClick={() => handleCCTVClick(cctv.id, (cctv as any).dbId)}
                         className={`bg-white shadow-md hover:shadow-xl hover:-translate-y-1 transition-all duration-300 ease-out cursor-pointer overflow-hidden ${
                           cctv.detecting ? 'ring-4 ring-red-600' : ''
                         } ${!sidebarOpen ? 'mt-1 mb-1 mx-2' : ''}`}
@@ -1226,21 +1274,24 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                             /* 정상 CCTV 화면 */
                             <span className="text-white text-sm">{cctv.id}</span>
                           )}
-                          {/* Power status indicator */}
+                          {/* 상태 점: 기본 전원(on=초록/off=회색), 사건이 있으면 빨강 우선 */}
                           {(() => {
                             const isVideo = dummyCCTVIds.includes(cctv.id);
+                            const hasIncident = !!(cctv as any).hasIncident;
                             let bgColor: string;
                             if (isVideo) {
                               bgColor = '#ef4444'; // red-500
                             } else {
                               // powerStatus를 안전하게 체크 (대소문자 무시)
                               const powerStatus = String(cctv.power || 'off').toLowerCase().trim();
-                              bgColor = powerStatus === 'on' ? '#4ade80' : '#9ca3af'; // green-400 or gray-400
+                              bgColor = hasIncident
+                                ? '#ef4444' // red-500
+                                : (powerStatus === 'on' ? '#4ade80' : '#9ca3af'); // green-400 or gray-400
                             }
                             
                             return (
                               <div 
-                                className="absolute top-2 right-2 w-3 h-3 rounded-full z-10" 
+                                className={`absolute top-2 right-2 w-3 h-3 rounded-full z-10 ${hasIncident ? 'animate-pulse' : ''}`}
                                 style={{ 
                                   backgroundColor: bgColor,
                                   border: '1px solid white' 
@@ -1743,7 +1794,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                           <tr 
                             key={cctv.id} 
                             className="border-b border-gray-100 hover:bg-blue-50 hover:shadow-sm cursor-pointer transition-all duration-200 ease-out"
-                            onClick={() => handleCCTVClick(cctv.id)}
+                            onClick={() => handleCCTVClick(cctv.id, (cctv as any).dbId)}
                           >
                             <td className="py-3 px-4 text-gray-900">{cctv.id}</td>
                             <td className="py-3 px-4 text-gray-900">{cctv.location}</td>

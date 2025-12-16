@@ -5,6 +5,7 @@ import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
+import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { getAllIncidentsStats, getAllIncidentsList, getAllIncidentDetail, createEmergency, createFire, createTrash, createRockfall, getRockfallDetail, updateEmergencyStatus, updateFireStatus, updateTrashStatus, updateEmergencyDetail, updateFireDetail, updateTrashDetail, updateRockfallDetail } from '../services/api';
 import { getCurrentUser } from '../services/auth';
 
@@ -40,6 +41,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
   const navigate = useNavigate();
   const location = useLocation();
   const { addCompletedIncident } = useIncidentCount();
+  const { refreshKey } = useRealtimeNotification();
   
   // 반응형: 화면 크기 감지
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
@@ -169,7 +171,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
     };
 
     loadAllIncidentsData();
-  }, []);  // 최초 로드만
+  }, [refreshKey]);  // SSE 이벤트 발생 시 재조회
 
   // viewMode 변경 시에도 데이터 새로고침 (옵션)
   useEffect(() => {

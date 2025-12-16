@@ -5,6 +5,7 @@ import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
+import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { getActiveEmergencies, getCompletedEmergencies, getEmergencyStats, getEmergencyHotspots, getEmergencyIncidents, createEmergency, updateEmergencyStatus, getEmergencyDetail, updateEmergencyDetail, type EmergencyStatsResponse, type HotspotResponse, type IncidentListItem, type PageResponse } from '../services/api';
 import { getCurrentUser } from '../services/auth';
 
@@ -34,6 +35,7 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
   const navigate = useNavigate();
   const location = useLocation();
   const { setEmergencyCount, addCompletedIncident, completedIncidents } = useIncidentCount();
+  const { refreshKey } = useRealtimeNotification();
   
   // 반응형: 화면 크기 감지
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
@@ -133,7 +135,7 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
     };
     
     loadEmergencyData();
-  }, [completedIncidents]);
+  }, [completedIncidents, refreshKey]);
   
   // 페이지네이션 데이터 로드 - 목 데이터 사용
   useEffect(() => {
