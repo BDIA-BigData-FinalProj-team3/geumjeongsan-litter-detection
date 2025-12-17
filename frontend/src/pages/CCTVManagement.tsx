@@ -10,6 +10,7 @@ import API_BASE_URL, { INGEST_HLS_URL } from '../config/api';
 import Hls from 'hls.js';
 import cctv001DemoVideo from '../assets/cctv-001_20251208T140000Z.mp4';
 // 더미 비디오 import
+import cctv002Video from '../assets/cctv_dummy/cctv-002.mp4';
 import cctv003Video from '../assets/cctv_dummy/cctv-003.mp4';
 import cctv004Video from '../assets/cctv_dummy/cctv-004.mp4';
 import cctv005Video from '../assets/cctv_dummy/cctv-005.mp4';
@@ -132,6 +133,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   // CCTV ID에 맞는 비디오 매핑
   const cctvVideoMap: Record<string, string> = {
     'CCTV-001': cctv001DemoVideo,
+    'CCTV-002': cctv002Video,
     'CCTV-003': cctv003Video,
     'CCTV-004': cctv004Video,
     'CCTV-005': cctv005Video,
@@ -143,7 +145,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   };
 
   // 더미 비디오가 있는 CCTV ID 목록
-  const dummyCCTVIds = ['CCTV-001', 'CCTV-003', 'CCTV-004', 'CCTV-005', 'CCTV-006', 'CCTV-007', 'CCTV-008', 'CCTV-009', 'CCTV-010'];
+  const dummyCCTVIds = ['CCTV-001', 'CCTV-002', 'CCTV-003', 'CCTV-004', 'CCTV-005', 'CCTV-006', 'CCTV-007', 'CCTV-008', 'CCTV-009', 'CCTV-010'];
   
   // 라이브 스트림 CCTV ID (CCTV-011)
   const liveStreamCCTVId = 'CCTV-011';
