@@ -7,6 +7,7 @@ import com.example.geumjeongsan.domain.weather.Weather;
 import com.example.geumjeongsan.service.WeatherService;
 import com.example.geumjeongsan.service.RealtimeSseService;
 import com.example.geumjeongsan.service.GeminiService;
+import com.example.geumjeongsan.service.GeminiJsonExtractor;
 import com.example.geumjeongsan.service.S3Service;
 import com.example.geumjeongsan.service.ImageOverlayService;
 import com.example.geumjeongsan.service.MediaFileService;
@@ -40,8 +41,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/fire-detection")
@@ -55,6 +54,7 @@ public class FireDetectionController {
     private final ObjectMapper objectMapper;
     private final RealtimeSseService realtimeSseService;
     private final GeminiService geminiService;
+    private final GeminiJsonExtractor geminiJsonExtractor;
     private final S3Service s3Service;
     private final ImageOverlayService imageOverlayService;
     private final MediaFileService mediaFileService;
@@ -511,41 +511,8 @@ public class FireDetectionController {
         }
     }
 
-    /**
-     * Gemini 응답 텍스트에서 JSON 추출
-     * Markdown 코드 블록(```json ... ```) 또는 일반 JSON 문자열을 파싱
-     */
-    @SuppressWarnings("unchecked")
     private Map<String, Object> extractJsonFromGeminiResponse(String geminiResult) {
-        if (geminiResult == null || geminiResult.trim().isEmpty()) {
-            return null;
-        }
-        
-        try {
-            // 1. Markdown 코드 블록에서 JSON 추출 시도
-            Pattern jsonBlockPattern = Pattern.compile("```(?:json)?\\s*\\n?([\\s\\S]*?)\\n?```", Pattern.CASE_INSENSITIVE);
-            Matcher matcher = jsonBlockPattern.matcher(geminiResult);
-            if (matcher.find()) {
-                String jsonStr = matcher.group(1).trim();
-                return objectMapper.readValue(jsonStr, Map.class);
-            }
-            
-            // 2. 중괄호로 시작하는 JSON 문자열 직접 찾기
-            int startIdx = geminiResult.indexOf('{');
-            int endIdx = geminiResult.lastIndexOf('}');
-            if (startIdx >= 0 && endIdx > startIdx) {
-                String jsonStr = geminiResult.substring(startIdx, endIdx + 1);
-                return objectMapper.readValue(jsonStr, Map.class);
-            }
-            
-            // 3. 전체 텍스트를 JSON으로 파싱 시도
-            return objectMapper.readValue(geminiResult.trim(), Map.class);
-            
-        } catch (Exception e) {
-            log.warn("⚠️ [FireDetection] Failed to parse JSON from Gemini response: {}", e.getMessage());
-            log.debug("Gemini response: {}", geminiResult);
-            return null;
-        }
+        return geminiJsonExtractor.extract(geminiResult);
     }
 
     /**

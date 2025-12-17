@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Menu, User, LogOut, ChevronDown, ChevronUp, Flame, Trash2, Camera, Wrench, X, Plus, Minus, Download, Bell, AlertCircle, Move, MessageSquare, Eye, Radar, Video, Plane, Activity, Home, Grid3x3, Video as VideoIcon, Heart, FileText, Edit2, Save, Clock, Wind, MapPin, Map as MapIcon, HeartPulse } from 'lucide-react';
+import { Menu, User, LogOut, ChevronDown, ChevronUp, Flame, Trash2, Camera, Wrench, X, Plus, Minus, Download, Bell, AlertCircle, Move, MessageSquare, Eye, Radar, Video, Activity, Home, Grid3x3, Video as VideoIcon, Heart, FileText, Edit2, Save, Clock, Wind, MapPin, Map as MapIcon, HeartPulse } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import LogoutButton from '../components/LogoutButton';
 import MyPageButton from '../components/MyPageButton';
@@ -10,7 +10,6 @@ import CCTVButton from '../components/CCTVButton';
 import MapStyleToggle from '../components/MapStyleToggle';
 import ResetButton from '../components/ResetButton';
 import CulturalButton from '../components/CulturalButton';
-import HelicopterButton from '../components/HelicopterButton';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import NotificationBellButton from '../components/NotificationBellButton';
 import EmergencyMarkerIcon from '../components/EmergencyMarkerIcon';
@@ -20,7 +19,7 @@ import CCTVOffMarkerIcon from '../components/CCTVOffMarkerIcon';
 import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
-import { getFireNotifications, getEmergencyNotifications, getTrashNotifications, getHelicopterLocations, getHotspots, getCCTVVideoClips, getCCTVMedia, getCCTVList, getActiveIncidents, getIncidentMarkers, getCCTVStatus, getMainMapWeather, getCCTVIncidents, getTrails, getRiskMapHeatmap, getUnifiedIncidentDetail, getRockfallRiskData, type RiskMapHeatmapItem, type RockfallRiskItem } from '../services/api';
+import { getFireNotifications, getEmergencyNotifications, getTrashNotifications, getHotspots, getCCTVVideoClips, getCCTVMedia, getCCTVList, getActiveIncidents, getIncidentMarkers, getCCTVStatus, getMainMapWeather, getCCTVIncidents, getTrails, getRiskMapHeatmap, getUnifiedIncidentDetail, getRockfallRiskData, type RiskMapHeatmapItem, type RockfallRiskItem } from '../services/api';
 import { getRockfallRiskColor, getRockfallRiskColorWithOpacity, getRockfallRiskLevel } from '../utils/rockfallColors';
 import type { VideoClip } from '../services/mock';
 import type { CCTVMedia } from '../services/api';
@@ -575,7 +574,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   const [selectedCCTV, setSelectedCCTV] = useState<CCTVPopup | null>(null);
   const [selectedDetection, setSelectedDetection] = useState<DetectionPopup | null>(null);
   const [zoomLevel, setZoomLevel] = useState(11);  // 초기 줌 11로 설정 (금정산 전체 보이게)
-  const [showHelicopters, setShowHelicopters] = useState(false);
+  // 헬리콥터 기능 제거 (API/표시 비활성화)
   const [showNotifications, setShowNotifications] = useState(false);
   const [notificationTab, setNotificationTab] = useState<'all' | 'fire' | 'emergency' | 'trash'>('all');
   const [scrollTop, setScrollTop] = useState(0);
@@ -625,7 +624,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     
     // 2. 토글 기능 끄기
     setShowAllDetections(false);
-    setShowHelicopters(false);
+    // setShowHelicopters(false); // 헬리콥터 기능 제거
     setShowNotifications(false);
     setSidebarOpen(false); // 사이드바도 닫기
     setShowFilterDropdown(false);
@@ -1019,9 +1018,8 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     setDragging(popupType);
   };
 
-  // CCTV 마커 및 헬리콥터 위치 - API에서 가져오기
+  // CCTV 마커 - API에서 가져오기
   const [cctvMarkers, setCctvMarkers] = useState<MapCCTVMarker[]>([]);
-  const [helicopterLocations, setHelicopterLocations] = useState<Array<{ id: string; x: number; y: number }>>([]);
   const [hotspotLocations, setHotspotLocations] = useState<Array<{ cctvId: string; x: number; y: number; location: string; count: number; type: 'fire' | 'emergency' | 'trash' }>>([]);
   const [trails, setTrails] = useState<any[]>([]);
   const [mapDataLoading, setMapDataLoading] = useState(false);
@@ -1066,16 +1064,15 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     };
   };
   
-  // API에서 CCTV 마커, 헬리콥터 위치, 날씨 로드
+  // API에서 CCTV 마커/날씨 로드
   useEffect(() => {
     const loadMapData = async () => {
       setMapDataLoading(true);
       setMapDataError(null);
       try {
         if (import.meta.env.DEV) console.log("🚀 [MainMap] Loading Map Data...");
-        const [incidentMarkers, helicopters, weatherData] = await Promise.all([
+        const [incidentMarkers, weatherData] = await Promise.all([
           getIncidentMarkers(), // ✅ 새 API: CCTV별로 그룹화된 데이터
-          getHelicopterLocations(),
           getMainMapWeather(), // ✅ 날씨 정보
         ]);
         
@@ -1128,7 +1125,6 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         
         console.log("🗺️ [MainMap] Final Map Markers:", markersWithIncidents);
         setCctvMarkers(markersWithIncidents);
-        setHelicopterLocations(helicopters);
         setWeather(weatherData);
       } catch (error) {
         console.error("❌ [MainMap] Error loading map data:", error);
@@ -2269,7 +2265,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             maxZoom={18}
             zoomSnap={1}
             zoomDelta={1}
-            preferCanvas={true}
+            renderer={L.svg()} // ✅ Canvas(clearRect) 오류 방지: SVG 렌더러로 고정
             maxBounds={mapMaxBounds}
             maxBoundsViscosity={0.1}
           >
@@ -3152,17 +3148,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
 
 
 
-        {showHelicopters && helicopterLocations.map((heli) => (
-          <div 
-            key={heli.id} 
-            className="absolute transform -translate-x-1/2 -translate-y-1/2 cursor-pointer hover:scale-110 transition-transform"
-            style={{ left: `${heli.x}%`, top: `${heli.y}%`, zIndex: 1010 }}
-          >
-            <div className="w-10 h-10 rounded-full shadow-lg flex items-center justify-center bg-red-500 border-2 border-white">
-              <span className="text-white" style={{ fontSize: '16px', fontWeight: 'bold', lineHeight: '1' }}>H</span>
-            </div>
-          </div>
-        ))}
+        {/* 헬리콥터 표시 기능 제거 */}
 
 
         {/* 지도 스타일 토글 - 우측 하단 줌 버튼 왼쪽 */}

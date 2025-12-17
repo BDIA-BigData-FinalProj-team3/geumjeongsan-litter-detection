@@ -5,7 +5,7 @@ import IncidentDetailModal from '../components/IncidentDetailModal';
 import { X, ArrowLeft, Search, ChevronDown, ArrowUpDown, Maximize, Camera, Flame, Trash2, AlertCircle, Download, Play, HeartPulse } from 'lucide-react';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { cctvList, getCCTVLocation, getOffCCTVCodes, getCCTVByCode } from '../services/common';
-import { getCCTVList, analyzeFallenVideo, getUnifiedIncidentDetail, type FallenAnalysisResponse } from '../services/api';
+import { getCCTVList, analyzeFallenVideo, getUnifiedIncidentDetail, analyzeTrashFrameWithGemini, type FallenAnalysisResponse } from '../services/api';
 import API_BASE_URL, { INGEST_HLS_URL } from '../config/api';
 import Hls from 'hls.js';
 import cctv001DemoVideo from '../assets/cctv-001_20251208T140000Z.mp4';
@@ -735,7 +735,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     run();
   }, [selectedEvent?.incidentId]);
 
-  // Handle Qwen frame analysis
+  // Handle TRASH frame analysis (Gemini main). 기존 Qwen은 보조/대체로 유지 가능.
   const handleAnalyzeFrameWithQwen = async () => {
     if (!selectedCCTV || selectedCCTV.id !== 'CCTV-003' || !videoRef.current) {
       return;
@@ -765,50 +765,46 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
         }
         
         try {
-          // FormData로 백엔드에 전송
-          const formData = new FormData();
-          formData.append('image', blob, 'frame.jpg');
-          
-          const response = await fetch(
-            `${API_BASE_URL}/api/cctv/${selectedCCTV.id}/frame/analyze-with-qwen`,
-            {
-              method: 'POST',
-              body: formData
-            }
-          );
-          
-          if (!response.ok) {
-            throw new Error(`API 호출 실패: ${response.status}`);
-          }
-          
-          const result = await response.json();
-          
-          // 백엔드에서 이미 파싱된 데이터를 받음
-          if (result.hasTrash) {
+          const result = await analyzeTrashFrameWithGemini(selectedCCTV.id, blob, { saveToDb: true });
+          const analysis = result?.analysis;
+          const incidentType = analysis?.incident?.incident_type;
+
+          if (incidentType === 'TRASH') {
+            const confidencePct = analysis?.incident_auto?.detection_confidence != null
+              ? `${Math.round(Number(analysis.incident_auto.detection_confidence) * 100)}%`
+              : '0%';
+
+            const severityLevel = (analysis?.incident?.severity_level || 'LOW').toString().toUpperCase();
+            const severity = severityLevel === 'HIGH' ? '상' : severityLevel === 'MEDIUM' ? '중' : '하';
+
+            const objectAmount = analysis?.trash_detail?.object_amount;
+            const summary = objectAmount || analysis?.incident_auto?.confidence_reason || `${selectedCCTV.location}에서 쓰레기가 탐지되었습니다.`;
+
+            const overlayUrl = result?.overlayUrl || null;
+
             const newEvent: Event = {
-              id: `qwen-${Date.now()}`,
-              time: result.time || new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false }),
+              id: `trash-gemini-${Date.now()}`,
+              time: new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false }),
               type: 'trash',
-              confidence: result.confidence || '0%',
-              location: result.location || selectedCCTV.location,
-              severity: result.severity || '하',
+              confidence: confidencePct,
+              location: selectedCCTV.location,
+              severity,
               reportProbability: '높음',
-              summary: result.summary || result.objectAmount || `${selectedCCTV.location}에서 쓰레기가 탐지되었습니다.`,
-              clipUrl: result.overlayImageUrl || null,
-              frameUrls: result.overlayImageUrl ? [result.overlayImageUrl] : [],
-              // Qwen 상세 정보 저장 (상세 페이지에서 사용)
-              qwenResponse: result
-            };
-            
+              summary,
+              clipUrl: overlayUrl,
+              frameUrls: overlayUrl ? [overlayUrl] : [],
+              // incidentId가 반환되면 상세 로딩에 사용
+              incidentId: typeof result?.incidentId === 'number' ? result.incidentId : undefined,
+            } as any;
+
             setAnalysisEvents(prev => [...prev, newEvent]);
           } else {
-            // 쓰레기가 없는 경우 알림만 표시
             alert('쓰레기가 탐지되지 않았습니다.');
           }
           
         } catch (error) {
-          console.error('Qwen 분석 실패:', error);
-          alert('Qwen 분석에 실패했습니다: ' + (error instanceof Error ? error.message : String(error)));
+          console.error('Gemini(TRASH) 분석 실패:', error);
+          alert('Gemini 쓰레기 분석에 실패했습니다: ' + (error instanceof Error ? error.message : String(error)));
         } finally {
           setIsAnalyzingQwen(false);
         }

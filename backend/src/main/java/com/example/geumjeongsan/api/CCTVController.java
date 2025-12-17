@@ -13,10 +13,10 @@ import com.example.geumjeongsan.domain.incident.TrashService;
 import com.example.geumjeongsan.domain.incident.EmergencyService;
 import com.example.geumjeongsan.domain.cctv.CCTVRepository;
 import com.example.geumjeongsan.service.GeminiService;
+import com.example.geumjeongsan.service.GeminiJsonExtractor;
 import com.example.geumjeongsan.service.S3Service;
 import com.example.geumjeongsan.service.ImageOverlayService;
 import com.example.geumjeongsan.service.MediaFileService;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
@@ -38,8 +38,6 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/cctv")
@@ -53,7 +51,7 @@ public class CCTVController {
     private final RestTemplate restTemplate;
     private final S3Service s3Service;
     private final GeminiService geminiService;
-    private final ObjectMapper objectMapper;
+    private final GeminiJsonExtractor geminiJsonExtractor;
 
     @Value("${app.model-server.url:http://54.116.3.241:8000/api/v1/video/analyze}")
     private String modelServerUrl;
@@ -97,7 +95,7 @@ public class CCTVController {
                           RestTemplate restTemplate,
                           S3Service s3Service,
                           GeminiService geminiService,
-                          ObjectMapper objectMapper,
+                          GeminiJsonExtractor geminiJsonExtractor,
                           ImageOverlayService imageOverlayService,
                           MediaFileService mediaFileService) {
         this.incidentService = incidentService;
@@ -107,7 +105,7 @@ public class CCTVController {
         this.restTemplate = restTemplate;
         this.s3Service = s3Service;
         this.geminiService = geminiService;
-        this.objectMapper = objectMapper;
+        this.geminiJsonExtractor = geminiJsonExtractor;
         this.imageOverlayService = imageOverlayService;
         this.mediaFileService = mediaFileService;
     }
@@ -770,41 +768,8 @@ public class CCTVController {
         }
     }
     
-    /**
-     * Gemini 응답 텍스트에서 JSON 추출
-     * Markdown 코드 블록(```json ... ```) 또는 일반 JSON 문자열을 파싱
-     */
-    @SuppressWarnings("unchecked")
     private Map<String, Object> extractJsonFromGeminiResponse(String geminiResult) {
-        if (geminiResult == null || geminiResult.trim().isEmpty()) {
-            return null;
-        }
-        
-        try {
-            // 1. Markdown 코드 블록에서 JSON 추출 시도
-            Pattern jsonBlockPattern = Pattern.compile("```(?:json)?\\s*\\n?([\\s\\S]*?)\\n?```", Pattern.CASE_INSENSITIVE);
-            Matcher matcher = jsonBlockPattern.matcher(geminiResult);
-            if (matcher.find()) {
-                String jsonStr = matcher.group(1).trim();
-                return objectMapper.readValue(jsonStr, Map.class);
-            }
-            
-            // 2. 중괄호로 시작하는 JSON 문자열 직접 찾기
-            int startIdx = geminiResult.indexOf('{');
-            int endIdx = geminiResult.lastIndexOf('}');
-            if (startIdx >= 0 && endIdx > startIdx) {
-                String jsonStr = geminiResult.substring(startIdx, endIdx + 1);
-                return objectMapper.readValue(jsonStr, Map.class);
-            }
-            
-            // 3. 전체 텍스트를 JSON으로 파싱 시도
-            return objectMapper.readValue(geminiResult.trim(), Map.class);
-            
-        } catch (Exception e) {
-            log.warn("⚠️ [CCTV] Failed to parse JSON from Gemini response: {}", e.getMessage());
-            log.debug("Gemini response: {}", geminiResult);
-            return null;
-        }
+        return geminiJsonExtractor.extract(geminiResult);
     }
 
     /**
@@ -1171,6 +1136,83 @@ public class CCTVController {
             }
         } catch (Exception e) {
             log.warn("⚠️ [CCTV] Failed to cleanup temp files", e);
+        }
+    }
+
+    /**
+     * TRASH 프레임(1장) Gemini 분석 + (옵션) DB 저장 + overlay/media_file 저장
+     * POST /api/cctv/{cctvCode}/frame/analyze-trash-gemini
+     */
+    @PostMapping("/{cctvCode}/frame/analyze-trash-gemini")
+    public ResponseEntity<?> analyzeTrashFrameWithGemini(
+            @PathVariable String cctvCode,
+            @RequestParam("image") MultipartFile imageFile,
+            @RequestParam(value = "saveToDb", required = false, defaultValue = "true") boolean saveToDb
+    ) {
+        try {
+            byte[] imageBytes = imageFile.getBytes();
+            String base64 = Base64.getEncoder().encodeToString(imageBytes);
+
+            String prompt = (trashBboxAnalysisPrompt != null && !trashBboxAnalysisPrompt.isBlank())
+                    ? trashBboxAnalysisPrompt
+                    : trashAnalysisPrompt;
+
+            String geminiText = geminiService.analyzeImage(prompt, base64);
+            Map<String, Object> parsedJson = extractJsonFromGeminiResponse(geminiText);
+            if (parsedJson == null) {
+                return ResponseEntity.ok(Map.of("warning", "Gemini JSON 파싱 실패", "raw", geminiText));
+            }
+
+            // detections 추출 (overlay용)
+            List<Map<String, Object>> detections = new ArrayList<>();
+            if (parsedJson.get("detections") instanceof List<?> list) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> dets = (List<Map<String, Object>>) list;
+                    detections = dets != null ? dets : new ArrayList<>();
+                } catch (Exception ignore) {}
+            }
+
+            String overlayUrl = null;
+            try {
+                byte[] overlayBytes = imageOverlayService.drawOverlayJpeg(imageBytes, detections);
+                Long resolvedCctvId = resolveCctvId(null, cctvCode);
+                String cameraId = resolvedCctvId != null
+                        ? String.format("cctv-%03d", resolvedCctvId)
+                        : cctvCode.toLowerCase();
+                String overlayKey = s3Service.uploadOverlayFrame(overlayBytes, cameraId);
+                overlayUrl = s3Service.toHttpUrl(overlayKey);
+            } catch (Exception e) {
+                log.warn("⚠️ [CCTV] (TrashGemini) overlay 생성/업로드 실패: {}", e.getMessage());
+            }
+
+            Map<String, Object> response = new HashMap<>();
+            response.put("analysis", parsedJson);
+            response.put("overlayUrl", overlayUrl);
+            response.put("saveToDb", saveToDb);
+
+            if (saveToDb) {
+                Long resolvedCctvId = resolveCctvId(null, cctvCode);
+                String locationDesc = resolveCctvLocationDesc(resolvedCctvId, cctvCode);
+                IncidentCreateResponse created = trashService.createTrashFromGemini(parsedJson, resolvedCctvId, locationDesc);
+                response.put("incidentId", created.getIncidentId());
+                response.put("incidentCode", created.getIncidentCode());
+
+                // media_file 저장(overlay 프레임)
+                if (overlayUrl != null && created.getIncidentId() != null) {
+                    try {
+                        mediaFileService.saveFrame(created.getIncidentId(), resolvedCctvId, overlayUrl, OffsetDateTime.now());
+                    } catch (Exception e) {
+                        response.put("mediaSaveWarning", e.getMessage());
+                    }
+                }
+            }
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            log.error("❌ [CCTV] (TrashGemini) Failed to analyze frame", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(Map.of("error", e.getMessage()));
         }
     }
 }

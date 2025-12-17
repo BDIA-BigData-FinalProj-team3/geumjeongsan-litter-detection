@@ -2405,6 +2405,30 @@ export const analyzeEmergencyVideo = async (
   return await response.json();
 };
 
+/**
+ * 쓰레기 프레임(1장) Gemini 분석 + (옵션) DB 저장
+ * POST /api/cctv/{cctvCode}/frame/analyze-trash-gemini
+ */
+export const analyzeTrashFrameWithGemini = async (
+  cctvCode: string,
+  file: Blob,
+  params?: { saveToDb?: boolean }
+): Promise<any> => {
+  const q = new URLSearchParams();
+  if (typeof params?.saveToDb === 'boolean') q.set('saveToDb', String(params.saveToDb));
+
+  const form = new FormData();
+  form.append('image', file, 'frame.jpg');
+
+  const url = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/frame/analyze-trash-gemini${q.toString() ? `?${q.toString()}` : ''}`;
+  const res = await fetch(url, { method: 'POST', body: form });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(text || `쓰레기(Gemini) 분석 실패 (${res.status})`);
+  }
+  return await res.json();
+};
+
 // ==================== Notification API ====================
 
 // 외부 연락처 API
