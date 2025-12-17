@@ -23,6 +23,7 @@ import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.File;
 import java.io.IOException;
@@ -38,6 +39,7 @@ import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.net.URI;
 
 @RestController
 @RequestMapping("/api/cctv")
@@ -383,6 +385,14 @@ public class CCTVController {
                         .append("- fps: ").append(r.getFps()).append("\n")
                         .append("- clip_url: ").append(r.getClip_url()).append("\n")
                         .append("- frame_urls_used: ").append(usedFrameUrls.size()).append("\n\n");
+                // 원본 JSON도 참고 정보로 첨부 (길면 잘라서 전달)
+                try {
+                    String raw = new ObjectMapper().writeValueAsString(yoloResponse);
+                    if (raw != null) {
+                        String trimmed = raw.length() > 3000 ? raw.substring(0, 3000) + "...(truncated)" : raw;
+                        prompt.append("[YOLO(모델서버) 원본 JSON]\n").append(trimmed).append("\n\n");
+                    }
+                } catch (Exception ignore) {}
             }
             prompt.append(emergencyAnalysisPrompt);
 
@@ -403,6 +413,9 @@ public class CCTVController {
             Map<String, Object> response = new HashMap<>();
             response.put("analysis", parsed);
             response.put("saveToDb", saveToDb);
+            if (yoloResponse != null) {
+                response.put("yolo", yoloResponse);
+            }
 
             if (saveToDb) {
                 Long resolvedCctvId = resolveCctvId(null, cctvCode);
@@ -468,9 +481,55 @@ public class CCTVController {
 
     private String imageUrlToBase64(String imageUrl) {
         if (imageUrl == null || imageUrl.isBlank()) return null;
-        byte[] bytes = restTemplate.getForObject(imageUrl, byte[].class);
-        if (bytes == null || bytes.length == 0) return null;
-        return Base64.getEncoder().encodeToString(bytes);
+
+        // 1) s3:// 형태 지원 (예: s3://bucket/key 또는 s3://key)
+        try {
+            if (imageUrl.startsWith("s3://")) {
+                String noScheme = imageUrl.substring("s3://".length());
+                String key = noScheme;
+                int slash = noScheme.indexOf('/');
+                // s3://bucket/key 형태면 bucket은 무시하고 key만 사용(현재 S3Service는 기본 bucket 사용)
+                if (slash > 0) {
+                    key = noScheme.substring(slash + 1);
+                }
+                if (key != null && !key.isBlank()) {
+                    byte[] bytes = s3Service.downloadBytes(key);
+                    return bytes != null && bytes.length > 0 ? Base64.getEncoder().encodeToString(bytes) : null;
+                }
+            }
+        } catch (Exception ignore) {}
+
+        // 2) 기본: HTTP(S)로 다운로드
+        try {
+            byte[] bytes = restTemplate.getForObject(imageUrl, byte[].class);
+            if (bytes != null && bytes.length > 0) {
+                return Base64.getEncoder().encodeToString(bytes);
+            }
+        } catch (Exception e) {
+            // continue to fallback
+        }
+
+        // 3) amazonaws.com URL이면 key를 추출해 S3로 다운로드 시도
+        try {
+            String s3Key = tryParseS3KeyFromHttpUrl(imageUrl);
+            if (s3Key != null && !s3Key.isBlank()) {
+                byte[] bytes = s3Service.downloadBytes(s3Key);
+                return bytes != null && bytes.length > 0 ? Base64.getEncoder().encodeToString(bytes) : null;
+            }
+        } catch (Exception ignore) {}
+
+        // 4) CloudFront/기타 URL이면 path를 key로 가정(배포에서 CF가 버킷 루트 프록시인 경우)
+        try {
+            URI uri = URI.create(imageUrl);
+            String path = uri.getPath();
+            if (path != null && path.startsWith("/")) path = path.substring(1);
+            if (path != null && !path.isBlank()) {
+                byte[] bytes = s3Service.downloadBytes(path);
+                return bytes != null && bytes.length > 0 ? Base64.getEncoder().encodeToString(bytes) : null;
+            }
+        } catch (Exception ignore) {}
+
+        return null;
     }
 
     private static String tryParseS3KeyFromHttpUrl(String url) {

@@ -2,9 +2,10 @@ package com.example.geumjeongsan.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
@@ -34,16 +35,16 @@ public class WebConfig implements WebMvcConfigurer {
      * RestTemplate Bean 등록 (기상청 API 호출용)
      */
     @Bean
-    public RestTemplate restTemplate() {
-        return new RestTemplate();
+    public RestTemplate restTemplate(
+            @Value("${app.http.connect-timeout-ms:5000}") int connectTimeoutMs,
+            @Value("${app.http.read-timeout-ms:600000}") int readTimeoutMs
+    ) {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(connectTimeoutMs);
+        factory.setReadTimeout(readTimeoutMs);
+        return new RestTemplate(factory);
     }
 
-    /**
-     * WebClient Bean 등록 (Gemini API 호출용)
-     */
-    @Bean
-    public WebClient.Builder webClientBuilder() {
-        return WebClient.builder();
-    }
+    // WebClient.Builder Bean은 별도 설정 클래스에서 제공합니다.
 }
 

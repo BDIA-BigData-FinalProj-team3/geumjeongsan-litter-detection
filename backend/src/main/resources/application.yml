@@ -47,6 +47,10 @@ app:
   model-server:
     # YOLO/낙상 등 비디오 분석 모델 서버 (기본값은 기존 하드코딩 값을 유지)
     url: ${MODEL_SERVER_URL:http://54.116.3.241:8000/api/v1/video/analyze}
+  http:
+    # RestTemplate (모델서버 호출/프레임 다운로드 등) 타임아웃
+    connect-timeout-ms: ${HTTP_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${HTTP_READ_TIMEOUT_MS:600000}
   deployment:
     time: ${DEPLOYMENT_TIME:}
   build:
