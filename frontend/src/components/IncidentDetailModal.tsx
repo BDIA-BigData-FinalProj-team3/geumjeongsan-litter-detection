@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X, Video, Camera, Map, Edit2, Save, Play } from 'lucide-react';
-import { MapContainer, TileLayer, Marker } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Polyline, Polygon, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
-import { markIncidentAsFalsePositive } from '../services/api';
+import { getCCTVList, markIncidentAsFalsePositive, analyzeEmergencyVideo } from '../services/api';
+import { cctvList, getCCTVByCode, getCCTVById } from '../services/common';
 
 // 백엔드 IncidentDetailDto와 일치하는 인터페이스
 interface IncidentDetail {
@@ -43,6 +44,11 @@ interface IncidentDetail {
   // 비디오 분석 정보
   clipUrl?: string;
   frameUrls?: string[];
+
+  // MANUAL 정보 (incident_manual)
+  manualLocation?: string;
+  manualDescription?: string;
+  manualCreatedById?: number;
   
   // 응급 상세
   patientName?: string;
@@ -101,6 +107,11 @@ export default function IncidentDetailModal({
   const [showImageModal, setShowImageModal] = useState(false);
   const [showFalseReportModal, setShowFalseReportModal] = useState(false);
   const [falseReportReason, setFalseReportReason] = useState('');
+  const [expandedText, setExpandedText] = useState<Record<string, boolean>>({});
+  const [resolvedCctvCoords, setResolvedCctvCoords] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [isEmergencyAnalyzing, setIsEmergencyAnalyzing] = useState(false);
+  const [emergencyAiResult, setEmergencyAiResult] = useState<any | null>(null);
+  const [emergencyAiError, setEmergencyAiError] = useState<string | null>(null);
 
   const incidentHeaderBg = 'var(--ecoguard-header-bg)';
 
@@ -109,6 +120,28 @@ export default function IncidentDetailModal({
     fire: incidentHeaderBg,
     trash: incidentHeaderBg,
     rockfall: incidentHeaderBg
+  };
+
+  const runEmergencyAnalysis = async () => {
+    setEmergencyAiError(null);
+    setIsEmergencyAnalyzing(true);
+    try {
+      const code = (detail.cctvCode || detail.cctvId || '').toString();
+      if (!code || code === '수동등록') {
+        throw new Error('CCTV 코드/ID가 없어 응급 분석을 실행할 수 없습니다.');
+      }
+      const result = await analyzeEmergencyVideo(code, {
+        clipUrl: detail.clipUrl,
+        cameraId: detail.cctvCode ? detail.cctvCode.toLowerCase() : undefined,
+        maxFrames: 6,
+        saveToDb: true
+      });
+      setEmergencyAiResult(result);
+    } catch (e: any) {
+      setEmergencyAiError(e?.message || '응급 분석 중 오류가 발생했습니다.');
+    } finally {
+      setIsEmergencyAnalyzing(false);
+    }
   };
 
   const headerTitles = {
@@ -127,6 +160,145 @@ export default function IncidentDetailModal({
 
   // AI 자동 탐지인지 확인 (백엔드에서 제공)
   const isAIDetection = detail.isAIDetection || false;
+  const isManualIncident = !isAIDetection;
+
+  // AI 탐지 + CCTV 사건이면 CCTV 실좌표를 기준으로 지도 위치를 맞춤
+  useEffect(() => {
+    let isCancelled = false;
+
+    const resolveCoords = async () => {
+      // 수동등록/좌표 불필요 케이스는 스킵
+      if (!isAIDetection) {
+        setResolvedCctvCoords(null);
+        return;
+      }
+      if (!detail.cctvId || detail.cctvId === '수동등록') {
+        setResolvedCctvCoords(null);
+        return;
+      }
+
+      // cctvList가 비어있으면 백엔드에서 가져와 캐시 갱신
+      if (!cctvList || cctvList.length === 0) {
+        try {
+          await getCCTVList();
+        } catch {
+          // ignore
+        }
+      }
+
+      const codeCandidate = detail.cctvCode || detail.cctvId;
+      const cctvByCode = typeof codeCandidate === 'string' ? getCCTVByCode(codeCandidate) : undefined;
+
+      let cctvById;
+      if (!cctvByCode && typeof detail.cctvId === 'string') {
+        const asNumber = Number(detail.cctvId);
+        if (!Number.isNaN(asNumber)) {
+          cctvById = getCCTVById(asNumber);
+        }
+      }
+
+      const cctv = cctvByCode || cctvById;
+      if (cctv && typeof cctv.latitude === 'number' && typeof cctv.longitude === 'number') {
+        if (!isCancelled) {
+          setResolvedCctvCoords({ latitude: cctv.latitude, longitude: cctv.longitude });
+        }
+      } else if (!isCancelled) {
+        setResolvedCctvCoords(null);
+      }
+    };
+
+    resolveCoords();
+    return () => {
+      isCancelled = true;
+    };
+  }, [detail.cctvId, detail.cctvCode, isAIDetection]);
+
+  const hasDetailCoords = typeof detail.latitude === 'number' && typeof detail.longitude === 'number';
+  const hasResolvedCoords = typeof resolvedCctvCoords?.latitude === 'number' && typeof resolvedCctvCoords?.longitude === 'number';
+  const mapLatitude = hasResolvedCoords ? resolvedCctvCoords!.latitude : (hasDetailCoords ? detail.latitude! : 35.2456);
+  const mapLongitude = hasResolvedCoords ? resolvedCctvCoords!.longitude : (hasDetailCoords ? detail.longitude! : 129.0917);
+
+  // 확산 방향 문자열 -> 각도(deg). (0=북, 90=동, 180=남, 270=서)
+  const directionToDeg = (dir?: string): number | null => {
+    if (!dir) return null;
+    const d = dir.trim().toUpperCase();
+
+    // 한글
+    if (d.includes('북동') || d.includes('동북')) return 45;
+    if (d.includes('동남') || d.includes('남동')) return 135;
+    if (d.includes('남서') || d.includes('서남')) return 225;
+    if (d.includes('서북') || d.includes('북서')) return 315;
+    if (d === '북' || d.includes('북쪽')) return 0;
+    if (d === '동' || d.includes('동쪽')) return 90;
+    if (d === '남' || d.includes('남쪽')) return 180;
+    if (d === '서' || d.includes('서쪽')) return 270;
+
+    // 영문(NE/E/SE/S/SW/W/NW/N)
+    if (d === 'N' || d === 'NORTH') return 0;
+    if (d === 'NE' || d === 'NORTHEAST') return 45;
+    if (d === 'E' || d === 'EAST') return 90;
+    if (d === 'SE' || d === 'SOUTHEAST') return 135;
+    if (d === 'S' || d === 'SOUTH') return 180;
+    if (d === 'SW' || d === 'SOUTHWEST') return 225;
+    if (d === 'W' || d === 'WEST') return 270;
+    if (d === 'NW' || d === 'NORTHWEST') return 315;
+
+    return null;
+  };
+
+  // (lat,lng)에서 deg 방향으로 meters 만큼 이동한 좌표(대충용, 소거리 OK)
+  const moveLatLng = (lat: number, lng: number, deg: number, meters: number): [number, number] => {
+    const rad = (deg * Math.PI) / 180;
+    const dLat = (meters * Math.cos(rad)) / 111320; // 1도 위도 ≈ 111.32km
+    const dLng = (meters * Math.sin(rad)) / (111320 * Math.cos((lat * Math.PI) / 180));
+    return [lat + dLat, lng + dLng];
+  };
+
+  // 화살촉(삼각형) 좌표 생성
+  const makeArrowHead = (
+    tip: [number, number],
+    deg: number,
+    lengthM = 22,     // 화살촉 길이
+    widthDeg = 22     // 벌어지는 각도(클수록 넓은 화살촉)
+  ): [number, number][] => {
+    const [lat, lng] = tip;
+    const back = moveLatLng(lat, lng, deg + 180, lengthM);
+    const left = moveLatLng(back[0], back[1], deg - 90, lengthM * 0.45);
+    const right = moveLatLng(back[0], back[1], deg + 90, lengthM * 0.45);
+    return [tip, left, right];
+  };
+
+  // 확산 “부채꼴” 좌표 생성 (대충의 확산 영역)
+  const makeFan = (
+    center: [number, number],
+    deg: number,
+    radiusM = 120,   // 부채꼴 반경
+    spreadDeg = 35,  // 좌/우 퍼짐 각도(총 폭 70도)
+    steps = 12
+  ): [number, number][] => {
+    const [lat, lng] = center;
+    const points: [number, number][] = [[lat, lng]];
+    for (let i = 0; i <= steps; i++) {
+      const a = deg - spreadDeg + (i * (spreadDeg * 2)) / steps;
+      points.push(moveLatLng(lat, lng, a, radiusM));
+    }
+    return points;
+  };
+
+  // fire + spreadDirection 있을 때만 라인 생성
+  const hasSpreadDirection = type === 'fire' && Boolean(detail.spreadDirection);
+  const spreadDeg = hasSpreadDirection ? directionToDeg(detail.spreadDirection) : null;
+  const spreadLine =
+    spreadDeg !== null && (hasDetailCoords || hasResolvedCoords)
+      ? ([
+          [mapLatitude, mapLongitude],
+          moveLatLng(mapLatitude, mapLongitude, spreadDeg, 90), // 메인 선 길이(대충 90m)
+        ] as [number, number][])
+      : null;
+
+  // 확산 방향 화살촉/부채꼴(각도 매핑 성공 시 표시)
+  const spreadArrowHead = spreadLine && spreadDeg !== null ? makeArrowHead(spreadLine[1], spreadDeg) : null;
+  const spreadFan = spreadDeg !== null && (hasDetailCoords || hasResolvedCoords) ? makeFan([mapLatitude, mapLongitude], spreadDeg) : null;
 
   // 오탐처리 핸들러
   const handleFalsePositive = async () => {
@@ -152,12 +324,77 @@ export default function IncidentDetailModal({
 
   // 낙석 + 수동등록이면 1번 캡쳐 스타일 (지도 없이 이미지/영상 박스만)
   const isManualRockfall = type === 'rockfall' && (
-    !detail.latitude || 
-    !detail.longitude || 
+    !(hasDetailCoords || hasResolvedCoords) ||
     detail.cctvId === '수동등록' || 
     detail.detectionBasis?.includes('수동') ||
-    !isAIDetection
+    isManualIncident
   );
+
+  // AI 모델 표기용 (모델명/버전 묶기)
+  const modelText = [detail.modelName, detail.modelVersion]
+    .filter((v): v is string => Boolean(v))
+    .join(' / ');
+
+  // 섹션 제목(가로 2칸) + 기본 구분선
+  const SectionTitle: React.FC<{ children: React.ReactNode; first?: boolean }> = ({
+    children,
+    first = false,
+  }) => (
+    <div className={`col-span-2 ${first ? '' : 'mt-1 pt-2 border-t border-gray-200'}`}>
+      <h4 className="text-sm font-semibold text-gray-900">{children}</h4>
+    </div>
+  );
+
+  // 일반 필드(라벨 + 값)
+  const Field: React.FC<{ label: string; children: React.ReactNode; compact?: boolean }> = ({ label, children, compact = false }) => (
+    <div className={compact ? '-mb-3' : ''}>
+      <label className="text-sm text-gray-600">{label}</label>
+      <div className="mt-0.5">{children}</div>
+    </div>
+  );
+
+  const ExpandableText: React.FC<{
+    fieldKey: string;
+    text: string;
+    className?: string;
+  }> = ({ fieldKey, text, className = '' }) => {
+    const isExpanded = Boolean(expandedText[fieldKey]);
+    const showToggle = text.length > 80; // 너무 짧은 텍스트엔 더보기 버튼 숨김
+
+    return (
+      <div className="relative">
+        <p
+          className={className}
+          style={
+            {
+              display: '-webkit-box',
+              WebkitBoxOrient: 'vertical',
+              WebkitLineClamp: 2, // ✅ 기본 2줄 고정
+              overflow: 'hidden',
+            } as React.CSSProperties
+          }
+        >
+          {text}
+        </p>
+        {showToggle && (
+          <button
+            type="button"
+            className="mt-1 text-xs text-gray-500 underline"
+            onClick={() => setExpandedText((prev) => ({ ...prev, [fieldKey]: !prev[fieldKey] }))}
+          >
+            {isExpanded ? '접기' : '더보기'}
+          </button>
+        )}
+
+        {/* ✅ 펼침: 레이아웃에 영향 없이 아래로 "툭" 나오는 드롭다운(absolute) */}
+        {isExpanded && (
+          <div className="absolute left-0 right-0 mt-1 bg-white border border-gray-200 shadow-lg p-2 z-50">
+            <p className="text-gray-900 text-sm leading-5 whitespace-pre-wrap">{text}</p>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4" style={{ zIndex: 10000 }} onClick={onClose}>
@@ -174,25 +411,57 @@ export default function IncidentDetailModal({
         <div className="flex p-4 gap-4">
           {/* 좌측 패널 */}
           <div className="flex-1 flex flex-col">
-            {isManualRockfall ? (
+            {/* ✅ 수동 등록은 자동탐지와 레이아웃을 완전히 분리 */}
+            {isManualIncident ? (
               <>
-                {/* 1번 캡쳐 스타일: 이미지 박스 */}
-                <div className="bg-gray-100 border border-gray-300 mb-3 flex items-center justify-center"
-                     style={{ height: '380px', borderRadius: '0px' }}>
-                  <div className="text-center text-gray-500">
-                    <Camera className="w-10 h-10 mx-auto mb-2" />
-                    <p className="text-sm">이미지</p>
-                  </div>
-                </div>
+                {isManualRockfall ? (
+                  <>
+                    {/* (낙석) 수동등록: 기존 1번 캡쳐 스타일 유지 */}
+                    <div className="bg-gray-100 border border-gray-300 mb-3 flex items-center justify-center"
+                         style={{ height: '380px', borderRadius: '0px' }}>
+                      <div className="text-center text-gray-500">
+                        <Camera className="w-10 h-10 mx-auto mb-2" />
+                        <p className="text-sm">이미지</p>
+                      </div>
+                    </div>
 
-                {/* 1번 캡쳐 스타일: 영상 박스 */}
-                <div className="bg-gray-100 border border-gray-300 flex items-center justify-center"
-                     style={{ height: '210px', borderRadius: '0px' }}>
-                  <div className="text-center text-gray-500">
-                    <Video className="w-10 h-10 mx-auto mb-2" />
-                    <p className="text-sm">영상</p>
-                  </div>
-                </div>
+                    <div className="bg-gray-100 border border-gray-300 flex items-center justify-center"
+                         style={{ height: '210px', borderRadius: '0px' }}>
+                      <div className="text-center text-gray-500">
+                        <Video className="w-10 h-10 mx-auto mb-2" />
+                        <p className="text-sm">영상</p>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    {/* (공통) 수동등록: 미디어/지도 대신 정보 카드 */}
+                    <div className="border border-gray-300 bg-white p-4" style={{ borderRadius: '0px' }}>
+                      <div className="flex items-center gap-2 mb-3">
+                        <Edit2 className="w-4 h-4 text-gray-700" />
+                        <h4 className="text-sm font-semibold text-gray-900">수동 등록 정보</h4>
+                      </div>
+
+                      <div className="space-y-3">
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">발생 위치(입력)</p>
+                          <p className="text-gray-900 whitespace-pre-wrap">
+                            {detail.manualLocation || detail.locationDesc || detail.location || '-'}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500 mb-1">설명</p>
+                          <p className="text-gray-900 whitespace-pre-wrap">
+                            {detail.manualDescription || detail.note || '-'}
+                          </p>
+                        </div>
+                        <div className="pt-2 border-t border-gray-200 text-xs text-gray-500">
+                          수동 등록 사건은 CCTV 영상/프레임 및 AI 분석 정보가 표시되지 않습니다.
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
               </>
             ) : (
               <>
@@ -200,15 +469,13 @@ export default function IncidentDetailModal({
                 <div className="border border-gray-300 mb-3" style={{ height: '380px', borderRadius: '0px', position: 'relative', zIndex: 1 }}>
                   <MapContainer
                     center={
-                      detail.latitude && detail.longitude 
-                        ? [detail.latitude, detail.longitude] 
-                        : [35.2456, 129.0917]  // 기본값: 부산 좌표
+                      [mapLatitude, mapLongitude]
                     }
-                    zoom={detail.latitude && detail.longitude ? 17 : 15}
+                    zoom={(hasDetailCoords || hasResolvedCoords) ? 17 : 15}
                     style={{ height: '100%', width: '100%' }}
 
                     zoomControl={false}
-                    key={`${detail.latitude || 35.2456}-${detail.longitude || 129.0917}`}  // 좌표 변경 시 지도 재렌더링
+                    key={`${mapLatitude}-${mapLongitude}`}  // 좌표 변경 시 지도 재렌더링
                   >
                     <TileLayer
                       attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -216,9 +483,7 @@ export default function IncidentDetailModal({
                     />
                     <Marker 
                       position={
-                        detail.latitude && detail.longitude 
-                          ? [detail.latitude, detail.longitude] 
-                          : [35.2456, 129.0917]  // 좌표가 없어도 기본 위치에 마커 표시
+                        [mapLatitude, mapLongitude]
                       }
                       icon={L.divIcon({
                         className: `custom-${type}-marker`,
@@ -231,7 +496,48 @@ export default function IncidentDetailModal({
                         iconSize: [40, 40],
                         iconAnchor: [20, 40],
                       })}
-                    />
+                    >
+                      {/* 확산 방향이 있는데 각도 매핑이 실패해도 지도 위에 텍스트는 항상 표시 */}
+                      {hasSpreadDirection && !spreadLine && (
+                        <Tooltip direction="top" offset={[0, -10]} opacity={1} permanent>
+                          확산 방향: {detail.spreadDirection}
+                        </Tooltip>
+                      )}
+                    </Marker>
+                    {/* 확산 부채꼴(확산 영역 느낌) - 각도 매핑 성공 시 */}
+                    {spreadFan && (
+                      <Polygon
+                        positions={spreadFan}
+                        pathOptions={{
+                          color: '#ef4444',
+                          weight: 1,
+                          fillColor: '#ef4444',
+                          fillOpacity: 0.12,
+                        }}
+                      />
+                    )}
+                    {spreadLine && (
+                      <Polyline 
+                        positions={spreadLine} 
+                        pathOptions={{ color: '#ef4444', weight: 4, opacity: 0.8 }}
+                      >
+                        <Tooltip direction="top" offset={[0, -10]} opacity={1} permanent>
+                          확산 방향: {detail.spreadDirection}
+                        </Tooltip>
+                      </Polyline>
+                    )}
+                    {/* 화살촉(삼각형) - 각도 매핑 성공 시 */}
+                    {spreadArrowHead && (
+                      <Polygon
+                        positions={spreadArrowHead}
+                        pathOptions={{
+                          color: '#ef4444',
+                          fillColor: '#ef4444',
+                          fillOpacity: 0.9,
+                          weight: 0,
+                        }}
+                      />
+                    )}
                   </MapContainer>
                 </div>
                 
@@ -301,59 +607,41 @@ export default function IncidentDetailModal({
           {/* 우측 패널 */}
           <div className="flex-1 flex flex-col">
             <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
-            <div className="grid grid-cols-2 gap-x-8 gap-y-5 flex-1">
-              {/* 공통 필드 */}
-              <div>
-                <label className="text-sm text-gray-600">사고 코드</label>
-                <p className="text-gray-900 mt-1">{detail.accidentCode}</p>
-              </div>
-              {detail.cctvId && detail.cctvId !== '수동등록' && (
-                <div>
-                  <label className="text-sm text-gray-600">CCTV ID</label>
-                  <p className="text-gray-900 mt-1">{detail.cctvCode || detail.cctvId}</p>
-                </div>
-              )}
-              <div>
-                <label className="text-sm text-gray-600">위치</label>
-                {isEditing && editedDetail ? (
-                  <input
-                    type="text"
-                    value={editedDetail.location || ''}
-                    onChange={(e) => onFieldChange('location', e.target.value)}
-                    className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
-                    style={{ borderRadius: '0px' }}
-                  />
-                ) : (
-                  <p className="text-gray-900 mt-1">{detail.location}</p>
-                )}
-              </div>
-              <div>
-                <label className="text-sm text-gray-600">유형</label>
-                <p className="text-gray-900 mt-1">
+            <div className="grid grid-cols-2 gap-x-8 gap-y-3 flex-1">
+              {/* ===== (1) 사건 요약 ===== */}
+              <SectionTitle first>사건 요약</SectionTitle>
+
+              <Field label="사고 코드">
+                <p className="text-gray-900">{detail.accidentCode}</p>
+              </Field>
+
+              <Field label="유형">
+                <p className="text-gray-900">
                   {type === 'emergency' ? '응급' : type === 'fire' ? '화재' : type === 'trash' ? '쓰레기' : '낙석'}
                 </p>
-              </div>
-              <div>
-                <label className="text-sm text-gray-600">발생시간</label>
-                {isEditing && editedDetail ? (
-                  <input
-                    type="text"
-                    value={editedDetail.time}
-                    onChange={(e) => onFieldChange('time', e.target.value)}
-                    className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
-                    style={{ borderRadius: '0px' }}
-                  />
-                ) : (
-                  <p className="text-gray-900 mt-1">{detail.time}</p>
-                )}
-              </div>
-              <div>
-                <label className="text-sm text-gray-600">심각도</label>
+              </Field>
+
+              <Field label="상태">
+                <span
+                  className={`px-2 py-1 text-xs ${
+                    detail.status === '처리완료' || detail.status === '진화완료'
+                      ? 'bg-green-100 text-green-700'
+                      : detail.status === '대응중' || detail.status === '진화중'
+                      ? 'bg-orange-100 text-orange-700'
+                      : 'bg-gray-100 text-gray-700'
+                  }`}
+                  style={{ borderRadius: '0px' }}
+                >
+                  {detail.status}
+                </span>
+              </Field>
+
+              <Field label="심각도">
                 {isEditing && editedDetail ? (
                   <select
                     value={editedDetail.severity}
                     onChange={(e) => onFieldChange('severity', e.target.value)}
-                    className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
+                    className="w-full px-3 py-2 border border-gray-300 text-gray-900"
                     style={{ borderRadius: '0px' }}
                   >
                     <option value="상">상</option>
@@ -361,242 +649,315 @@ export default function IncidentDetailModal({
                     <option value="하">하</option>
                   </select>
                 ) : (
-                  <p className="mt-1">
-                    <span className={`px-2 py-1 text-xs ${
-                      detail.severity === '상' ? 'bg-red-100 text-red-700' : 
-                      detail.severity === '중' ? 'bg-yellow-100 text-yellow-700' : 
-                      'bg-blue-100 text-blue-700'
-                    }`} style={{ borderRadius: '0px' }}>
-                      {detail.severity}
-                    </span>
-                  </p>
-                )}
-              </div>
-              <div>
-                <label className="text-sm text-gray-600">상태</label>
-                <p className="mt-1">
-                  <span className={`px-2 py-1 text-xs ${
-                    detail.status === '처리완료' || detail.status === '진화완료'
-                      ? 'bg-green-100 text-green-700' 
-                      : detail.status === '대응중' || detail.status === '진화중'
-                      ? 'bg-orange-100 text-orange-700'
-                      : 'bg-gray-100 text-gray-700'
-                  }`} style={{ borderRadius: '0px' }}>
-                    {detail.status}
+                  <span
+                    className={`px-2 py-1 text-xs ${
+                      detail.severity === '상'
+                        ? 'bg-red-100 text-red-700'
+                        : detail.severity === '중'
+                        ? 'bg-yellow-100 text-yellow-700'
+                        : 'bg-blue-100 text-blue-700'
+                    }`}
+                    style={{ borderRadius: '0px' }}
+                  >
+                    {detail.severity}
                   </span>
-                </p>
-              </div>
-              <div>
-                <label className="text-sm text-gray-600">처리자</label>
-                <p className="text-gray-900 mt-1">{detail.handler}</p>
-              </div>
-              <div>
-                <label className="text-sm text-gray-600">탐지근거</label>
-                <p className="text-gray-900 mt-1">{detail.detectionBasis || 'AI 자동 탐지'}</p>
-              </div>
+                )}
+              </Field>
 
-              {/* AI 자동 탐지인 경우 모델 정보 */}
+              <Field label="발생시간">
+                {isEditing && editedDetail ? (
+                  <input
+                    type="text"
+                    value={editedDetail.time}
+                    onChange={(e) => onFieldChange('time', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 text-gray-900"
+                    style={{ borderRadius: '0px' }}
+                  />
+                ) : (
+                  <p className="text-gray-900">{detail.time}</p>
+                )}
+              </Field>
+
+              {/* 처리완료 정보는 요약 섹션에서만 */}
+              {detail.responseTime && (
+                <Field label="처리완료 시간">
+                  <p className="text-gray-900">{detail.responseTime}</p>
+                </Field>
+              )}
+
+              {detail.duration && (
+                <Field label="소요 시간">
+                  <p className="text-gray-900">{detail.duration}</p>
+                </Field>
+              )}
+
+              {/* ===== (2) 현장/운영 정보 ===== */}
+              <SectionTitle>현장/운영 정보</SectionTitle>
+
+              <Field label="위치">
+                {isEditing && editedDetail ? (
+                  <input
+                    type="text"
+                    value={editedDetail.location || ''}
+                    onChange={(e) => onFieldChange('location', e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 text-gray-900"
+                    style={{ borderRadius: '0px' }}
+                  />
+                ) : (
+                  <p className="text-gray-900">{detail.location}</p>
+                )}
+              </Field>
+
+              <Field label="CCTV">
+                <p className="text-gray-900">
+                  {detail.cctvId && detail.cctvId !== '수동등록' ? (detail.cctvCode || detail.cctvId) : '-'}
+                </p>
+              </Field>
+
+              <Field label="처리자">
+                <p className="text-gray-900">
+                  {detail.handlerDept ? `${detail.handler} (${detail.handlerDept})` : detail.handler}
+                </p>
+              </Field>
+
+              <Field label="등록 방식">
+                <p className="text-gray-900">{isAIDetection ? 'AI 자동 탐지' : (detail.detectionBasis || '-')}</p>
+              </Field>
+
+              {/* ===== (3) AI 분석 정보(있을 때만) ===== */}
               {isAIDetection && (
                 <>
-                  {detail.modelName && (
-                    <div>
-                      <label className="text-sm text-gray-600">모델명</label>
-                      <p className="text-gray-900 mt-1">{detail.modelName}</p>
+                  <SectionTitle>AI 분석 정보</SectionTitle>
+
+                  {/* AI 섹션만 "좌/우 독립 컬럼"으로 배치해서
+                      오른쪽(신뢰도 근거)이 길어도 왼쪽(신뢰도/심각도 근거)이 안 밀리게 함 */}
+                  <div className="col-span-2 grid grid-cols-2 gap-x-8">
+                    {/* 왼쪽 컬럼: 신뢰도 -> 심각도 산정 근거 -> 모델 -> AI 탐지 시각 (촘촘하게) */}
+                    <div className="flex flex-col gap-2">
+                      {detail.confidence && (
+                        <Field label="신뢰도">
+                          <p className="text-emerald-600 font-medium">{detail.confidence}</p>
+                        </Field>
+                      )}
+
+                      {detail.severityReason && (
+                        <Field label="심각도 산정 근거">
+                          <ExpandableText
+                            fieldKey="severityReason"
+                            text={detail.severityReason}
+                            className="text-gray-900 text-sm leading-5 whitespace-pre-wrap"
+                          />
+                        </Field>
+                      )}
+
+                      {modelText && (
+                        <Field label="모델">
+                          <p className="text-gray-900">{modelText}</p>
+                        </Field>
+                      )}
+
+                      {detail.autoCreatedAt && (
+                        <Field label="AI 탐지 시각">
+                          <p className="text-gray-900">{detail.autoCreatedAt}</p>
+                        </Field>
+                      )}
                     </div>
-                  )}
-                  {detail.modelVersion && (
-                    <div>
-                      <label className="text-sm text-gray-600">모델버전</label>
-                      <p className="text-gray-900 mt-1">{detail.modelVersion}</p>
+
+                    {/* 오른쪽 컬럼: 신뢰도 근거 -> 탐지 특징 */}
+                    <div className="flex flex-col gap-2">
+                      {detail.confidenceReason && (
+                        <Field label="신뢰도 근거">
+                          <ExpandableText
+                            fieldKey="confidenceReason"
+                            text={detail.confidenceReason}
+                            className="text-gray-900 text-sm leading-5 whitespace-pre-wrap"
+                          />
+                        </Field>
+                      )}
+
+                      {detail.detectedFeatures && (
+                        <Field label="탐지 특징">
+                          <ExpandableText
+                            fieldKey="detectedFeatures"
+                            text={detail.detectedFeatures}
+                            className="text-gray-900 text-sm leading-5 whitespace-pre-wrap"
+                          />
+                        </Field>
+                      )}
                     </div>
-                  )}
-                  {detail.confidence && (
-                    <div>
-                      <label className="text-sm text-gray-600">신뢰도</label>
-                      <p className="text-emerald-600 mt-1 font-medium">{detail.confidence}</p>
-                    </div>
-                  )}
-                  {detail.confidenceReason && (
-                    <div>
-                      <label className="text-sm text-gray-600">신뢰도 근거</label>
-                      <p className="text-gray-900 mt-1 text-sm">{detail.confidenceReason}</p>
-                    </div>
-                  )}
-                  {detail.severityReason && (
-                    <div>
-                      <label className="text-sm text-gray-600 flex items-center gap-1">
-                        심각도 상세
-                        <span className="text-xs text-gray-400 cursor-help" title="심각도 점수 계산 방법">(?)</span>
-                      </label>
-                      <p className="text-gray-900 mt-1 text-sm">{detail.severityReason}</p>
-                    </div>
-                  )}
-                  {detail.detectedFeatures && (
-                    <div>
-                      <label className="text-sm text-gray-600">탐지된 특징</label>
-                      <p className="text-gray-900 mt-1 text-sm">{detail.detectedFeatures}</p>
-                    </div>
-                  )}
+                  </div>
                 </>
               )}
 
-              {/* 응급 전용 필드 */}
+              {/* ===== (4) 유형별 상세 ===== */}
+              <SectionTitle>유형별 상세</SectionTitle>
+
               {type === 'emergency' && (
                 <>
-                  {detail.patientName && (
-                    <div>
-                      <label className="text-sm text-gray-600">환자명</label>
-                      <p className="text-gray-900 mt-1">{detail.patientName}</p>
+                  <div className="col-span-2 flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={runEmergencyAnalysis}
+                        disabled={isEmergencyAnalyzing}
+                        className={`inline-flex items-center gap-2 px-3 py-2 border text-sm ${
+                          isEmergencyAnalyzing ? 'bg-gray-100 text-gray-500 border-gray-200' : 'bg-white text-gray-900 border-gray-300 hover:bg-gray-50'
+                        }`}
+                        style={{ borderRadius: '0px' }}
+                      >
+                        <Play className="w-4 h-4" />
+                        {isEmergencyAnalyzing ? 'AI 응급 분석 중...' : 'AI 응급 분석 실행(저장 포함)'}
+                      </button>
+                      {emergencyAiResult?.incidentCode && (
+                        <p className="text-sm text-gray-700">
+                          저장됨: <span className="font-medium">{String(emergencyAiResult.incidentCode)}</span>
+                        </p>
+                      )}
                     </div>
+
+                    {emergencyAiError && (
+                      <p className="text-sm text-red-700 whitespace-pre-wrap">{emergencyAiError}</p>
+                    )}
+
+                    {emergencyAiResult?.analysis && (
+                      <div className="border border-gray-200 p-3" style={{ borderRadius: '0px' }}>
+                        <p className="text-sm font-medium text-gray-900 mb-2">AI 응급 분석 결과</p>
+                        <div className="grid grid-cols-2 gap-x-8 gap-y-2">
+                          <Field label="긴급도">
+                            <p className="text-gray-900">{String(emergencyAiResult.analysis.emergency_level ?? '-')}</p>
+                          </Field>
+                          <Field label="신고 가능성 점수">
+                            <ExpandableText
+                              fieldKey="emergency.reportScore"
+                              text={String(emergencyAiResult.analysis.report_possibility_score ?? '-')}
+                              className="text-gray-900 text-sm leading-5 whitespace-pre-wrap"
+                            />
+                          </Field>
+                          <Field label="부상자 수">
+                            <p className="text-gray-900">{String(emergencyAiResult.analysis?.emergency_detail?.injured_count ?? '-')}</p>
+                          </Field>
+                          <Field label="신뢰도">
+                            <p className="text-gray-900">{String(emergencyAiResult.analysis.confidence ?? '-')}</p>
+                          </Field>
+                          <div className="col-span-2">
+                            <Field label="요약">
+                              <ExpandableText
+                                fieldKey="emergency.description"
+                                text={String(emergencyAiResult.analysis.description ?? '-')}
+                                className="text-gray-900 text-sm leading-5 whitespace-pre-wrap"
+                              />
+                            </Field>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {detail.patientName && (
+                    <Field label="환자명">
+                      <p className="text-gray-900">{detail.patientName}</p>
+                    </Field>
                   )}
                   {detail.patientAge && (
-                    <div>
-                      <label className="text-sm text-gray-600">나이</label>
-                      <p className="text-gray-900 mt-1">{detail.patientAge}</p>
-                    </div>
+                    <Field label="나이">
+                      <p className="text-gray-900">{detail.patientAge}</p>
+                    </Field>
                   )}
                   {detail.patientGender && (
-                    <div>
-                      <label className="text-sm text-gray-600">성별</label>
-                      <p className="text-gray-900 mt-1">{detail.patientGender}</p>
-                    </div>
+                    <Field label="성별">
+                      <p className="text-gray-900">{detail.patientGender}</p>
+                    </Field>
                   )}
                   {detail.emergencyType && (
-                    <div>
-                      <label className="text-sm text-gray-600">응급 유형</label>
-                      <p className="text-gray-900 mt-1">{detail.emergencyType}</p>
-                    </div>
+                    <Field label="응급 유형">
+                      <p className="text-gray-900">{detail.emergencyType}</p>
+                    </Field>
                   )}
                   {detail.emergencySymptom && (
-                    <div>
-                      <label className="text-sm text-gray-600">증상</label>
-                      <p className="text-gray-900 mt-1">{detail.emergencySymptom}</p>
-                    </div>
+                    <Field label="증상">
+                      <p className="text-gray-900">{detail.emergencySymptom}</p>
+                    </Field>
                   )}
                   {detail.rescueTeam && (
-                    <div>
-                      <label className="text-sm text-gray-600">대응팀</label>
-                      <p className="text-gray-900 mt-1">{detail.rescueTeam}</p>
-                    </div>
+                    <Field label="대응팀">
+                      <p className="text-gray-900">{detail.rescueTeam}</p>
+                    </Field>
                   )}
                   {detail.transferHospital && (
-                    <div>
-                      <label className="text-sm text-gray-600">이송병원 및 처리 기관</label>
-                      <p className="text-gray-900 mt-1">{detail.transferHospital}</p>
-                    </div>
+                    <Field label="이송병원/처리 기관">
+                      <p className="text-gray-900">{detail.transferHospital}</p>
+                    </Field>
                   )}
                 </>
               )}
 
-              {/* 화재 전용 필드 */}
               {type === 'fire' && (
                 <>
                   {detail.windInfo && (
-                    <div>
-                      <label className="text-sm text-gray-600">풍향/풍속</label>
-                      <p className="text-gray-900 mt-1">{detail.windInfo}</p>
-                    </div>
-                  )}
-                  {detail.windSpeed && (
-                    <div>
-                      <label className="text-sm text-gray-600">풍속</label>
-                      <p className="text-gray-900 mt-1">{detail.windSpeed}</p>
-                    </div>
+                    <Field label="풍향/풍속">
+                      <p className="text-gray-900">{detail.windInfo}</p>
+                    </Field>
                   )}
                   {detail.spreadDirection && (
-                    <div>
-                      <label className="text-sm text-gray-600">확산 방향</label>
-                      <p className="text-gray-900 mt-1">{detail.spreadDirection}</p>
-                    </div>
+                    <Field label="확산 방향">
+                      <p className="text-gray-900">{detail.spreadDirection}</p>
+                    </Field>
                   )}
                   {detail.surroundingRisk && (
-                    <div>
-                      <label className="text-sm text-gray-600">주변 위험</label>
-                      <p className="text-gray-900 mt-1">{detail.surroundingRisk}</p>
-                    </div>
+                    <Field label="주변 위험">
+                      <p className="text-gray-900">{detail.surroundingRisk}</p>
+                    </Field>
                   )}
                 </>
               )}
 
-              {/* 쓰레기 전용 필드 */}
               {type === 'trash' && (
                 <>
                   {detail.trashType && (
-                    <div>
-                      <label className="text-sm text-gray-600">쓰레기 종류</label>
-                      <p className="text-gray-900 mt-1">{detail.trashType}</p>
-                    </div>
+                    <Field label="쓰레기 종류">
+                      <p className="text-gray-900">{detail.trashType}</p>
+                    </Field>
                   )}
                   {detail.amount && (
-                    <div>
-                      <label className="text-sm text-gray-600">양</label>
-                      <p className="text-gray-900 mt-1">{detail.amount}</p>
-                    </div>
+                    <Field label="양/규모">
+                      <p className="text-gray-900">{detail.amount}</p>
+                    </Field>
                   )}
                 </>
               )}
 
-              {/* 낙석 전용 필드 */}
               {type === 'rockfall' && (
                 <>
                   {detail.rockSizeClass && (
-                    <div>
-                      <label className="text-sm text-gray-600">암괴 규모</label>
-                      <p className="text-gray-900 mt-1">{detail.rockSizeClass}</p>
-                    </div>
+                    <Field label="암괴 규모">
+                      <p className="text-gray-900">{detail.rockSizeClass}</p>
+                    </Field>
                   )}
                   {detail.affectedAssetType && (
-                    <div>
-                      <label className="text-sm text-gray-600">피해 대상 유형</label>
-                      <p className="text-gray-900 mt-1">{detail.affectedAssetType}</p>
-                    </div>
+                    <Field label="피해 대상 유형">
+                      <p className="text-gray-900">{detail.affectedAssetType}</p>
+                    </Field>
                   )}
                   {detail.affectedAssetName && (
-                    <div>
-                      <label className="text-sm text-gray-600">피해 대상 식별</label>
-                      <p className="text-gray-900 mt-1">{detail.affectedAssetName}</p>
-                    </div>
+                    <Field label="피해 대상 식별">
+                      <p className="text-gray-900">{detail.affectedAssetName}</p>
+                    </Field>
                   )}
                   {detail.damageDescription && (
                     <div className="col-span-2">
                       <label className="text-sm text-gray-600">피해 설명</label>
-                      <p className="text-gray-900 mt-1 whitespace-pre-wrap">{detail.damageDescription}</p>
+                      <div className="mt-0.5">
+                        <ExpandableText
+                          fieldKey="damageDescription"
+                          text={detail.damageDescription}
+                          className="text-gray-900 leading-5 whitespace-pre-wrap"
+                        />
+                      </div>
                     </div>
                   )}
                 </>
               )}
 
-              {/* 상황메모 */}
-              <div className="col-span-2">
-                <label className="text-sm text-gray-600">상황메모</label>
-                {isEditing && editedDetail ? (
-                  <textarea
-                    value={editedDetail.note || ''}
-                    onChange={(e) => onFieldChange('note', e.target.value)}
-                    className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900"
-                    style={{ borderRadius: '0px' }}
-                    rows={3}
-                  />
-                ) : (
-                  <p className="text-gray-900 mt-1">{detail.note || '-'}</p>
-                )}
-              </div>
-              
-              {/* 처리 정보 (처리완료인 경우) */}
-              {detail.responseTime && (
-                <>
-                  <div>
-                    <label className="text-sm text-gray-600">처리완료 시간</label>
-                    <p className="text-gray-900 mt-1">{detail.responseTime}</p>
-                  </div>
-                  {detail.duration && (
-                    <div>
-                      <label className="text-sm text-gray-600">소요 시간</label>
-                      <p className="text-gray-900 mt-1">{detail.duration}</p>
-                    </div>
-                  )}
-                </>
-              )}
             </div>
 
             {/* 하단 버튼 */}
@@ -621,14 +982,17 @@ export default function IncidentDetailModal({
                 </>
               ) : (
                 <>
-                  <button 
-                    onClick={onEditClick}
-                    className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center gap-2" 
-                    style={{ borderRadius: '0px' }}
-                  >
-                    <Edit2 className="w-4 h-4" />
-                    수정
-                  </button>
+                  {/* ✅ 수동 등록만 수정 허용(백엔드도 수동 등록 전용 업데이트가 많음) */}
+                  {isManualIncident && (
+                    <button 
+                      onClick={onEditClick}
+                      className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center gap-2" 
+                      style={{ borderRadius: '0px' }}
+                    >
+                      <Edit2 className="w-4 h-4" />
+                      수정
+                    </button>
+                  )}
                   {isAIDetection && (
                     <button 
                       onClick={() => setShowFalseReportModal(true)}

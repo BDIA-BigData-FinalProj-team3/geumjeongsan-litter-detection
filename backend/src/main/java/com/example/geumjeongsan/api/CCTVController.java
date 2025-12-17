@@ -2,15 +2,20 @@ package com.example.geumjeongsan.api;
 
 import com.example.geumjeongsan.api.dto.CCTVIncidentDetailResponse;
 import com.example.geumjeongsan.api.dto.CCTVResponse;
+import com.example.geumjeongsan.api.dto.EmergencyVideoAnalysisRequest;
 import com.example.geumjeongsan.api.dto.FallenAnalysisRequest;
 import com.example.geumjeongsan.api.dto.FallenAnalysisResponse;
 import com.example.geumjeongsan.api.dto.MediaFileResponse;
 import com.example.geumjeongsan.api.dto.QwenAnalysisResponse;
+import com.example.geumjeongsan.api.dto.IncidentCreateResponse;
 import com.example.geumjeongsan.domain.incident.IncidentService;
 import com.example.geumjeongsan.domain.incident.TrashService;
+import com.example.geumjeongsan.domain.incident.EmergencyService;
 import com.example.geumjeongsan.domain.cctv.CCTVRepository;
 import com.example.geumjeongsan.service.GeminiService;
 import com.example.geumjeongsan.service.S3Service;
+import com.example.geumjeongsan.service.ImageOverlayService;
+import com.example.geumjeongsan.service.MediaFileService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -25,6 +30,8 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -33,7 +40,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/cctv")
@@ -42,12 +48,15 @@ public class CCTVController {
 
     private final IncidentService incidentService;
     private final TrashService trashService;
+    private final EmergencyService emergencyService;
     private final CCTVRepository cctvRepository;
     private final RestTemplate restTemplate;
     private final S3Service s3Service;
     private final GeminiService geminiService;
     private final ObjectMapper objectMapper;
-    private static final String MODEL_SERVER_URL = "http://54.116.3.241:8000/api/v1/video/analyze";
+
+    @Value("${app.model-server.url:http://54.116.3.241:8000/api/v1/video/analyze}")
+    private String modelServerUrl;
     
     @Value("${qwen.api.url}")
     private String qwenApiUrl;
@@ -64,6 +73,12 @@ public class CCTVController {
     @Value("${gemini.prompt.trash-analysis:이 CCTV 프레임에서 불법 쓰레기 투기(TRASH)를 판별해줘.}")
     private String trashAnalysisPrompt;
 
+    @Value("${gemini.prompt.trash-bbox-analysis:}")
+    private String trashBboxAnalysisPrompt;
+
+    @Value("${gemini.prompt.emergency-analysis:}")
+    private String emergencyAnalysisPrompt;
+
     /**
      * FFmpeg 실행 커맨드/경로
      * - 기본값: "ffmpeg" (PATH에서 찾음)
@@ -72,20 +87,29 @@ public class CCTVController {
     @Value("${app.ffmpeg.command:ffmpeg}")
     private String configuredFfmpegCommand;
 
+    private final ImageOverlayService imageOverlayService;
+    private final MediaFileService mediaFileService;
+
     public CCTVController(IncidentService incidentService,
                           TrashService trashService,
+                          EmergencyService emergencyService,
                           CCTVRepository cctvRepository,
                           RestTemplate restTemplate,
                           S3Service s3Service,
                           GeminiService geminiService,
-                          ObjectMapper objectMapper) {
+                          ObjectMapper objectMapper,
+                          ImageOverlayService imageOverlayService,
+                          MediaFileService mediaFileService) {
         this.incidentService = incidentService;
         this.trashService = trashService;
+        this.emergencyService = emergencyService;
         this.cctvRepository = cctvRepository;
         this.restTemplate = restTemplate;
         this.s3Service = s3Service;
         this.geminiService = geminiService;
         this.objectMapper = objectMapper;
+        this.imageOverlayService = imageOverlayService;
+        this.mediaFileService = mediaFileService;
     }
 
     private Long resolveCctvId(Long cctvId, String cctvCode) {
@@ -186,9 +210,9 @@ public class CCTVController {
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<FallenAnalysisRequest> entity = new HttpEntity<>(request, headers);
             
-            log.info("📡 [CCTV] Calling model server: {}", MODEL_SERVER_URL);
+            log.info("📡 [CCTV] Calling model server: {}", modelServerUrl);
             ResponseEntity<FallenAnalysisResponse> modelResponse = restTemplate.exchange(
-                    MODEL_SERVER_URL,
+                    modelServerUrl,
                     HttpMethod.POST,
                     entity,
                     FallenAnalysisResponse.class
@@ -232,6 +256,246 @@ public class CCTVController {
         } catch (Exception e) {
             log.error("❌ [CCTV] Failed to analyze video for {}", cctvCode, e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * CCTV 영상(S3 key)을 기반으로 "응급 상황"을 Gemini(JSON only)로 분석합니다.
+     * - (선택) 모델서버(YOLO/낙상 등) 결과를 참고 정보로 전달
+     * - 모델서버가 준 frame_urls를 다운로드하여 Base64로 Gemini에 전송
+     *
+     * POST /api/cctv/{cctvCode}/emergency-analyze
+     *
+     * @param cctvCode CCTV 코드 (예: "CCTV-001")
+     * @param req      { s3_key?: string, camera_id?: string }
+     * @param maxFrames Gemini에 보낼 최대 프레임 수(기본 6)
+     */
+    @PostMapping("/{cctvCode}/emergency-analyze")
+    public ResponseEntity<?> analyzeEmergencyVideo(
+            @PathVariable String cctvCode,
+            @RequestBody(required = false) EmergencyVideoAnalysisRequest req,
+            @RequestParam(value = "maxFrames", required = false, defaultValue = "6") int maxFrames,
+            @RequestParam(value = "saveToDb", required = false, defaultValue = "true") boolean saveToDb
+    ) {
+        File tempVideo = null;
+        File tempDir = null;
+        List<File> frameFiles = new ArrayList<>();
+
+        try {
+            String cameraId = (req != null && req.getCamera_id() != null && !req.getCamera_id().isBlank())
+                    ? req.getCamera_id().trim()
+                    : cctvCode.toLowerCase();
+
+            String s3Key = null;
+            if (req != null && req.getS3_key() != null && !req.getS3_key().isBlank()) {
+                s3Key = req.getS3_key().trim();
+            } else if (req != null && req.getClip_url() != null && !req.getClip_url().isBlank()) {
+                s3Key = tryParseS3KeyFromHttpUrl(req.getClip_url().trim());
+            }
+            if (s3Key == null || s3Key.isBlank()) {
+                // 최후 fallback: 기존 더미 규칙
+                s3Key = String.format("cctv/%s/videos/%s_20251208T140000Z.mp4", cameraId, cameraId);
+            }
+
+            if (emergencyAnalysisPrompt == null || emergencyAnalysisPrompt.isBlank()) {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(Map.of("error", "gemini.prompt.emergency-analysis 설정이 비어 있습니다."));
+            }
+
+            // 1) 모델서버 호출(선택적이지만 기본은 시도)
+            FallenAnalysisResponse yoloResponse = null;
+            try {
+                FallenAnalysisRequest yoloReq = new FallenAnalysisRequest(s3Key, cameraId);
+                HttpHeaders headers = new HttpHeaders();
+                headers.setContentType(MediaType.APPLICATION_JSON);
+                HttpEntity<FallenAnalysisRequest> entity = new HttpEntity<>(yoloReq, headers);
+
+                log.info("📡 [CCTV] (Emergency) Calling model server: {} (s3Key={})", modelServerUrl, s3Key);
+                ResponseEntity<FallenAnalysisResponse> modelResp = restTemplate.exchange(
+                        modelServerUrl,
+                        HttpMethod.POST,
+                        entity,
+                        FallenAnalysisResponse.class
+                );
+                if (modelResp.getStatusCode().is2xxSuccessful()) {
+                    yoloResponse = modelResp.getBody();
+                }
+            } catch (Exception e) {
+                log.warn("⚠️ [CCTV] (Emergency) Model server call failed, fallback to direct S3+FFmpeg: {}", e.getMessage());
+            }
+
+            // 2) Gemini에 보낼 이미지(Base64) 확보
+            List<String> base64Images = new ArrayList<>();
+            List<String> usedFrameUrls = new ArrayList<>();
+
+            if (yoloResponse != null
+                    && yoloResponse.getResult() != null
+                    && yoloResponse.getResult().getFrame_urls() != null
+                    && !yoloResponse.getResult().getFrame_urls().isEmpty()) {
+
+                List<String> urls = yoloResponse.getResult().getFrame_urls();
+                int limit = Math.max(1, Math.min(maxFrames, urls.size()));
+                for (int i = 0; i < limit; i++) {
+                    String url = urls.get(i);
+                    try {
+                        String b64 = imageUrlToBase64(url);
+                        if (b64 != null && !b64.isBlank()) {
+                            base64Images.add(b64);
+                            usedFrameUrls.add(url);
+                        }
+                    } catch (Exception e) {
+                        log.warn("⚠️ [CCTV] (Emergency) Failed to fetch frame url: {} ({})", url, e.getMessage());
+                    }
+                }
+            }
+
+            // 2-b) 모델서버 frame_urls가 없으면: S3에서 mp4를 내려받아 FFmpeg로 프레임 추출
+            if (base64Images.isEmpty()) {
+                try {
+                    tempDir = new File(System.getProperty("java.io.tmpdir"), "emergency-frames-" + System.currentTimeMillis());
+                    tempDir.mkdirs();
+
+                    tempVideo = s3Service.downloadToTempFile(s3Key, ".mp4");
+
+                    // 기본: 6프레임, 3초 간격
+                    int frameCount = Math.max(1, Math.min(maxFrames, 12));
+                    frameFiles = extractFrames(tempVideo, tempDir, frameCount, 3);
+                    for (File f : frameFiles) {
+                        String b64 = imageToBase64(f);
+                        if (b64 != null && !b64.isBlank()) base64Images.add(b64);
+                    }
+                } catch (Exception e) {
+                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                            .body(Map.of("error", "프레임 확보 실패", "details", e.getMessage()));
+                }
+            }
+
+            if (base64Images.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                        .body(Map.of("error", "Gemini에 보낼 프레임이 없습니다."));
+            }
+
+            // 3) 프롬프트 구성: YOLO 요약을 참고 정보로 prepend
+            StringBuilder prompt = new StringBuilder();
+            if (yoloResponse != null && yoloResponse.getResult() != null) {
+                var r = yoloResponse.getResult();
+                prompt.append("[YOLO(모델서버) 요약]\n")
+                        .append("- fallen_events: ").append(r.getFallen_events()).append("\n")
+                        .append("- total_frames: ").append(r.getTotal_frames()).append("\n")
+                        .append("- fps: ").append(r.getFps()).append("\n")
+                        .append("- clip_url: ").append(r.getClip_url()).append("\n")
+                        .append("- frame_urls_used: ").append(usedFrameUrls.size()).append("\n\n");
+            }
+            prompt.append(emergencyAnalysisPrompt);
+
+            // 4) Gemini 호출(멀티 이미지)
+            log.info("🤖 [CCTV] (Emergency) Calling Gemini with {} frame(s)", base64Images.size());
+            String geminiText = geminiService.analyze(prompt.toString(), base64Images);
+
+            // 5) JSON 파싱하여 그대로 반환
+            Map<String, Object> parsed = extractJsonFromGeminiResponse(geminiText);
+            if (parsed == null) {
+                return ResponseEntity.ok(Map.of(
+                        "warning", "Gemini 응답에서 JSON 파싱 실패(원문 포함)",
+                        "raw", geminiText
+                ));
+            }
+
+            // 6) (옵션) DB 저장 자동화 + media_file 저장
+            Map<String, Object> response = new HashMap<>();
+            response.put("analysis", parsed);
+            response.put("saveToDb", saveToDb);
+
+            if (saveToDb) {
+                Long resolvedCctvId = resolveCctvId(null, cctvCode);
+                String resolvedLocationDesc = resolveCctvLocationDesc(resolvedCctvId, cctvCode);
+                OffsetDateTime detectedAtKst = OffsetDateTime.now(ZoneOffset.ofHours(9));
+
+                IncidentCreateResponse created = emergencyService.createEmergencyFromGemini(
+                        parsed,
+                        resolvedCctvId,
+                        resolvedLocationDesc,
+                        detectedAtKst
+                );
+                response.put("incidentId", created.getIncidentId());
+                response.put("incidentCode", created.getIncidentCode());
+
+                // media 저장 (가능하면)
+                try {
+                    Long incidentId = created.getIncidentId();
+                    if (incidentId != null) {
+                        // clip_url(모델서버) 우선
+                        String clipUrl = (yoloResponse != null && yoloResponse.getResult() != null)
+                                ? yoloResponse.getResult().getClip_url()
+                                : null;
+                        if (clipUrl != null && !clipUrl.isBlank()) {
+                            mediaFileService.saveVideo(incidentId, resolvedCctvId, clipUrl, detectedAtKst);
+                            response.put("clipUrl", clipUrl);
+                        }
+
+                        if (!usedFrameUrls.isEmpty()) {
+                            // DB에는 "프레임 여러개"로 저장 (최대 maxFrames)
+                            for (String u : usedFrameUrls) {
+                                if (u == null || u.isBlank()) continue;
+                                mediaFileService.saveFrame(incidentId, resolvedCctvId, u, detectedAtKst);
+                            }
+                            response.put("frameUrls", usedFrameUrls);
+                        }
+                    }
+                } catch (Exception e) {
+                    response.put("mediaSaveWarning", e.getMessage());
+                }
+            }
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            log.error("❌ [CCTV] (Emergency) Failed to analyze emergency video", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage()));
+        } finally {
+            try {
+                for (File f : frameFiles) {
+                    if (f != null && f.exists()) f.delete();
+                }
+                if (tempVideo != null && tempVideo.exists()) tempVideo.delete();
+                if (tempDir != null && tempDir.exists()) {
+                    File[] files = tempDir.listFiles();
+                    if (files != null) for (File f : files) { try { f.delete(); } catch (Exception ignore) {} }
+                    tempDir.delete();
+                }
+            } catch (Exception ignore) {}
+        }
+    }
+
+    private String imageUrlToBase64(String imageUrl) {
+        if (imageUrl == null || imageUrl.isBlank()) return null;
+        byte[] bytes = restTemplate.getForObject(imageUrl, byte[].class);
+        if (bytes == null || bytes.length == 0) return null;
+        return Base64.getEncoder().encodeToString(bytes);
+    }
+
+    private static String tryParseS3KeyFromHttpUrl(String url) {
+        try {
+            // https://{bucket}.s3.{region}.amazonaws.com/{key}
+            int idx = url.indexOf(".amazonaws.com/");
+            if (idx < 0) return null;
+            return url.substring(idx + ".amazonaws.com/".length());
+        } catch (Exception ignore) {
+            return null;
+        }
+    }
+
+    private String resolveCctvLocationDesc(Long cctvId, String cctvCode) {
+        if (cctvId == null) return (cctvCode != null ? cctvCode : "CCTV") + " 자동 탐지(응급)";
+        try {
+            var c = cctvRepository.findById(cctvId).orElse(null);
+            if (c == null) return String.format("CCTV-%03d 자동 탐지(응급)", cctvId);
+            String loc = c.getLocationDesc() != null && !c.getLocationDesc().isBlank() ? c.getLocationDesc() : c.getName();
+            if (loc == null || loc.isBlank()) loc = String.format("CCTV-%03d", cctvId);
+            return loc + " 자동 탐지(응급)";
+        } catch (Exception e) {
+            return String.format("CCTV-%03d 자동 탐지(응급)", cctvId);
         }
     }
 
@@ -403,22 +667,49 @@ public class CCTVController {
             byte[] imageBytes = imageFile.getBytes();
             String base64Image = Base64.getEncoder().encodeToString(imageBytes);
             
-            // 2. 프롬프트 설정 (기본값: 쓰레기 분석 프롬프트)
+            // 2. 프롬프트 설정 (bbox 분석 프롬프트 사용)
             String prompt = customPrompt != null && !customPrompt.isEmpty() 
                     ? customPrompt 
-                    : trashAnalysisPrompt;
+                    : (trashBboxAnalysisPrompt != null && !trashBboxAnalysisPrompt.isEmpty()
+                            ? trashBboxAnalysisPrompt
+                            : trashAnalysisPrompt);
             
             // 3. Gemini API 호출 (이미지 1장)
-            log.info("🤖 [CCTV] Calling Gemini API with 1 image (trash analysis)");
+            log.info("🤖 [CCTV] Calling Gemini API with 1 image (trash analysis with bbox)");
             String geminiResult = geminiService.analyzeImage(prompt, base64Image);
             
             // 4. Gemini 응답에서 JSON 추출 및 파싱
             Map<String, Object> parsedJson = extractJsonFromGeminiResponse(geminiResult);
+            
+            // 5. detections 추출 (bbox 정보)
+            List<Map<String, Object>> detections = new ArrayList<>();
+            if (parsedJson != null && parsedJson.get("detections") instanceof List<?>) {
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> dets = (List<Map<String, Object>>) parsedJson.get("detections");
+                detections = dets != null ? dets : new ArrayList<>();
+            }
+            
+            // 6. Overlay 이미지 생성 및 S3 업로드
+            String overlayUrl = null;
+            try {
+                byte[] overlayBytes = imageOverlayService.drawOverlayJpeg(imageBytes, detections);
+                Long resolvedCctvId = resolveCctvId(cctvId, cctvCode);
+                String cameraId = resolvedCctvId != null 
+                        ? String.format("cctv-%03d", resolvedCctvId) 
+                        : (cctvCode != null ? cctvCode.toLowerCase() : "cctv-unknown");
+                String s3Key = s3Service.uploadOverlayFrame(overlayBytes, cameraId);
+                overlayUrl = s3Service.toHttpUrl(s3Key);
+                log.info("✅ [CCTV] Overlay image uploaded to S3: {}", overlayUrl);
+            } catch (Exception e) {
+                log.warn("⚠️ [CCTV] Failed to create/upload overlay image: {}", e.getMessage());
+            }
+            
             boolean savedToDb = false;
+            Long incidentId = null;
             String incidentCode = null;
             
             if (parsedJson != null) {
-                // 5. incident_type이 TRASH인 경우 DB에 저장
+                // 7. incident_type이 TRASH인 경우 DB에 저장
                 @SuppressWarnings("unchecked")
                 Map<String, Object> incidentMap = (Map<String, Object>) parsedJson.get("incident");
                 if (incidentMap != null) {
@@ -433,8 +724,20 @@ public class CCTVController {
                                     "CCTV 자동 탐지"
                             );
                             savedToDb = true;
+                            incidentId = createResponse.getIncidentId();
                             incidentCode = createResponse.getIncidentCode();
-                            log.info("✅ [CCTV] Incident saved to DB: {}", incidentCode);
+                            log.info("✅ [CCTV] Incident saved to DB: {} (ID: {})", incidentCode, incidentId);
+                            
+                            // 8. media_file에 overlay 이미지 저장
+                            if (overlayUrl != null && incidentId != null) {
+                                try {
+                                    mediaFileService.saveFrame(incidentId, resolvedCctvId, overlayUrl, 
+                                            java.time.OffsetDateTime.now());
+                                    log.info("✅ [CCTV] Overlay image saved to media_file: {}", overlayUrl);
+                                } catch (Exception e) {
+                                    log.warn("⚠️ [CCTV] Failed to save overlay to media_file: {}", e.getMessage());
+                                }
+                            }
                         } catch (Exception e) {
                             log.error("❌ [CCTV] Failed to save incident to DB", e);
                         }
@@ -449,9 +752,13 @@ public class CCTVController {
             response.put("message", geminiResult);
             response.put("fileName", imageFile.getOriginalFilename());
             response.put("parsedJson", parsedJson);
+            response.put("overlayUrl", overlayUrl);
             response.put("savedToDb", savedToDb);
             if (incidentCode != null) {
                 response.put("incidentCode", incidentCode);
+            }
+            if (incidentId != null) {
+                response.put("incidentId", incidentId);
             }
             
             return ResponseEntity.ok(response);
@@ -501,11 +808,18 @@ public class CCTVController {
     }
 
     /**
-     * 로컬 MP4 파일을 업로드하여 Gemini로 분석 (테스트용)
+     * 로컬 MP4 파일을 업로드하여 Gemini로 쓰레기 분석 (bbox + overlay 저장)
      * POST /api/cctv/test/analyze-local-video
      * 
      * @param videoFile - 업로드된 MP4 파일
-     * @return Gemini 분석 결과
+     * @param customPrompt - 커스텀 프롬프트 (선택)
+     * @param cctvId - CCTV ID (선택)
+     * @param cctvCode - CCTV 코드 (선택)
+     * @param locationDesc - 위치 설명 (선택)
+     * @param frameCount - 추출할 프레임 개수 (기본: 4)
+     * @param frameIntervalSec - 프레임 간격(초) (기본: 5)
+     * @param stopOnDetect - 첫 TRASH 감지 시 중단 여부 (기본: true)
+     * @return 프레임별 분석 결과 및 overlay URL
      */
     @PostMapping("/test/analyze-local-video")
     public ResponseEntity<?> analyzeLocalVideo(
@@ -513,15 +827,18 @@ public class CCTVController {
             @RequestParam(value = "prompt", required = false) String customPrompt,
             @RequestParam(value = "cctvId", required = false) Long cctvId,
             @RequestParam(value = "cctvCode", required = false) String cctvCode,
-            @RequestParam(value = "locationDesc", required = false) String locationDesc) {
+            @RequestParam(value = "locationDesc", required = false) String locationDesc,
+            @RequestParam(value = "frameCount", required = false, defaultValue = "4") int frameCount,
+            @RequestParam(value = "frameIntervalSec", required = false, defaultValue = "5") int frameIntervalSec,
+            @RequestParam(value = "stopOnDetect", required = false, defaultValue = "true") boolean stopOnDetect) {
         File tempVideo = null;
         File tempDir = null;
         
         try {
-            log.info("🎬 [CCTV] Analyzing local video file: {}", videoFile.getOriginalFilename());
+            log.info("🎬 [CCTV] Analyzing local video file (trash bbox): {}", videoFile.getOriginalFilename());
             
             // 1. 임시 디렉토리 생성
-            tempDir = new File(System.getProperty("java.io.tmpdir"), "gemini-frames-" + System.currentTimeMillis());
+            tempDir = new File(System.getProperty("java.io.tmpdir"), "trash-bbox-frames-" + System.currentTimeMillis());
             tempDir.mkdirs();
             
             // 2. 업로드된 파일을 임시 파일로 저장
@@ -529,8 +846,8 @@ public class CCTVController {
             videoFile.transferTo(tempVideo);
             log.info("📁 [CCTV] Video saved to: {}", tempVideo.getAbsolutePath());
             
-            // 3. FFmpeg로 프레임 추출 (5초 간격으로 4장)
-            List<File> frameFiles = extractFrames(tempVideo, tempDir, 4);
+            // 3. FFmpeg로 프레임 추출
+            List<File> frameFiles = extractFrames(tempVideo, tempDir, frameCount, frameIntervalSec);
             log.info("📸 [CCTV] Extracted {} frames", frameFiles.size());
             
             if (frameFiles.isEmpty()) {
@@ -538,42 +855,80 @@ public class CCTVController {
                         .body(Map.of("error", "프레임 추출 실패. FFmpeg가 설치되어 있는지 확인하세요."));
             }
             
-            // 4. 프레임 이미지를 Base64로 변환
-            List<String> base64Images = frameFiles.stream()
-                    .map(this::imageToBase64)
-                    .filter(img -> img != null && !img.isEmpty())
-                    .collect(Collectors.toList());
+            // 4. 프롬프트 설정 (bbox 분석 프롬프트 우선)
+            String prompt = (customPrompt != null && !customPrompt.isEmpty())
+                    ? customPrompt
+                    : (trashBboxAnalysisPrompt != null && !trashBboxAnalysisPrompt.isEmpty()
+                            ? trashBboxAnalysisPrompt
+                            : trashAnalysisPrompt);
             
-            if (base64Images.isEmpty()) {
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body(Map.of("error", "이미지 변환 실패"));
-            }
+            Long resolvedCctvId = resolveCctvId(cctvId, cctvCode);
+            String cameraId = resolvedCctvId != null
+                    ? String.format("cctv-%03d", resolvedCctvId)
+                    : (cctvCode != null ? cctvCode.toLowerCase() : "cctv-unknown");
             
-            // 5. 프롬프트 설정 (기본값 또는 사용자 지정)
-            String prompt = customPrompt != null && !customPrompt.isEmpty() 
-                    ? customPrompt 
-                    : trashAnalysisPrompt;
-            
-            // 6. Gemini API 호출
-            log.info("🤖 [CCTV] Calling Gemini API with {} frames", base64Images.size());
-            String geminiResult = geminiService.analyze(prompt, base64Images);
-
-            // 7. Gemini 응답 JSON 추출 + TRASH면 DB 저장
-            Map<String, Object> parsedJson = extractJsonFromGeminiResponse(geminiResult);
             boolean savedToDb = false;
-            String incidentCode = null;
             Long incidentId = null;
-
-            if (parsedJson != null) {
+            String incidentCode = null;
+            String clipUrl = null;
+            
+            List<Map<String, Object>> perFrameResults = new ArrayList<>();
+            List<String> overlayUrls = new ArrayList<>();
+            
+            // 5. 프레임 1장씩: Gemini bbox 분석 → overlay 생성 → S3 업로드
+            for (int i = 0; i < frameFiles.size(); i++) {
+                File frame = frameFiles.get(i);
+                byte[] frameBytes;
                 try {
+                    frameBytes = Files.readAllBytes(frame.toPath());
+                } catch (Exception e) {
+                    log.warn("⚠️ [CCTV] Failed to read frame {}: {}", frame.getName(), e.getMessage());
+                    continue;
+                }
+                
+                String base64 = Base64.getEncoder().encodeToString(frameBytes);
+                
+                // 5-1) Gemini bbox 분석 (프레임 1장)
+                log.info("🤖 [CCTV] Analyzing frame {} with Gemini (trash bbox)", i);
+                String geminiText = geminiService.analyzeImage(prompt, base64);
+                Map<String, Object> parsedJson = extractJsonFromGeminiResponse(geminiText);
+                
+                // 5-2) detections 추출
+                List<Map<String, Object>> detections = new ArrayList<>();
+                if (parsedJson != null && parsedJson.get("detections") instanceof List<?>) {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> dets = (List<Map<String, Object>>) parsedJson.get("detections");
+                    detections = dets != null ? dets : new ArrayList<>();
+                }
+                
+                // 5-3) overlay 생성 + S3 업로드
+                String overlayUrl = null;
+                try {
+                    byte[] overlayBytes = imageOverlayService.drawOverlayJpeg(frameBytes, detections);
+                    String s3Key = s3Service.uploadOverlayFrame(overlayBytes, cameraId);
+                    overlayUrl = s3Service.toHttpUrl(s3Key);
+                    overlayUrls.add(overlayUrl);
+                    log.info("✅ [CCTV] Overlay uploaded for frame {}: {}", i, overlayUrl);
+                } catch (Exception e) {
+                    log.warn("⚠️ [CCTV] Overlay upload failed for frame {}: {}", frame.getName(), e.getMessage());
+                }
+                
+                Map<String, Object> frameResult = new HashMap<>();
+                frameResult.put("frameIndex", i);
+                frameResult.put("frameFile", frame.getName());
+                frameResult.put("parsedJson", parsedJson);
+                frameResult.put("overlayUrl", overlayUrl);
+                perFrameResults.add(frameResult);
+                
+                // 6. TRASH 최초 감지 시 incident 생성 + media_file 저장
+                if (!savedToDb && parsedJson != null) {
                     @SuppressWarnings("unchecked")
                     Map<String, Object> incidentMap = (Map<String, Object>) parsedJson.get("incident");
-                    if (incidentMap != null) {
-                        String incidentType = (String) incidentMap.get("incident_type");
-                        // 원복: TRASH만 저장
-                        if ("TRASH".equals(incidentType)) {
-                            log.info("💾 [CCTV] Saving TRASH incident to database (video)");
-                            Long resolvedCctvId = resolveCctvId(cctvId, cctvCode);
+                    String incidentType = incidentMap != null ? (String) incidentMap.get("incident_type") : null;
+                    
+                    if ("TRASH".equals(incidentType)) {
+                        try {
+                            log.info("💾 [CCTV] Saving TRASH incident to database (video, frame {})", i);
                             var createResponse = trashService.createTrashFromGemini(
                                     parsedJson,
                                     resolvedCctvId,
@@ -582,31 +937,60 @@ public class CCTVController {
                                             : "CCTV 자동 탐지(비디오)"
                             );
                             savedToDb = true;
-                            incidentCode = createResponse.getIncidentCode();
                             incidentId = createResponse.getIncidentId();
+                            incidentCode = createResponse.getIncidentCode();
                             log.info("✅ [CCTV] Incident saved to DB: {} (id={})", incidentCode, incidentId);
-                        } else {
-                            log.info("ℹ️ [CCTV] Incident type is not TRASH -> skip DB save: {}", incidentType);
+                            
+                            // 해당 프레임 overlay를 media_file로 저장
+                            if (overlayUrl != null && incidentId != null) {
+                                try {
+                                    mediaFileService.saveFrame(incidentId, resolvedCctvId, overlayUrl, OffsetDateTime.now());
+                                    log.info("✅ [CCTV] Overlay saved to media_file: {}", overlayUrl);
+                                } catch (Exception e) {
+                                    log.warn("⚠️ [CCTV] Failed to save overlay to media_file: {}", e.getMessage());
+                                }
+                            }
+
+                            // ✅ 감지 프레임 기준 앞뒤 10초(총 20초) 클립 추출 → S3 업로드 → media_file(VIDEO) 저장
+                            try {
+                                int centerSeconds = i * frameIntervalSec;
+                                File clipFile = extractVideoClip(tempVideo, tempDir, centerSeconds, 20);
+                                byte[] clipBytes = Files.readAllBytes(clipFile.toPath());
+                                String clipKey = s3Service.uploadVideo(clipBytes, cameraId);
+                                clipUrl = s3Service.toHttpUrl(clipKey);
+                                mediaFileService.saveVideo(incidentId, resolvedCctvId, clipUrl, OffsetDateTime.now());
+                                log.info("✅ [CCTV] Clip saved to S3+media_file: {}", clipUrl);
+                            } catch (Exception e) {
+                                log.warn("⚠️ [CCTV] Failed to extract/upload clip: {}", e.getMessage());
+                            }
+                            
+                            if (stopOnDetect) {
+                                log.info("🛑 [CCTV] Stop on detect enabled, stopping frame processing");
+                                break;
+                            }
+                        } catch (Exception e) {
+                            log.error("❌ [CCTV] Failed to save TRASH incident from video frame", e);
                         }
                     }
-                } catch (Exception e) {
-                    log.error("❌ [CCTV] Failed to save incident to DB (video)", e);
                 }
             }
-
+            
             Map<String, Object> response = new HashMap<>();
             response.put("success", true);
-            response.put("message", geminiResult);
-            response.put("framesAnalyzed", base64Images.size());
-            response.put("parsedJson", parsedJson);
+            response.put("fileName", videoFile.getOriginalFilename());
+            response.put("framesExtracted", frameFiles.size());
+            response.put("framesProcessed", perFrameResults.size());
             response.put("savedToDb", savedToDb);
-            if (incidentCode != null) response.put("incidentCode", incidentCode);
-            if (incidentId != null) response.put("incidentId", incidentId);
-
+            response.put("incidentId", incidentId);
+            response.put("incidentCode", incidentCode);
+            response.put("overlayUrls", overlayUrls);
+            response.put("results", perFrameResults);
+            if (clipUrl != null) response.put("clipUrl", clipUrl);
+            
             return ResponseEntity.ok(response);
             
         } catch (Exception e) {
-            log.error("❌ [CCTV] Failed to analyze local video", e);
+            log.error("❌ [CCTV] Failed to analyze local video (trash bbox)", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", e.getMessage()));
         } finally {
@@ -617,9 +1001,12 @@ public class CCTVController {
 
     /**
      * FFmpeg를 사용하여 영상에서 프레임 추출
-     * 5초 간격으로 지정된 개수만큼 추출
+     * 지정된 간격으로 지정된 개수만큼 추출
      */
-    private List<File> extractFrames(File videoFile, File outputDir, int frameCount) throws IOException, InterruptedException {
+    /**
+     * FFmpeg를 사용하여 영상에서 프레임 추출 (간격 지정 가능)
+     */
+    private List<File> extractFrames(File videoFile, File outputDir, int frameCount, int intervalSeconds) throws IOException, InterruptedException {
         List<File> frames = new ArrayList<>();
         
         // FFmpeg 명령어 (Windows/Linux 모두 지원)
@@ -643,11 +1030,11 @@ public class CCTVController {
             }
         }
 
-        log.info("🎞️ [CCTV] Using ffmpeg command: {}", ffmpegCommand);
+        log.info("🎞️ [CCTV] Using ffmpeg command: {} (interval: {}s)", ffmpegCommand, intervalSeconds);
         
-        // 각 프레임 추출 (0초, 5초, 10초, 15초...)
+        // 각 프레임 추출 (0초, intervalSeconds, 2*intervalSeconds...)
         for (int i = 0; i < frameCount; i++) {
-            int timeSeconds = i * 5;
+            int timeSeconds = i * intervalSeconds;
             File outputFile = new File(outputDir, String.format("frame_%02d.jpg", i));
             
             try {
@@ -692,6 +1079,64 @@ public class CCTVController {
         }
         
         return frames;
+    }
+
+    /**
+     * 영상에서 특정 시점을 기준으로 앞뒤 durationSeconds/2 만큼 잘라 클립 생성
+     * - centerSeconds 기준으로 (center-10s) ~ (center+10s) 형태 (durationSeconds=20일 때)
+     * - 재인코딩 없이 copy를 기본으로 사용(빠름). 키프레임 위치에 따라 시작 지점이 약간 앞당겨질 수 있음.
+     */
+    private File extractVideoClip(File videoFile, File outputDir, int centerSeconds, int durationSeconds) throws IOException, InterruptedException {
+        int startSec = Math.max(0, centerSeconds - (durationSeconds / 2));
+
+        String ffmpegCommand = configuredFfmpegCommand != null ? configuredFfmpegCommand.trim() : "ffmpeg";
+        if (ffmpegCommand.isEmpty()) ffmpegCommand = "ffmpeg";
+
+        boolean isWindows = System.getProperty("os.name", "").toLowerCase().contains("win");
+        if ("ffmpeg".equalsIgnoreCase(ffmpegCommand) && isWindows) {
+            String[] candidates = new String[] {
+                    "C:\\\\bin\\\\ffmpeg.exe",
+                    "C:\\\\ffmpeg\\\\bin\\\\ffmpeg.exe"
+            };
+            for (String candidate : candidates) {
+                File f = new File(candidate);
+                if (f.exists() && f.isFile()) {
+                    ffmpegCommand = f.getAbsolutePath();
+                    break;
+                }
+            }
+        }
+
+        File outputFile = new File(outputDir, String.format("clip_%ds_%ds.mp4", startSec, durationSeconds));
+
+        ProcessBuilder pb = new ProcessBuilder(
+                ffmpegCommand,
+                "-y",
+                "-hide_banner",
+                "-loglevel", "error",
+                "-ss", String.valueOf(startSec),
+                "-i", videoFile.getAbsolutePath(),
+                "-t", String.valueOf(durationSeconds),
+                "-c", "copy",
+                outputFile.getAbsolutePath()
+        );
+
+        pb.redirectErrorStream(true);
+        Process process = pb.start();
+
+        String ffmpegOut = "";
+        try (InputStream is = process.getInputStream()) {
+            byte[] bytes = is.readAllBytes();
+            if (bytes != null && bytes.length > 0) {
+                ffmpegOut = new String(bytes, StandardCharsets.UTF_8);
+            }
+        } catch (Exception ignore) {}
+
+        int exitCode = process.waitFor();
+        if (exitCode == 0 && outputFile.exists() && outputFile.length() > 0) {
+            return outputFile;
+        }
+        throw new IOException("FFmpeg clip extraction failed (exitCode=" + exitCode + ", out=" + ffmpegOut + ")");
     }
 
     /**

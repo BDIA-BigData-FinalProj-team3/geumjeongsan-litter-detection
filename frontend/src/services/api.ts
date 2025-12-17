@@ -32,6 +32,7 @@ import {
   type RockfallItem,
   type MajorIncident,
 } from './mock';
+import { getCurrentUser } from './auth';
 
 // Import CCTV data from common.ts (Single Source of Truth)
 import {
@@ -58,6 +59,9 @@ import {
 
 // API Base URL - config/api.ts에서 import
 import BACKEND_URL from '../config/api';
+
+// Mock 사용 여부 (기본: false). 필요 시 .env에 VITE_USE_MOCK_DATA=true 설정
+const USE_MOCK_DATA = (import.meta.env.VITE_USE_MOCK_DATA as string | undefined) === 'true';
 
 // ==================== CCTV API ====================
 /**
@@ -129,7 +133,12 @@ export const getCCTVList = async (): Promise<CCTVMarker[]> => {
     console.warn('⚠️ Failed to fetch from Backend, using Mock Data:', error);
   }
 
-  // 2. Fallback to Mock Data (if backend is offline or fails)
+  // 2. Fallback to Mock Data (if backend is offline or fails) - 옵션
+  if (!USE_MOCK_DATA) {
+    updateCCTVList([]);
+    return [];
+  }
+
   const mockData: CCTVMarker[] = [
     { id: 1, cctvCode: 'CCTV-001', name: '등산로 1 CCTV', locationDesc: '등산로 1', installDate: '2024-01-15', modelName: 'HD-1080P', resolution: '1920x1080', isActive: true, powerStatus: 'on', longitude: 127.5, latitude: 37.5 },
     { id: 2, cctvCode: 'CCTV-002', name: '등산로 2 CCTV', locationDesc: '등산로 2', installDate: '2024-01-15', modelName: 'HD-1080P', resolution: '1920x1080', isActive: true, powerStatus: 'on', longitude: 127.6, latitude: 37.6 },
@@ -307,21 +316,42 @@ export interface CCTVMedia {
 }
 
 export const getCCTVMedia = async (id: number, fileType: 'video' | 'image' | 'all' = 'all'): Promise<CCTVMedia[]> => {
-  // TODO: Replace with actual API call
-  // const response = await fetch(`/api/cctv/${id}/media?fileType=${fileType}`);
-  // return await response.json();
-  
-  // Mock data for development
-  const mockMedia: CCTVMedia[] = [
-    { id: 'media-1', url: '#', timestamp: '2025-11-25 10:15:00', type: 'video', duration: 120, fileSize: '24MB', thumbnailUrl: '#' },
-    { id: 'media-2', url: '#', timestamp: '2025-11-25 08:30:00', type: 'video', duration: 90, fileSize: '18MB', thumbnailUrl: '#' },
-  ];
-  
-  if (fileType === 'all') {
-    return Promise.resolve(mockMedia);
+  try {
+    const q =
+      fileType === 'video' ? 'VIDEO' :
+      fileType === 'image' ? 'FRAME' :
+      '';
+
+    const url = q
+      ? `${BACKEND_URL}/api/cctv/${id}/media?fileType=${encodeURIComponent(q)}`
+      : `${BACKEND_URL}/api/cctv/${id}/media`;
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      console.warn(`⚠️ [CCTV] Failed to fetch media for CCTV ${id}: ${response.status}`);
+      return [];
+    }
+    const data = await response.json();
+    const list: any[] = Array.isArray(data) ? data : [];
+
+    const mapped: CCTVMedia[] = list.map((m: any) => {
+      const t = String(m.fileType || '').toUpperCase();
+      const type: 'video' | 'image' = t === 'VIDEO' ? 'video' : 'image';
+      return {
+        id: String(m.fileId ?? m.id ?? ''),
+        url: String(m.url ?? ''),
+        timestamp: String(m.capturedAt ?? ''),
+        type,
+      };
+    }).filter(m => !!m.id && !!m.url);
+
+    // fileType === 'all' 이면 그대로, 아니면 필터
+    if (fileType === 'all') return mapped;
+    return mapped.filter(m => m.type === fileType);
+  } catch (error) {
+    console.error(`❌ [CCTV] Error fetching media for CCTV ${id}:`, error);
+    return [];
   }
-  
-  return Promise.resolve(mockMedia.filter(m => m.type === fileType));
 };
 
 /**
@@ -357,7 +387,7 @@ export const getFireNotifications = async (): Promise<NotificationItem[]> => {
       }));
   } catch (error) {
     console.error('Failed to fetch fire notifications:', error);
-    return mockFireNotifications; // Fallback to mock data
+    return USE_MOCK_DATA ? mockFireNotifications : [];
   }
 };
 
@@ -393,7 +423,7 @@ export const getEmergencyNotifications = async (): Promise<NotificationItem[]> =
       }));
   } catch (error) {
     console.error('Failed to fetch emergency notifications:', error);
-    return mockEmergencyNotifications; // Fallback to mock data
+    return USE_MOCK_DATA ? mockEmergencyNotifications : [];
   }
 };
 
@@ -466,9 +496,16 @@ function calculateTimeAgo(timeString: string): string {
  * - Real-time GPS coordinates
  */
 export const getHelicopterLocations = async () => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/helicopters/locations').then(res => res.json());
-  return Promise.resolve(mockHelicopterLocations);
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/helicopters/locations`);
+    if (response.ok) {
+      return await response.json();
+    }
+  } catch (error) {
+    console.warn('⚠️ [Helicopter] Failed to fetch helicopter locations:', error);
+  }
+
+  return USE_MOCK_DATA ? Promise.resolve(mockHelicopterLocations) : [];
 };
 
 // ==================== Dashboard API ====================
@@ -1240,9 +1277,16 @@ export const getIncidentsSummary = async () => {
  * - Include incident count for each location
  */
 export const getHotspots = async (type: 'fire' | 'emergency' | 'trash'): Promise<HotspotLocation[]> => {
-  // TODO: Replace with actual API call
-  // return fetch(`/api/hotspots?type=${type}&month=2025-11`).then(res => res.json());
-  return Promise.resolve(getHotspotsByType(type));
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/hotspots?type=${type}`);
+    if (response.ok) {
+      const data = await response.json();
+      return data || [];
+    }
+  } catch (error) {
+    console.warn('⚠️ [Hotspots] Failed to fetch hotspots:', error);
+  }
+  return USE_MOCK_DATA ? Promise.resolve(getHotspotsByType(type)) : [];
 };
 
 /**
@@ -1252,9 +1296,16 @@ export const getHotspots = async (type: 'fire' | 'emergency' | 'trash'): Promise
  * - Fetch from /api/hotspots/all?month=YYYY-MM
  */
 export const getAllHotspotsData = async (): Promise<HotspotLocation[]> => {
-  // TODO: Replace with actual API call
-  // return fetch('/api/hotspots/all?month=2025-11').then(res => res.json());
-  return Promise.resolve(getAllHotspots());
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/hotspots/all`);
+    if (response.ok) {
+      const data = await response.json();
+      return data || [];
+    }
+  } catch (error) {
+    console.warn('⚠️ [Hotspots] Failed to fetch all hotspots:', error);
+  }
+  return USE_MOCK_DATA ? Promise.resolve(getAllHotspots()) : [];
 };
 
 // ==================== CCTV Video Clips API (Legacy - use getCCTVMedia instead) ====================
@@ -1388,14 +1439,20 @@ export const getEmergencyHotspots = async (
 /**
  * 응급 사건 상태 업데이트
  */
-export const updateEmergencyStatus = async (id: number, status: string, handlerName?: string) => {
+export const updateEmergencyStatus = async (
+  id: number,
+  status: string,
+  options?: { assignedToId?: number }
+) => {
   try {
-    const response = await fetch(`${BACKEND_URL}/api/emergency/${id}`, {
+    const actorId = getCurrentUser()?.userId;
+    const assignedToId = options?.assignedToId ?? actorId; // 기본: 현재 접속자가 처리자(STAFF)
+    const response = await fetch(`${BACKEND_URL}/api/emergency/${id}/workflow`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ status, handlerName }),
+      body: JSON.stringify({ status, actorId, assignedToId }),
     });
     if (!response.ok) {
       throw new Error(`Failed to update emergency status: ${response.status}`);
@@ -1462,14 +1519,20 @@ export const getFireHotspots = async (
 /**
  * 화재 사건 상태 업데이트
  */
-export const updateFireStatus = async (id: number, status: string, handlerName?: string) => {
+export const updateFireStatus = async (
+  id: number,
+  status: string,
+  options?: { assignedToId?: number }
+) => {
   try {
-    const response = await fetch(`${BACKEND_URL}/api/fire/${id}`, {
+    const actorId = getCurrentUser()?.userId;
+    const assignedToId = options?.assignedToId ?? actorId; // 기본: 현재 접속자가 처리자(STAFF)
+    const response = await fetch(`${BACKEND_URL}/api/fire/${id}/workflow`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ status, handlerName }),
+      body: JSON.stringify({ status, actorId, assignedToId }),
     });
     if (!response.ok) {
       throw new Error(`Failed to update fire status: ${response.status}`);
@@ -1536,14 +1599,20 @@ export const getTrashHotspots = async (
 /**
  * 쓰레기 사건 상태 업데이트
  */
-export const updateTrashStatus = async (id: number, status: string, handlerName?: string) => {
+export const updateTrashStatus = async (
+  id: number,
+  status: string,
+  options?: { assignedToId?: number }
+) => {
   try {
-    const response = await fetch(`${BACKEND_URL}/api/trash/${id}`, {
+    const actorId = getCurrentUser()?.userId;
+    const assignedToId = options?.assignedToId ?? actorId; // 기본: 현재 접속자가 처리자(STAFF)
+    const response = await fetch(`${BACKEND_URL}/api/trash/${id}/workflow`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ status, handlerName }),
+      body: JSON.stringify({ status, actorId, assignedToId }),
     });
     if (!response.ok) {
       throw new Error(`Failed to update trash status: ${response.status}`);
@@ -1568,12 +1637,13 @@ export const updateEmergencyDetail = async (id: number, data: {
   transferHospital?: string;
 }) => {
   try {
+    const actorId = getCurrentUser()?.userId;
     const response = await fetch(`${BACKEND_URL}/api/emergency/${id}/detail`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(data),
+      body: JSON.stringify({ ...data, actorId }),
     });
     if (!response.ok) {
       throw new Error(`Failed to update emergency detail: ${response.status}`);
@@ -1595,12 +1665,13 @@ export const updateFireDetail = async (id: number, data: {
   severity?: string;
 }) => {
   try {
+    const actorId = getCurrentUser()?.userId;
     const response = await fetch(`${BACKEND_URL}/api/fire/${id}/detail`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(data),
+      body: JSON.stringify({ ...data, actorId }),
     });
     if (!response.ok) {
       throw new Error(`Failed to update fire detail: ${response.status}`);
@@ -1624,12 +1695,13 @@ export const updateTrashDetail = async (id: number, data: {
   amount?: string;
 }) => {
   try {
+    const actorId = getCurrentUser()?.userId;
     const response = await fetch(`${BACKEND_URL}/api/trash/${id}/detail`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(data),
+      body: JSON.stringify({ ...data, actorId }),
     });
     if (!response.ok) {
       throw new Error(`Failed to update trash detail: ${response.status}`);
@@ -1646,21 +1718,28 @@ export const updateTrashDetail = async (id: number, data: {
 /**
  * 낙석 사건 상태 업데이트
  */
-export const updateRockfallStatus = async (id: number, status: string, handlerName?: string) => {
+export const updateRockfallStatus = async (
+  id: number,
+  status: string,
+  options?: { assignedToId?: number }
+) => {
   try {
-    const response = await fetch(`${BACKEND_URL}/api/rockfalls/${id}/status`, {
-      method: 'PATCH',
+    const actorId = getCurrentUser()?.userId;
+    const assignedToId = options?.assignedToId ?? actorId; // 기본: 현재 접속자가 처리자(STAFF)
+    // 기존 PATCH(/status)는 유지하되, 신규 workflow 엔드포인트를 우선 사용
+    const response = await fetch(`${BACKEND_URL}/api/rockfalls/${id}/workflow`, {
+      method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ status, handlerName }),
+      body: JSON.stringify({ status, actorId, assignedToId }),
     });
     if (!response.ok) {
       throw new Error(`Failed to update rockfall status: ${response.status}`);
     }
-    // 백엔드가 void를 반환하므로 json 파싱하지 않음
-    console.log('✅ [Rockfall] Status updated');
-    return;
+    const result = await response.json();
+    console.log('✅ [Rockfall] Status updated:', result);
+    return result;
   } catch (error) {
     console.error('❌ [Rockfall] Failed to update status:', error);
     throw error;
@@ -1679,12 +1758,13 @@ export const updateRockfallDetail = async (id: number, data: {
   damageDescription?: string;
 }) => {
   try {
+    const actorId = getCurrentUser()?.userId;
     const response = await fetch(`${BACKEND_URL}/api/rockfalls/${id}/detail`, {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(data),
+      body: JSON.stringify({ ...data, actorId }),
     });
     if (!response.ok) {
       throw new Error(`Failed to update rockfall detail: ${response.status}`);
@@ -1856,6 +1936,32 @@ export const getAllIncidentDetail = async (id: number) => {
     console.error('❌ [AllIncidents] Failed to fetch detail:', error);
   }
   return null;
+};
+
+/**
+ * ✅ 통합 상세 조회 (대시보드 상세 단일 소스)
+ *
+ * 원칙:
+ * - 모든 "상세" UI는 이 함수(= IncidentDetailDto 기반) 결과만 사용한다.
+ * - 기본은 /api/all-incidents/detail/{id}
+ * - 낙석은 /api/rockfalls/detail/{id}를 추가로 merge
+ */
+export const getUnifiedIncidentDetail = async (id: number) => {
+  const base = await getAllIncidentDetail(id);
+  if (!base) return null;
+
+  // 낙석은 별도 상세가 있으므로 merge
+  if ((base as any).type === '낙석') {
+    try {
+      const rockfall = await getRockfallDetail(id);
+      return { ...(base as any), ...(rockfall || {}) };
+    } catch (e) {
+      console.warn('⚠️ [UnifiedDetail] Failed to load rockfall detail, fallback to base detail', e);
+      return base;
+    }
+  }
+
+  return base;
 };
 
 /**
@@ -2266,6 +2372,39 @@ export const analyzeFallenVideo = async (cctvCode: string): Promise<FallenAnalys
   }
 };
 
+/**
+ * 응급 영상 분석(Gemini) + (옵션) DB 저장
+ * POST /api/cctv/{cctvCode}/emergency-analyze
+ */
+export const analyzeEmergencyVideo = async (
+  cctvCode: string,
+  params?: { clipUrl?: string; s3Key?: string; cameraId?: string; maxFrames?: number; saveToDb?: boolean }
+): Promise<any> => {
+  const q = new URLSearchParams();
+  if (typeof params?.maxFrames === 'number') q.set('maxFrames', String(params.maxFrames));
+  if (typeof params?.saveToDb === 'boolean') q.set('saveToDb', String(params.saveToDb));
+
+  const body: any = {};
+  if (params?.cameraId) body.camera_id = params.cameraId;
+  if (params?.s3Key) body.s3_key = params.s3Key;
+  if (params?.clipUrl) body.clip_url = params.clipUrl;
+
+  const url = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/emergency-analyze${q.toString() ? `?${q.toString()}` : ''}`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: Object.keys(body).length ? JSON.stringify(body) : undefined
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(text || `응급 분석 실패 (${response.status})`);
+  }
+
+  return await response.json();
+};
+
 // ==================== Notification API ====================
 
 // 외부 연락처 API
@@ -2411,10 +2550,11 @@ export const getActiveStaff = async () => {
  */
 export const markEmergencyAsFalsePositive = async (id: number, reason: string) => {
   try {
+    const actorId = getCurrentUser()?.userId;
     const response = await fetch(`${BACKEND_URL}/api/emergency/${id}/false-positive`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason }),
+      body: JSON.stringify({ reason, actorId }),
     });
     if (!response.ok) throw new Error('Failed to mark emergency as false positive');
     return response.json();
@@ -2430,10 +2570,11 @@ export const markEmergencyAsFalsePositive = async (id: number, reason: string) =
  */
 export const markFireAsFalsePositive = async (id: number, reason: string) => {
   try {
+    const actorId = getCurrentUser()?.userId;
     const response = await fetch(`${BACKEND_URL}/api/fire/${id}/false-positive`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason }),
+      body: JSON.stringify({ reason, actorId }),
     });
     if (!response.ok) throw new Error('Failed to mark fire as false positive');
     return response.json();
@@ -2449,10 +2590,11 @@ export const markFireAsFalsePositive = async (id: number, reason: string) => {
  */
 export const markTrashAsFalsePositive = async (id: number, reason: string) => {
   try {
+    const actorId = getCurrentUser()?.userId;
     const response = await fetch(`${BACKEND_URL}/api/trash/${id}/false-positive`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason }),
+      body: JSON.stringify({ reason, actorId }),
     });
     if (!response.ok) throw new Error('Failed to mark trash as false positive');
     return response.json();
@@ -2468,10 +2610,11 @@ export const markTrashAsFalsePositive = async (id: number, reason: string) => {
  */
 export const markIncidentAsFalsePositive = async (id: number, reason: string) => {
   try {
+    const actorId = getCurrentUser()?.userId;
     const response = await fetch(`${BACKEND_URL}/api/all-incidents/${id}/false-positive`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason }),
+      body: JSON.stringify({ reason, actorId }),
     });
     if (!response.ok) throw new Error('Failed to mark incident as false positive');
     return response.json();

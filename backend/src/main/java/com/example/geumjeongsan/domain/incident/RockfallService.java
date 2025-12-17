@@ -351,7 +351,8 @@ public class RockfallService {
             String rockSizeClass,
             String affectedAssetType,
             String affectedAssetName,
-            String damageDescription
+            String damageDescription,
+            Long actorId
     ) {
         Incident incident = incidentRepository.findById(incidentId)
                 .orElseThrow(() -> new RuntimeException("낙석 사건을 찾을 수 없습니다: " + incidentId));
@@ -430,7 +431,7 @@ public class RockfallService {
             action.setNextStatus(incident.getStatus());  // 상태는 변경되지 않음
             action.setMemo("상세 정보 수정: " + changedFieldsStr);
             action.setCreatedAt(OffsetDateTime.now());
-            // actorId는 추후 인증 시스템 구현 시 설정
+            action.setActorId(actorId);
             incidentActionRepository.save(action);
         }
     }

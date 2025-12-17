@@ -5,7 +5,7 @@ import IncidentDetailModal from '../components/IncidentDetailModal';
 import { X, ArrowLeft, Search, ChevronDown, ArrowUpDown, Maximize, Camera, Flame, Trash2, AlertCircle, Download, Play, HeartPulse } from 'lucide-react';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { cctvList, getCCTVLocation, getOffCCTVCodes, getCCTVByCode } from '../services/common';
-import { getCCTVList, analyzeFallenVideo, type FallenAnalysisResponse } from '../services/api';
+import { getCCTVList, analyzeFallenVideo, getUnifiedIncidentDetail, type FallenAnalysisResponse } from '../services/api';
 import API_BASE_URL, { INGEST_HLS_URL } from '../config/api';
 import Hls from 'hls.js';
 import cctv001DemoVideo from '../assets/cctv-001_20251208T140000Z.mp4';
@@ -43,6 +43,8 @@ interface CCTVData {
 
 interface Event {
   id: string;
+  // ✅ DB incident PK (상세 조회용). 없으면 상세 모달을 열지 않는다.
+  incidentId?: number;
   time: string;
   type: 'fire' | 'emergency' | 'trash';
   confidence: string;
@@ -78,6 +80,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   const [selectedCCTV, setSelectedCCTV] = useState<CCTVData | null>(null);
   const [showEvents, setShowEvents] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
+  const [selectedEventDetail, setSelectedEventDetail] = useState<any | null>(null); // IncidentDetailDto 기반
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<'id' | 'location' | 'status' | 'power'>('id');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -444,7 +447,9 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
 
   // DB에서 가져온 이벤트 + 분석 결과 이벤트 합치기
   const dbEvents = cctvIncidents.map((incident: any) => ({
-    id: incident.incidentCode || `incident-${incident.incidentId}`,
+    // ✅ backend CCTVIncidentDetailResponse.IncidentDetail: id 필드가 incident PK
+    id: incident.incidentCode || `incident-${incident.id}`,
+    incidentId: incident.id,
     time: incident.detectedAt,
     type: incident.incidentType?.toLowerCase() || 'unknown',
     confidence: incident.detectionConfidence ? `${Math.round(incident.detectionConfidence * 100)}%` : '-',
@@ -456,7 +461,8 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     frameUrls: [],
     qwenResponse: null
   }));
-  const events = [...dbEvents, ...analysisEvents];
+  // ✅ 화면 표시용 이벤트는 "DB에 저장된 사건"만 사용 (analysisEvents/더미/추정값 숨김)
+  const events = dbEvents;
 
   // ✅ [핵심] "최근 이벤트면 자동 팝업"을 DB 이벤트 기준으로 동작시키기
   useEffect(() => {
@@ -473,7 +479,8 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
 
     // DB 이벤트를 여기서 직접 계산 (의존성 문제 방지)
     const dbEventsForPopup = cctvIncidents.map((incident: any) => ({
-      id: incident.incidentCode || `incident-${incident.incidentId}`,
+      id: incident.incidentCode || `incident-${incident.id}`,
+      incidentId: incident.id,
       time: incident.detectedAt,
       type: incident.incidentType?.toLowerCase() || 'unknown',
       confidence: incident.detectionConfidence ? `${Math.round(incident.detectionConfidence * 100)}%` : '-',
@@ -715,69 +722,18 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     }
   };
 
-  // Event를 IncidentDetail로 변환
-  const convertEventToIncidentDetail = (event: Event) => {
-    const baseDetail = {
-      id: parseInt(event.id.replace(/\D/g, '')) || Date.now(), // 숫자만 추출
-      accidentCode: event.id,
-      cctvId: selectedCCTV?.id || '',
-      cctvCode: selectedCCTV?.id || '',
-      type: event.type === 'fire' ? '화재' : event.type === 'emergency' ? '응급' : '쓰레기',
-      location: event.location,
-      time: event.time,
-      severity: event.severity || '중',
-      status: 'PENDING',
-      handler: '미배정',
-      detectionBasis: 'AI 자동탐지',
-      isAIDetection: true,
-      clipUrl: event.clipUrl,
-      frameUrls: event.frameUrls
+  // ✅ 선택 이벤트가 바뀌면 "대시보드 상세 단일 소스"로 상세를 로드
+  useEffect(() => {
+    const run = async () => {
+      if (!selectedEvent?.incidentId) {
+        setSelectedEventDetail(null);
+        return;
+      }
+      const detail = await getUnifiedIncidentDetail(selectedEvent.incidentId);
+      setSelectedEventDetail(detail);
     };
-
-    if (event.type === 'fire') {
-      return {
-        ...baseDetail,
-        windSpeed: '2.5 m/s',
-        spreadDirection: '북동쪽',
-        surroundingRisk: '높음',
-        note: event.summary || ''
-      };
-    } else if (event.type === 'emergency') {
-      return {
-        ...baseDetail,
-        type: '응급',
-        patientName: '미상',
-        patientAge: '미상',
-        patientGender: '미상',
-        rescueTeam: '미배정',
-        transferHospital: '미정',
-        note: event.summary || ''
-      };
-    } else {
-      // Qwen 응답이 있는 경우 상세 정보 사용
-      const qwenResponse = event.qwenResponse;
-      const trashType = qwenResponse?.mainCategory || '일반 쓰레기';
-      const objectAmount = qwenResponse?.objectAmount || event.summary || '';
-      
-      // object_amount에서 개수 추출 (예: "총 1개의 쓰레기가 탐지되었습니다" → "1개")
-      const countMatch = objectAmount.match(/총\s*(\d+)\s*개/);
-      const amount = countMatch ? `${countMatch[1]}개` : '미확인';
-      
-      return {
-        ...baseDetail,
-        type: '쓰레기',
-        trashType: trashType,
-        amount: amount,
-        note: objectAmount,
-        // Qwen 상세 정보 추가
-        detectionConfidenceReason: qwenResponse?.detectionConfidenceReason || '',
-        severityLevelReason: qwenResponse?.severityLevelReason || '',
-        mainCategory: qwenResponse?.mainCategory || '',
-        detectionConfidence: qwenResponse?.detectionConfidence || 0,
-        severityLevel: qwenResponse?.severityLevel || 0
-      };
-    }
-  };
+    run();
+  }, [selectedEvent?.incidentId]);
 
   // Handle Qwen frame analysis
   const handleAnalyzeFrameWithQwen = async () => {
@@ -1136,7 +1092,13 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                           return (
                             <div
                               key={event.id}
-                              onClick={() => setSelectedEvent(event)}
+                              onClick={() => {
+                                if (!event.incidentId) {
+                                  alert('DB에 저장된 사건만 상세정보를 볼 수 있습니다.');
+                                  return;
+                                }
+                                setSelectedEvent(event);
+                              }}
                               className="bg-white shadow-sm hover:shadow-lg hover:-translate-y-1 transition-all duration-300 ease-out cursor-pointer overflow-hidden group"
                               style={{ borderRadius: '0px' }}
                             >
@@ -1565,7 +1527,13 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                               return (
                                 <div
                                   key={event.id}
-                                  onClick={() => setSelectedEvent(event)}
+                                  onClick={() => {
+                                    if (!event.incidentId) {
+                                      alert('DB에 저장된 사건만 상세정보를 볼 수 있습니다.');
+                                      return;
+                                    }
+                                    setSelectedEvent(event);
+                                  }}
                                   className="bg-white shadow-sm hover:shadow-lg hover:border-blue-200 transition-all duration-300 ease-out cursor-pointer overflow-hidden flex group"
                                   style={{ borderRadius: '0px', border: '1px solid #e5e7eb' }}
                                 >
@@ -1836,17 +1804,17 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
 
       </div>
 
-      {/* Event Detail Modal - Using IncidentDetailModal */}
-      {selectedEvent && (
+      {/* Event Detail Modal - ✅ Dashboard Detail 단일 소스(IncidentDetailDto) */}
+      {selectedEvent && selectedEventDetail && (
         <IncidentDetailModal
           type={selectedEvent.type}
-          detail={convertEventToIncidentDetail(selectedEvent)}
+          detail={selectedEventDetail}
           isEditing={isEditingEvent}
           editedDetail={editedEventDetail}
           onClose={handleEventAcknowledge}
           onEditClick={() => {
             setIsEditingEvent(true);
-            setEditedEventDetail(convertEventToIncidentDetail(selectedEvent));
+            setEditedEventDetail({ ...selectedEventDetail });
           }}
           onSave={() => {
             setIsEditingEvent(false);
@@ -1895,6 +1863,10 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                       <div
                         key={event.id}
                         onClick={() => {
+                          if (!event.incidentId) {
+                            alert('DB에 저장된 사건만 상세정보를 볼 수 있습니다.');
+                            return;
+                          }
                           setSelectedEvent(event);
                           setShowEvents(false);
                         }}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Home, LayoutDashboard, Camera, UserX, TrendingUp, Clock, Trash2, Users, ChevronDown, ChevronUp, ChevronRight, HeartPulse, FileText, AlertTriangle, Flame, Mountain } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
@@ -54,7 +54,8 @@ const routeMap: Record<string, string> = {
 // Reverse mapping from routes to old screen names
 const reverseRouteMap: Record<string, string> = {
   '/map': 'main-map',
-  '/dashboard': 'dashboard',
+  // NOTE: /dashboard 라우트는 실질적으로 통계(Statistics) 화면을 렌더링하므로 활성 표시도 통계에 매핑
+  '/dashboard': 'statistics',
   '/statistics': 'statistics',
   '/all-incidents': 'all-incidents',
   '/emergency': 'emergency-dashboard',
@@ -73,10 +74,15 @@ const reverseRouteMap: Record<string, string> = {
 export default function Sidebar({ onNavigate, currentPath, onClose }: SidebarProps) {
   const navigate = useNavigate();
   const location = useLocation();
-  const { emergencyCount, fireCount, trashCount } = useIncidentCount();
+  const { emergencyCount, fireCount, trashCount, rockfallCount } = useIncidentCount();
   
   // Use currentPath prop if provided, otherwise derive from location
-  const activePath = currentPath || reverseRouteMap[location.pathname] || '';
+  // + Normalize legacy values (ex: 'dashboard' -> 'statistics') so active highlight never breaks.
+  const activePath = useMemo(() => {
+    const raw = currentPath || reverseRouteMap[location.pathname] || '';
+    if (raw === 'dashboard') return 'statistics';
+    return raw;
+  }, [currentPath, location.pathname]);
   const [statsExpanded, setStatsExpanded] = useState(true);
   const [overviewExpanded, setOverviewExpanded] = useState(true);
 
@@ -103,7 +109,7 @@ export default function Sidebar({ onNavigate, currentPath, onClose }: SidebarPro
         { path: 'emergency-dashboard', label: '응급', badge: emergencyCount, badgeColor: '#99332E' },
         { path: 'fire-dashboard', label: '화재', badge: fireCount, badgeColor: '#FF5A5A' },
         { path: 'trash-dashboard', label: '쓰레기', badge: trashCount, badgeColor: '#576F93' },
-        { path: 'rockfall-dashboard', label: '낙석', badge: 0, badgeColor: '#8E8665' },
+        { path: 'rockfall-dashboard', label: '낙석', badge: rockfallCount, badgeColor: '#8E8665' },
       ],
     },
     { path: 'cctv-management', label: 'CCTV 관리', icon: Camera, subItems: [] },
@@ -122,6 +128,14 @@ export default function Sidebar({ onNavigate, currentPath, onClose }: SidebarPro
     { path: 'report', label: '월간 보고서', icon: FileText, subItems: [] },
     { path: 'settings', label: '알림 수신 직원', icon: Users, subItems: [] },
   ];
+
+  // ✅ 서브메뉴 경로로 진입한 경우 부모 메뉴가 접혀있으면 자동으로 펼쳐서 "활성 표시"가 보이게 함
+  useEffect(() => {
+    const overviewChildActive = menuItems
+      .find(i => i.path === 'all-incidents')
+      ?.subItems?.some(s => s.path === activePath);
+    if (overviewChildActive) setOverviewExpanded(true);
+  }, [activePath]);
 
   return (
     <div className="flex flex-col h-full" style={{ backgroundColor: '#2B2847' }}>
@@ -144,6 +158,8 @@ export default function Sidebar({ onNavigate, currentPath, onClose }: SidebarPro
             : item.label === '전체 현황'
             ? () => setOverviewExpanded(!overviewExpanded)
             : () => {};
+          const isChildActive = item.subItems?.some((s: any) => s.path === activePath) || false;
+          const isItemActive = activePath === item.path || isChildActive;
 
           return (
             <div key={index}>
@@ -172,11 +188,11 @@ export default function Sidebar({ onNavigate, currentPath, onClose }: SidebarPro
                         }
                       }}
                       className={`flex-1 flex items-center gap-3 px-6 py-3 transition-colors ${
-                        activePath === item.path
+                        isItemActive
                           ? 'text-white'
                           : 'text-slate-300 hover:bg-slate-800'
                       }`}
-                      style={activePath === item.path ? { backgroundColor: 'rgba(255,255,255,0.1)' } : {}}
+                      style={isItemActive ? { backgroundColor: 'rgba(255,255,255,0.1)' } : {}}
                     >
                       {item.icon && <item.icon className="w-5 h-5" />}
                       <span className="flex-1 text-left">{item.label}</span>

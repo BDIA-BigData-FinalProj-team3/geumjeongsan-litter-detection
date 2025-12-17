@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.util.Comparator;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -36,6 +37,8 @@ public class IncidentService {
     private final EmergencyDetailRepository emergencyDetailRepository;
     private final IncidentActionRepository incidentActionRepository;
     private final IncidentFalseReportRepository incidentFalseReportRepository;
+    private final IncidentResponseRepository incidentResponseRepository;
+    private final com.example.geumjeongsan.domain.staff.StaffUserRepository staffUserRepository;
     private final CCTVRepository cctvRepository;
     private final MapCCTVRepository mapCCTVRepository;
     private final MediaFileRepository mediaFileRepository;
@@ -71,22 +74,94 @@ public class IncidentService {
                          EmergencyDetailRepository emergencyDetailRepository,
                          IncidentActionRepository incidentActionRepository,
                          IncidentFalseReportRepository incidentFalseReportRepository,
+                         IncidentResponseRepository incidentResponseRepository,
                          CCTVRepository cctvRepository,
                          MapCCTVRepository mapCCTVRepository,
                          MediaFileRepository mediaFileRepository,
                          IncidentListViewRepository incidentListViewRepository,
                          EntityManager entityManager,
-                         ObjectMapper objectMapper) {
+                         ObjectMapper objectMapper,
+                         com.example.geumjeongsan.domain.staff.StaffUserRepository staffUserRepository) {
         this.incidentRepository = incidentRepository;
         this.emergencyDetailRepository = emergencyDetailRepository;
         this.incidentActionRepository = incidentActionRepository;
         this.incidentFalseReportRepository = incidentFalseReportRepository;
+        this.incidentResponseRepository = incidentResponseRepository;
         this.cctvRepository = cctvRepository;
         this.mapCCTVRepository = mapCCTVRepository;
         this.mediaFileRepository = mediaFileRepository;
         this.incidentListViewRepository = incidentListViewRepository;
         this.entityManager = entityManager;
         this.objectMapper = objectMapper;
+        this.staffUserRepository = staffUserRepository;
+    }
+
+    /**
+     * 처리카드(incident_response) upsert + 담당자 배정(STAFF만)
+     */
+    @Transactional
+    public IncidentResponse upsertIncidentResponse(Long incidentId, Long assignedToId, OffsetDateTime now) {
+        IncidentResponse ir = incidentResponseRepository.findByIncidentId(incidentId)
+                .orElseGet(() -> {
+                    IncidentResponse x = new IncidentResponse();
+                    x.setIncidentId(incidentId);
+                    x.setCreatedAt(now);
+                    return x;
+                });
+
+        if (assignedToId != null) {
+            // STAFF 존재 확인(활성)
+            staffUserRepository.findByIdAndIsActiveTrue(assignedToId)
+                    .orElseThrow(() -> new IllegalArgumentException("처리자(STAFF)를 찾을 수 없습니다: " + assignedToId));
+            ir.setAssignedToId(assignedToId);
+        }
+        ir.setUpdatedAt(now);
+        return incidentResponseRepository.save(ir);
+    }
+
+    /**
+     * 공통 Workflow: status 변경 + 담당자 배정 + action(actor) 로그
+     */
+    @Transactional
+    public void updateIncidentWorkflow(Long incidentId, com.example.geumjeongsan.api.dto.IncidentWorkflowUpdateRequest req) {
+        if (req == null) throw new IllegalArgumentException("request is null");
+        if (req.getActorId() == null) throw new IllegalArgumentException("actorId required");
+
+        Incident incident = incidentRepository.findById(incidentId)
+                .orElseThrow(() -> new RuntimeException("사건을 찾을 수 없습니다: " + incidentId));
+
+        String prevStatus = incident.getStatus();
+        String nextStatus = req.getStatus() != null ? req.getStatus() : prevStatus;
+
+        OffsetDateTime now = OffsetDateTime.now();
+
+        // 1) 처리카드 upsert + 담당자 배정
+        IncidentResponse ir = upsertIncidentResponse(incidentId, req.getAssignedToId(), now);
+
+        // 상태 기반 시간(간단 정책)
+        if ("IN_PROGRESS".equals(nextStatus) || "EXTINGUISHING".equals(nextStatus)) {
+            if (ir.getDispatchAt() == null) ir.setDispatchAt(now);
+        }
+        if ("RESOLVED".equals(nextStatus)) {
+            if (ir.getCompletedAt() == null) ir.setCompletedAt(now);
+        }
+        ir.setUpdatedAt(now);
+        incidentResponseRepository.save(ir);
+
+        // 2) incident.status 업데이트
+        incident.setStatus(nextStatus);
+        incident.setUpdatedAt(now);
+        incidentRepository.save(incident);
+
+        // 3) incident_action 로그(actor)
+        IncidentAction action = new IncidentAction();
+        action.setIncidentId(incidentId);
+        action.setActionType("STATUS_CHANGED");
+        action.setPrevStatus(prevStatus);
+        action.setNextStatus(nextStatus);
+        action.setActorId(req.getActorId());
+        action.setCreatedAt(now);
+        incidentActionRepository.save(action);
     }
 
     // 화재 발생(PENDING, IN_PROGRESS) 목록 - 프론트엔드 형식으로 변환
@@ -999,6 +1074,52 @@ public class IncidentService {
                     .build();
         }).collect(Collectors.toList());
     }
+
+    public record IncidentMediaBundle(String clipUrl, List<String> frameUrls) {}
+
+    /**
+     * 사건(incidentId) 기준으로 미디어 URL을 묶어서 반환
+     * - clipUrl: VIDEO 중 최신 1개
+     * - frameUrls: FRAME(및 THUMBNAIL) 전체(시간순)
+     */
+    public IncidentMediaBundle getIncidentMediaBundle(Long incidentId) {
+        if (incidentId == null) {
+            return new IncidentMediaBundle(null, List.of());
+        }
+
+        List<MediaFile> mediaFiles = mediaFileRepository.findByIncidentId(incidentId);
+        if (mediaFiles == null || mediaFiles.isEmpty()) {
+            return new IncidentMediaBundle(null, List.of());
+        }
+
+        Comparator<MediaFile> descTime = Comparator
+                .comparing(MediaFile::getCapturedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(MediaFile::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                .reversed();
+
+        String clipUrl = mediaFiles.stream()
+                .filter(m -> m != null && m.getFileType() != null && m.getUrl() != null)
+                .filter(m -> "VIDEO".equalsIgnoreCase(m.getFileType()))
+                .sorted(descTime)
+                .map(MediaFile::getUrl)
+                .findFirst()
+                .orElse(null);
+
+        Comparator<MediaFile> ascTime = Comparator
+                .comparing(MediaFile::getCapturedAt, Comparator.nullsLast(Comparator.naturalOrder()))
+                .thenComparing(MediaFile::getCreatedAt, Comparator.nullsLast(Comparator.naturalOrder()));
+
+        List<String> frameUrls = mediaFiles.stream()
+                .filter(m -> m != null && m.getFileType() != null && m.getUrl() != null)
+                .filter(m -> "FRAME".equalsIgnoreCase(m.getFileType()) || "THUMBNAIL".equalsIgnoreCase(m.getFileType()))
+                .sorted(ascTime)
+                .map(MediaFile::getUrl)
+                .filter(u -> !u.isBlank())
+                .distinct()
+                .collect(Collectors.toList());
+
+        return new IncidentMediaBundle(clipUrl, frameUrls);
+    }
     
     /**
      * 오탐 처리 공통 메서드
@@ -1007,6 +1128,15 @@ public class IncidentService {
      */
     @Transactional
     public void markAsFalsePositive(Long incidentId, String reason) {
+        // backward-compatible: actorId가 없으면 null로 기록될 수 있음(제약이 있으면 프론트에서 actorId를 보내야 함)
+        markAsFalsePositive(incidentId, null, reason);
+    }
+
+    /**
+     * 오탐 처리 (actorId=현재 접속자). 정책: 오탐 담당자 = 처리자(assigned_to_id = actorId)
+     */
+    @Transactional
+    public void markAsFalsePositive(Long incidentId, Long actorId, String reason) {
         // 1. Incident 조회 및 검증
         Incident incident = incidentRepository.findById(incidentId)
                 .orElseThrow(() -> new RuntimeException("사건을 찾을 수 없습니다: " + incidentId));
@@ -1023,6 +1153,11 @@ public class IncidentService {
                         "[오탐 처리] " + (reason != null ? reason : "사유 없음"));
         incident.setUpdatedAt(OffsetDateTime.now());
         incidentRepository.save(incident);
+
+        // ✅ 처리카드 upsert + 오탐 담당자를 처리자로 지정(STAFF만)
+        if (actorId != null) {
+            upsertIncidentResponse(incidentId, actorId, OffsetDateTime.now());
+        }
         
         // 3. IncidentAction 생성
         IncidentAction action = new IncidentAction();
@@ -1031,6 +1166,7 @@ public class IncidentService {
         action.setPrevStatus(prevStatus);
         action.setNextStatus("RESOLVED");
         action.setResolvedAt(OffsetDateTime.now());
+        action.setActorId(actorId);
         action.setMemo("오탐 처리: " + (reason != null ? reason : "사유 없음"));
         action.setCreatedAt(OffsetDateTime.now());
         // actorId는 추후 인증 시스템 구현 시 설정

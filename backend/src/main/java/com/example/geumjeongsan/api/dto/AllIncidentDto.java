@@ -3,6 +3,8 @@ package com.example.geumjeongsan.api.dto;
 import com.example.geumjeongsan.domain.incident.IncidentListView;
 import lombok.Getter;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 
 /**
@@ -27,6 +29,16 @@ public class AllIncidentDto {
 
     private static final DateTimeFormatter TIME_FORMATTER = 
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
+    private static String formatKst(OffsetDateTime t) {
+        if (t == null) return "";
+        try {
+            return t.atZoneSameInstant(KST).toLocalDateTime().format(TIME_FORMATTER);
+        } catch (Exception e) {
+            return t.toString();
+        }
+    }
 
     public AllIncidentDto(IncidentListView view) {
         this.id = view.getIncidentId();
@@ -39,9 +51,7 @@ public class AllIncidentDto {
         this.cctvId = view.getCctvCode() != null ? view.getCctvCode() : "";
         
         // 시간 포맷
-        this.time = view.getDetectedAt() != null 
-                ? view.getDetectedAt().format(TIME_FORMATTER) 
-                : "";
+        this.time = formatKst(view.getDetectedAt());
         
         // 상태 한글 변환
         this.status = convertStatusToKorean(view.getStatus(), view.getIncidentType());
@@ -66,9 +76,7 @@ public class AllIncidentDto {
         this.detectionConfidence = view.getDetectionConfidence();
         
         // 처리완료 시간
-        this.responseTime = view.getResolvedAt() != null 
-                ? view.getResolvedAt().format(TIME_FORMATTER) 
-                : "";
+        this.responseTime = view.getResolvedAt() != null ? formatKst(view.getResolvedAt()) : "";
         
         // 소요 시간
         this.duration = view.getProcessingMinutes() != null 

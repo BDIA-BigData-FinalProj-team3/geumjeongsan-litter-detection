@@ -8,6 +8,7 @@ import com.example.geumjeongsan.api.dto.TrashCreateRequest;
 import com.example.geumjeongsan.api.dto.TrashUpdateRequest;
 import com.example.geumjeongsan.api.dto.TrashIncidentItem;
 import com.example.geumjeongsan.api.dto.TrashStatsDto;
+import com.example.geumjeongsan.api.dto.IncidentWorkflowUpdateRequest;
 import com.example.geumjeongsan.domain.dashboard.DailyStats;
 import com.example.geumjeongsan.domain.dashboard.DailyStatsRepository;
 import com.example.geumjeongsan.domain.dashboard.AvgResponseTime;
@@ -16,6 +17,7 @@ import com.example.geumjeongsan.domain.incident.IncidentListView;
 import com.example.geumjeongsan.domain.incident.IncidentListViewRepository;
 import com.example.geumjeongsan.domain.incident.TrashService;
 import com.example.geumjeongsan.domain.incident.IncidentService;
+import com.example.geumjeongsan.domain.incident.IncidentManualRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -38,6 +40,7 @@ public class TrashController {
     private final IncidentListViewRepository incidentListViewRepository;
     private final TrashService trashService;
     private final IncidentService incidentService;
+    private final IncidentManualRepository incidentManualRepository;
 
     /**
      * 쓰레기 통계
@@ -183,7 +186,9 @@ public class TrashController {
             }
         }
         
-        return new IncidentDetailDto(view, latitude, longitude);
+        var media = incidentService.getIncidentMediaBundle(id);
+        var manual = incidentManualRepository.findByIncidentId(id).orElse(null);
+        return new IncidentDetailDto(view, latitude, longitude, media.clipUrl(), media.frameUrls(), manual);
     }
     
     /**
@@ -227,13 +232,19 @@ public class TrashController {
                     request.get("memo"),
                     request.get("severity"),
                     request.get("trashType"),
-                    request.get("amount")
+                    request.get("amount"),
+                    parseActorId(request.get("actorId"))
             );
             return Map.of("message", "수정 완료");
         } catch (RuntimeException e) {
             log.error("❌ [Trash] Failed to update detail: {}", e.getMessage());
             throw e;
         }
+    }
+
+    private static Long parseActorId(String actorIdStr) {
+        if (actorIdStr == null || actorIdStr.isBlank()) return null;
+        try { return Long.parseLong(actorIdStr); } catch (Exception e) { return null; }
     }
     
     /**
@@ -247,12 +258,27 @@ public class TrashController {
         try {
             log.info("🚫 [Trash] Marking as false positive - id: {}", id);
             String reason = request.get("reason");
-            incidentService.markAsFalsePositive(id, reason);
+            Long actorId = null;
+            try {
+                String actorIdStr = request.get("actorId");
+                if (actorIdStr != null && !actorIdStr.isBlank()) actorId = Long.parseLong(actorIdStr);
+            } catch (Exception ignore) {}
+            incidentService.markAsFalsePositive(id, actorId, reason);
             return Map.of("message", "오탐 처리 완료");
         } catch (RuntimeException e) {
             log.error("❌ [Trash] Failed to mark as false positive: {}", e.getMessage());
             throw e;
         }
+    }
+
+    /**
+     * 공통 workflow 업데이트 (상태변경 + 담당자배정 + actor 기록)
+     * PUT /api/trash/{id}/workflow
+     */
+    @PutMapping("/{id}/workflow")
+    public Map<String, Object> updateWorkflow(@PathVariable Long id, @RequestBody IncidentWorkflowUpdateRequest req) {
+        incidentService.updateIncidentWorkflow(id, req);
+        return Map.of("ok", true);
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

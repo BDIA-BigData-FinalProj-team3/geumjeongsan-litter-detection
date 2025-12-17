@@ -76,6 +76,17 @@ export default function Settings({ onNavigate }: SettingsProps) {
   const [rightSelectedIds, setRightSelectedIds] = useState<number[]>([]); // 오른쪽 표 체크박스 선택
   const [selectedIncidentTypes, setSelectedIncidentTypes] = useState<string[]>([]); // 선택된 사건 유형들
   const [recipientTab, setRecipientTab] = useState<'staff' | 'external'>('staff'); // 탭 선택
+
+  // ✅ 알림 구독(incidentType) 코드 유틸: 삭제 시 화면/DB 100% 동기화용
+  const ALL_INCIDENT_TYPES = ['ALL', 'EMERGENCY', 'FIRE', 'TRASH', 'ROCKFALL'] as const;
+  type IncidentTypeCode = (typeof ALL_INCIDENT_TYPES)[number];
+
+  const getTypesToUnsubscribe = (incidentTypes?: string[]): IncidentTypeCode[] => {
+    const valid = (incidentTypes || []).filter((t): t is IncidentTypeCode =>
+      (ALL_INCIDENT_TYPES as readonly string[]).includes(t)
+    );
+    return valid.length > 0 ? valid : [...ALL_INCIDENT_TYPES];
+  };
   
   // 전체 직원 목록 (왼쪽 표용)
   const [allEmployees, setAllEmployees] = useState<NotificationEmployee[]>([]);
@@ -325,28 +336,23 @@ export default function Settings({ onNavigate }: SettingsProps) {
   const handleBatchAdd = async () => {
     const employeesToAdd = filteredEmployees.filter(emp => leftSelectedIds.includes(emp.id));
     const newEmployees = employeesToAdd.filter(emp => !selectedEmployees.some(sel => sel.id === emp.id));
-    const updated = [...selectedEmployees, ...newEmployees];
-    setSelectedEmployees(sortEmployeesByNumber(updated));
-    setLeftSelectedIds([]);
-    
-    // API 호출: 선택된 사건 유형에 대해 구독
+    const incidentTypeMap: Record<string, string> = {
+      '응급': 'EMERGENCY',
+      '화재': 'FIRE',
+      '쓰레기': 'TRASH',
+      '낙석': 'ROCKFALL',
+      '전체': 'ALL',
+    };
+
+    // 선택된 유형이 없으면 경고
+    if (selectedIncidentTypes.length === 0) {
+      alert('사건 유형을 먼저 선택해주세요!');
+      return;
+    }
+
+    setLoading(true);
     try {
-      const incidentTypeMap: { [key: string]: string } = {
-        '응급': 'EMERGENCY',
-        '화재': 'FIRE',
-        '쓰레기': 'TRASH',
-        '낙석': 'ROCKFALL',
-        '전체': 'ALL'
-      };
-      
-      // 선택된 유형이 없으면 경고
-      if (selectedIncidentTypes.length === 0) {
-        alert('사건 유형을 먼저 선택해주세요!');
-        return;
-      }
-      
       console.log(`🔔 [Settings] Adding ${newEmployees.length} employees to ${selectedIncidentTypes.join(', ')}`);
-      
       for (const emp of newEmployees) {
         for (const type of selectedIncidentTypes) {
           const dbType = incidentTypeMap[type];
@@ -354,55 +360,65 @@ export default function Settings({ onNavigate }: SettingsProps) {
           await subscribeStaff(emp.id, dbType);
         }
       }
-      
-      console.log('✅ [Settings] Subscription completed, reloading data...');
-      // 데이터 다시 로드하여 화면 갱신
-      await loadData();
     } catch (error) {
       console.error('❌ [Settings] Failed to subscribe staff:', error);
       alert('직원 추가 중 오류가 발생했습니다.');
+    } finally {
+      // ✅ 항상 DB 기준으로 화면 재동기화
+      await loadData();
+      setLeftSelectedIds([]);
+      setLoading(false);
     }
   };
 
   // 일괄 삭제 (오른쪽 표에서 선택된 직원들 삭제)
   const handleBatchRemove = async () => {
     if (rightSelectedIds.length === 0) return;
-    if (window.confirm(`선택한 ${rightSelectedIds.length}명의 직원을 삭제하시겠습니까?`)) {
-      const employeesToRemove = selectedEmployees.filter(emp => rightSelectedIds.includes(emp.id));
-      const updated = selectedEmployees.filter(emp => !rightSelectedIds.includes(emp.id));
-      setSelectedEmployees(sortEmployeesByNumber(updated));
+    if (!window.confirm(`선택한 ${rightSelectedIds.length}명의 직원을 삭제하시겠습니까?`)) return;
+
+    const employeesToRemove = selectedEmployees.filter(emp => rightSelectedIds.includes(emp.id));
+
+    setLoading(true);
+    try {
+      for (const emp of employeesToRemove) {
+        const types = getTypesToUnsubscribe(emp.incidentTypes);
+        for (const t of types) {
+          await unsubscribeStaff(emp.id, t);
+        }
+      }
+    } catch (error) {
+      console.error('❌ [Settings] Failed to unsubscribe staff:', error);
+      alert('직원 삭제(구독 해제) 중 오류가 발생했습니다.');
+    } finally {
+      // ✅ 항상 DB 기준으로 화면 재동기화
+      await loadData();
       setRightSelectedIds([]);
       setSelectedEmployeeId(null);
-      
-      // API 호출: 모든 사건 유형에 대해 구독 해제
-      try {
-        const incidentTypeMap: { [key: string]: string } = {
-          '전체': 'ALL',
-          '응급': 'EMERGENCY',
-          '화재': 'FIRE',
-          '쓰레기': 'TRASH',
-          '낙석': 'ROCKFALL'
-        };
-        
-        for (const emp of employeesToRemove) {
-          for (const type of ['전체', '응급', '화재', '쓰레기', '낙석']) {
-            const dbType = incidentTypeMap[type];
-            await unsubscribeStaff(emp.id, dbType);
-          }
-        }
-      } catch (error) {
-        console.error('Failed to unsubscribe staff:', error);
-      }
+      setLoading(false);
     }
   };
 
   // 선택된 직원 삭제 (오른쪽 표에서)
-  const handleRemoveSelectedEmployee = (id: number) => {
-    if (window.confirm('정말 삭제하시겠습니까?')) {
-      const updated = selectedEmployees.filter(emp => emp.id !== id);
-      setSelectedEmployees(sortEmployeesByNumber(updated));
+  const handleRemoveSelectedEmployee = async (id: number) => {
+    if (!window.confirm('정말 삭제하시겠습니까?')) return;
+
+    const target = selectedEmployees.find(emp => emp.id === id);
+    if (!target) return;
+
+    setLoading(true);
+    try {
+      const types = getTypesToUnsubscribe(target.incidentTypes);
+      for (const t of types) {
+        await unsubscribeStaff(target.id, t);
+      }
+    } catch (error) {
+      console.error('❌ [Settings] Failed to unsubscribe staff (single):', error);
+      alert('삭제 중 오류가 발생했습니다.');
+    } finally {
+      await loadData();
       setSelectedEmployeeId(null);
-      setRightSelectedIds(rightSelectedIds.filter(selectedId => selectedId !== id));
+      setRightSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
+      setLoading(false);
     }
   };
 
@@ -530,28 +546,22 @@ export default function Settings({ onNavigate }: SettingsProps) {
   const handleBatchAddContact = async () => {
     const contactsToAdd = filteredContacts.filter(c => leftContactSelectedIds.includes(c.id));
     const newContacts = contactsToAdd.filter(c => !selectedContacts.some(sel => sel.id === c.id));
-    const updated = [...selectedContacts, ...newContacts];
-    setSelectedContacts(sortContactsByName(updated));
-    setLeftContactSelectedIds([]);
-    
-    // API 호출: 선택된 사건 유형에 대해 구독
+    const incidentTypeMap: Record<string, string> = {
+      '응급': 'EMERGENCY',
+      '화재': 'FIRE',
+      '쓰레기': 'TRASH',
+      '낙석': 'ROCKFALL',
+      '전체': 'ALL',
+    };
+
+    if (selectedIncidentTypes.length === 0) {
+      alert('사건 유형을 먼저 선택해주세요!');
+      return;
+    }
+
+    setLoading(true);
     try {
-      const incidentTypeMap: { [key: string]: string } = {
-        '응급': 'EMERGENCY',
-        '화재': 'FIRE',
-        '쓰레기': 'TRASH',
-        '낙석': 'ROCKFALL',
-        '전체': 'ALL'
-      };
-      
-      // 선택된 유형이 없으면 경고
-      if (selectedIncidentTypes.length === 0) {
-        alert('사건 유형을 먼저 선택해주세요!');
-        return;
-      }
-      
       console.log(`🔔 [Settings] Adding ${newContacts.length} contacts to ${selectedIncidentTypes.join(', ')}`);
-      
       for (const contact of newContacts) {
         for (const type of selectedIncidentTypes) {
           const dbType = incidentTypeMap[type];
@@ -559,44 +569,38 @@ export default function Settings({ onNavigate }: SettingsProps) {
           await subscribeContact(contact.id, dbType);
         }
       }
-      
-      console.log('✅ [Settings] Contact subscription completed, reloading data...');
-      // 데이터 다시 로드하여 화면 갱신
-      await loadData();
     } catch (error) {
       console.error('❌ [Settings] Failed to subscribe contact:', error);
       alert('외부 연락처 추가 중 오류가 발생했습니다.');
+    } finally {
+      await loadData();
+      setLeftContactSelectedIds([]);
+      setLoading(false);
     }
   };
 
   // 외부 연락처 일괄 삭제
   const handleBatchRemoveContact = async () => {
     if (rightContactSelectedIds.length === 0) return;
-    if (window.confirm(`선택한 ${rightContactSelectedIds.length}개의 연락처를 삭제하시겠습니까?`)) {
-      const contactsToRemove = selectedContacts.filter(c => rightContactSelectedIds.includes(c.id));
-      const updated = selectedContacts.filter(c => !rightContactSelectedIds.includes(c.id));
-      setSelectedContacts(sortContactsByName(updated));
-      setRightContactSelectedIds([]);
-      
-      // API 호출: 모든 사건 유형에 대해 구독 해제
-      try {
-        const incidentTypeMap: { [key: string]: string } = {
-          '전체': 'ALL',
-          '응급': 'EMERGENCY',
-          '화재': 'FIRE',
-          '쓰레기': 'TRASH',
-          '낙석': 'ROCKFALL'
-        };
-        
-        for (const contact of contactsToRemove) {
-          for (const type of ['전체', '응급', '화재', '쓰레기', '낙석']) {
-            const dbType = incidentTypeMap[type];
-            await unsubscribeContact(contact.id, dbType);
-          }
+    if (!window.confirm(`선택한 ${rightContactSelectedIds.length}개의 연락처를 삭제하시겠습니까?`)) return;
+
+    const contactsToRemove = selectedContacts.filter(c => rightContactSelectedIds.includes(c.id));
+
+    setLoading(true);
+    try {
+      for (const contact of contactsToRemove) {
+        const types = getTypesToUnsubscribe(contact.incidentTypes);
+        for (const t of types) {
+          await unsubscribeContact(contact.id, t);
         }
-      } catch (error) {
-        console.error('Failed to unsubscribe contact:', error);
       }
+    } catch (error) {
+      console.error('❌ [Settings] Failed to unsubscribe contact:', error);
+      alert('외부 연락처 삭제(구독 해제) 중 오류가 발생했습니다.');
+    } finally {
+      await loadData();
+      setRightContactSelectedIds([]);
+      setLoading(false);
     }
   };
 

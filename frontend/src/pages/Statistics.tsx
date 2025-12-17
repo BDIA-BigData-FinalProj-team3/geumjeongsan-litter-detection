@@ -6,6 +6,7 @@ import { getDailyStats, getAllMonthlyData, getAvgResponseTime, getCCTVSummary, g
 import { cctvSummary } from '../services/common';
 import DateRangePicker, { DateRangeState, formatDateRange } from '../components/DateRangePicker';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
+import { formatKstDate, nowKstDate } from '../utils/time';
 
 interface DashboardProps {
   onNavigate: (screen: string) => void;
@@ -101,11 +102,11 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       // 월의 첫날과 마지막날 계산
       const startDate = new Date(dateRange.monthStartYear, dateRange.monthStartMonth - 1, 1);
       const endDate = new Date(dateRange.monthEndYear, dateRange.monthEndMonth, 0); // 다음 달 0일 = 이번 달 마지막날
-      from = startDate.toISOString().slice(0, 10);
-      to = endDate.toISOString().slice(0, 10);
+      from = formatKstDate(startDate);
+      to = formatKstDate(endDate);
     } else { // DAY
-      from = dateRange.dayStart.toISOString().slice(0, 10);
-      to = dateRange.dayEnd.toISOString().slice(0, 10);
+      from = formatKstDate(dateRange.dayStart);
+      to = formatKstDate(dateRange.dayEnd);
     }
 
     return { unit, from, to };
@@ -165,7 +166,8 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             // typeSummary에서 해당 기간의 데이터 찾기
             const periodTypeSummary = statsData.typeSummary.filter(ts => {
               const tsDate = new Date(point.period);
-              return tsDate.toISOString().slice(0, 10) === point.period;
+              // point.period는 "YYYY-MM-DD" 형태이므로 KST 기준으로 맞춰 비교
+              return formatKstDate(tsDate) === point.period;
             });
             
             // 유형별 합계 계산
@@ -300,7 +302,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
     (async () => {
       try {
         const today = new Date();
-        const todayStr = today.toISOString().slice(0, 10); // 'YYYY-MM-DD'
+        const todayStr = nowKstDate(); // 'YYYY-MM-DD' (KST)
 
         let fireAuto = 0;
         let emergencyAuto = 0;
@@ -556,6 +558,27 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
     return { pie: 380, line: Math.min(620, 420 + points * 8), easing: enterEasing }; // YEAR
   }, [dateRange.unit, monthlyTrend?.length, monthlyTrendModel?.length]);
 
+  // ✅ AI 모델 정확도 "선 그래프"용(기간 내 전체 유형 합산 추이)
+  const modelAccuracyTrend = useMemo(() => {
+    if (!modelAccuracy || modelAccuracy.length === 0) return [];
+    const byPeriod = new Map<string, { total: number; correct: number; false: number }>();
+    for (const p of modelAccuracy) {
+      const key = p.period;
+      const prev = byPeriod.get(key) || { total: 0, correct: 0, false: 0 };
+      prev.total += p.totalAutoIncidents || 0;
+      prev.correct += p.trueIncidents || 0;
+      prev.false += p.falseIncidents || 0;
+      byPeriod.set(key, prev);
+    }
+    return Array.from(byPeriod.entries())
+      .map(([period, v]) => ({
+        period,
+        accuracyPct: v.total > 0 ? (v.correct / v.total) * 100 : 0,
+        falseRatePct: v.total > 0 ? (v.false / v.total) * 100 : 0,
+      }))
+      .sort((a, b) => a.period.localeCompare(b.period));
+  }, [modelAccuracy]);
+
   // 전월/전년 대비 증가율 계산 함수 (선택된 구간 기준)
   const calculateMonthOverMonthChange = (type: '전체' | '쓰레기' | '화재' | '응급' | '낙석', data: any[]) => {
     if (!data || data.length < 2) return { change: 0, isIncrease: false };
@@ -697,7 +720,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
           transform: sidebarOpen ? 'translateX(0)' : 'translateX(-100%)'
         }}
       >
-        <Sidebar onNavigate={onNavigate} currentPath="dashboard" />
+        <Sidebar onNavigate={onNavigate} currentPath="statistics" />
       </div>
       
       {/* 모바일 오버레이 */}
@@ -861,13 +884,13 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             
             <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(12, minmax(0, 1fr))' }}>
               {/* 1. 사고 비율 - 총 | AI 탐지 */}
-              <div className="bg-white p-4 shadow-sm" style={{ borderRadius: '8px', gridColumn: 'span 4 / span 4' }}>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">사고 비율</h3>
-                <div className="flex items-center gap-4">
+              <div className="bg-white p-3 shadow-sm" style={{ borderRadius: '8px', gridColumn: 'span 4 / span 4' }}>
+                <h3 className="text-sm font-semibold text-gray-900 mb-2">사고 비율</h3>
+                <div className="flex items-center gap-3">
                   {/* 왼쪽: 전체 */}
                   <div className="flex-1">
-                    <div className="text-xs text-gray-600 mb-2 text-center">총</div>
-                    <div key={`pie-acc-total-${chartAnimKey}`} className="relative mx-auto" style={{ width: '112px', height: '112px' }}>
+                    <div className="text-xs text-gray-600 mb-1 text-center">총</div>
+                    <div key={`pie-acc-total-${chartAnimKey}`} className="relative mx-auto" style={{ width: '104px', height: '104px' }}>
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                           <Pie
@@ -896,7 +919,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                         </PieChart>
                       </ResponsiveContainer>
                     </div>
-                    <div className="mt-2 space-y-0.5">
+                    <div className="mt-1 space-y-0">
                       {accidentRatio.map((item, index) => (
                         <div key={index} className="flex items-center gap-1.5">
                           <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }}></div>
@@ -907,15 +930,12 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                   </div>
                   
                   {/* 구분선 */}
-                  <div className="flex flex-col items-center justify-center" style={{ minHeight: '200px' }}>
-                    <div className="text-xs text-gray-400 mb-2">|</div>
-                    <div className="w-px flex-1 bg-gray-300"></div>
-                  </div>
+                  <div className="w-px bg-gray-300 self-stretch" style={{ minHeight: '150px' }}></div>
                   
                   {/* 오른쪽: AI 탐지 */}
                   <div className="flex-1">
-                    <div className="text-xs text-emerald-600 mb-2 text-center">AI 탐지</div>
-                    <div key={`pie-acc-ai-${chartAnimKey}`} className="relative mx-auto" style={{ width: '112px', height: '112px' }}>
+                    <div className="text-xs text-emerald-600 mb-1 text-center">AI 탐지</div>
+                    <div key={`pie-acc-ai-${chartAnimKey}`} className="relative mx-auto" style={{ width: '104px', height: '104px' }}>
                       <ResponsiveContainer width="100%" height="100%">
                         <PieChart>
                           <Pie
@@ -944,7 +964,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                         </PieChart>
                       </ResponsiveContainer>
                     </div>
-                    <div className="mt-2 space-y-0.5">
+                    <div className="mt-1 space-y-0">
                       {accidentRatioModel.map((item, index) => (
                         <div key={index} className="flex items-center gap-1.5">
                           <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color }}></div>
@@ -957,18 +977,18 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               </div>
 
               {/* 2. 사고 건수 추이 - 총 | AI 탐지 - 8칸 차지 */}
-              <div className="bg-white p-4 shadow-sm" style={{ borderRadius: '8px', gridColumn: 'span 8 / span 8' }}>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">사고 건수 추이</h3>
-                <div className="flex items-start gap-4">
+              <div className="bg-white p-3 shadow-sm" style={{ borderRadius: '8px', gridColumn: 'span 8 / span 8' }}>
+                <h3 className="text-sm font-semibold text-gray-900 mb-2">사고 건수 추이</h3>
+                <div className="flex items-start gap-3">
                   {/* 왼쪽: 전체 */}
                   <div className="flex-1">
-                    <div className="text-xs text-gray-600 mb-2 text-center">총</div>
+                    <div className="text-xs text-gray-600 mb-1 text-center">총</div>
                     <div onClick={(e: any) => {
                       if (e?.activeLabel) {
                         setSelectedPeriod(e.activeLabel === selectedPeriod ? null : e.activeLabel);
                       }
                     }}>
-                      <ResponsiveContainer key={`trend-total-${chartAnimKey}`} width="100%" height={110}>
+                      <ResponsiveContainer key={`trend-total-${chartAnimKey}`} width="100%" height={96}>
                         {monthlyTrend && monthlyTrend.length > 0 ? (
                           <LineChart data={monthlyTrend} margin={{ top: 5, right: 5, left: -25, bottom: 5 }} onClick={(e: any) => {
                             if (e?.activeLabel) {
@@ -999,8 +1019,8 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                         )}
                       </ResponsiveContainer>
                     </div>
-                    <div className="mt-2 space-y-0.5">
-                      <p className="text-xs text-gray-700 mb-1">
+                    <div className="mt-1 space-y-0">
+                      <p className="text-xs text-gray-700 mb-0.5">
                         {selectedPeriod || (monthlyTrend && monthlyTrend.length > 0 ? monthlyTrend[monthlyTrend.length - 1]?.month : null) || '최근'} 기준
                       </p>
                       <div className="flex items-center gap-1">
@@ -1037,17 +1057,17 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                   </div>
 
                   {/* 구분선 */}
-                  <div className="w-px h-full bg-gray-300" style={{ minHeight: '180px' }}></div>
+                  <div className="w-px bg-gray-300 self-stretch" style={{ minHeight: '140px' }}></div>
 
                   {/* 오른쪽: AI 탐지 */}
                   <div className="flex-1">
-                    <div className="text-xs text-emerald-600 mb-2 text-center">AI 탐지</div>
+                    <div className="text-xs text-emerald-600 mb-1 text-center">AI 탐지</div>
                     <div onClick={(e: any) => {
                       if (e?.activeLabel) {
                         setSelectedPeriod(e.activeLabel === selectedPeriod ? null : e.activeLabel);
                       }
                     }}>
-                      <ResponsiveContainer key={`trend-ai-${chartAnimKey}`} width="100%" height={110}>
+                      <ResponsiveContainer key={`trend-ai-${chartAnimKey}`} width="100%" height={96}>
                         {monthlyTrendModel && monthlyTrendModel.length > 0 ? (
                           <LineChart data={monthlyTrendModel} margin={{ top: 5, right: 5, left: -25, bottom: 5 }} onClick={(e: any) => {
                             if (e?.activeLabel) {
@@ -1077,8 +1097,8 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                         )}
                       </ResponsiveContainer>
                     </div>
-                    <div className="mt-2 space-y-0.5">
-                      <p className="text-xs text-gray-700 mb-1">
+                    <div className="mt-1 space-y-0">
+                      <p className="text-xs text-gray-700 mb-0.5">
                         {selectedPeriod || (monthlyTrendModel && monthlyTrendModel.length > 0 ? monthlyTrendModel[monthlyTrendModel.length - 1]?.month : null) || '최근'} 기준
                       </p>
                       <div className="flex items-center gap-1">
@@ -1111,11 +1131,11 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               </div>
 
               {/* 3. 평균 CCTV 가동률 */}
-              <div className="bg-white p-4 shadow-sm" style={{ borderRadius: '8px', gridColumn: 'span 2 / span 2' }}>
+              <div className="bg-white p-3 shadow-sm" style={{ borderRadius: '8px', gridColumn: 'span 2 / span 2' }}>
                 <div className="flex items-center gap-2 mb-3">
                   <h3 className="text-sm font-semibold text-gray-900">평균 CCTV 가동률</h3>
                 </div>
-                <div className="flex flex-col items-center justify-center gap-2" style={{ height: '140px' }}>
+                <div className="flex flex-col items-center justify-center gap-1.5" style={{ height: '124px' }}>
                   {/* 차트 (shrink 방지) */}
                   <div key={`pie-cctv-${chartAnimKey}`} className="relative flex-shrink-0" style={{ width: '112px', height: '112px' }}>
                     <ResponsiveContainer width="100%" height="100%">
@@ -1158,9 +1178,9 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               </div>
 
               {/* 4. 처리 완료 비율 */}
-              <div className="bg-white p-4 shadow-sm" style={{ borderRadius: '8px', gridColumn: 'span 2 / span 2' }}>
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">처리 완료 비율</h3>
-                <div className="flex flex-col items-center justify-center gap-2" style={{ height: '160px' }}>
+              <div className="bg-white p-3 shadow-sm" style={{ borderRadius: '8px', gridColumn: 'span 2 / span 2' }}>
+                <h3 className="text-sm font-semibold text-gray-900 mb-2">처리 완료 비율</h3>
+                <div className="flex flex-col items-center justify-center gap-1.5" style={{ height: '136px' }}>
                   {/* 차트 (shrink 방지) */}
                   <div key={`pie-completion-${chartAnimKey}`} className="relative flex-shrink-0" style={{ width: '112px', height: '112px' }}>
                     <ResponsiveContainer width="100%" height="100%">
@@ -1207,41 +1227,54 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               </div>
 
               {/* 5. AI 모델 정확도 */}
-              <div className="bg-white p-4 shadow-sm" style={{ borderRadius: '8px', gridColumn: 'span 2 / span 2' }}>
-                <div className="flex items-center gap-2 mb-3">
+              <div className="bg-white p-3 shadow-sm" style={{ borderRadius: '8px', gridColumn: 'span 2 / span 2' }}>
+                <div className="flex items-center gap-2 mb-2">
                   <h3 className="text-sm font-semibold text-gray-900">AI 모델 정확도</h3>
                 </div>
-                <div className="space-y-3">
-                {aiAccuracy.length > 0 ? aiAccuracy.map((item, index) => {
-                  const accuracy = item.detected > 0 ? Math.round((item.correct / item.detected) * 100) : 0;
-                  const falseRate = item.detected > 0 ? Math.round((item.false / item.detected) * 100) : 0;
-                  return (
-                    <div key={index}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-xs text-gray-700">{item.type}</span>
-                        <span className="text-xs font-semibold" style={{ color: item.color || '#4A5568' }}>
-                          정확도 {accuracy}% / 오탐 {falseRate}%
-                        </span>
+                <div className="space-y-2">
+                  {aiAccuracy.length > 0 ? aiAccuracy.map((item, index) => {
+                    const accuracyPct = item.detected > 0 ? Math.round((item.correct / item.detected) * 100) : 0;
+                    const falseRatePct = item.detected > 0 ? Math.round((item.false / item.detected) * 100) : 0;
+                    return (
+                      <div key={index}>
+                        <div className="flex items-center justify-between mb-1">
+                          <div className="flex items-center gap-1.5">
+                            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: item.color || '#4A5568' }}></div>
+                            <span className="text-xs text-gray-800">{item.type}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs">
+                            <span className="text-emerald-700 font-semibold">정확도 {accuracyPct}%</span>
+                            <span className="text-gray-400">/</span>
+                            <span className="text-red-600 font-semibold">오탐 {falseRatePct}%</span>
+                          </div>
+                        </div>
+                        <div className="w-full bg-gray-200 rounded-full h-2 mb-1 overflow-hidden">
+                          <div className="flex h-full">
+                            <div
+                              className="h-full"
+                              style={{ 
+                                width: `${accuracyPct}%`,
+                                backgroundColor: item.color || '#4A5568'
+                              }}
+                            />
+                            <div
+                              className="h-full bg-red-400"
+                              style={{ width: `${falseRatePct}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 text-xs text-gray-700 whitespace-nowrap">
+                          <span>탐지 <span className="font-semibold">{item.detected}</span>건</span>
+                          <span className="text-gray-400">|</span>
+                          <span>정확 <span className="font-semibold">{item.correct}</span>건</span>
+                          <span className="text-gray-400">|</span>
+                          <span>오탐 <span className="font-semibold">{item.false}</span>건</span>
+                        </div>
                       </div>
-                      <div className="w-full bg-gray-200 h-2" style={{ borderRadius: '0px' }}>
-                        <div
-                          className="h-2 transition-all duration-300"
-                          style={{ width: `${accuracy}%`, backgroundColor: item.color || '#4A5568', borderRadius: '0px' }}
-                        ></div>
-                      </div>
-                      <div className="flex items-center justify-between mt-0.5">
-                        <span className="text-xs text-gray-700">탐지: {item.detected}건</span>
-                        <span className="text-xs text-gray-700">정확: {item.correct}건</span>
-                      </div>
-                      <div className="flex items-center justify-between mt-0.5">
-                        <span className="text-xs text-gray-700">오탐: {item.false}건</span>
-                        <span className="text-xs text-gray-700"></span>
-                      </div>
-                    </div>
-                  );
-                }) : (
-                  <div className="text-xs text-gray-500 text-center py-4">데이터가 없습니다</div>
-                )}
+                    );
+                  }) : (
+                    <div className="text-xs text-gray-500 text-center py-3">데이터가 없습니다</div>
+                  )}
                 </div>
               </div>
 

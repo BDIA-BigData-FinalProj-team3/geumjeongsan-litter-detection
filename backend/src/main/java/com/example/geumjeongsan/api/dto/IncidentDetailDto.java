@@ -1,9 +1,14 @@
 package com.example.geumjeongsan.api.dto;
 
 import com.example.geumjeongsan.domain.incident.IncidentListView;
+import com.example.geumjeongsan.domain.incident.IncidentManual;
 import lombok.Getter;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * 사건 상세정보 DTO
@@ -45,6 +50,16 @@ public class IncidentDetailDto {
     private final String severityReason;
     private final String detectedFeatures;
     private final String autoCreatedAt;  // AI 탐지 시간
+
+    // MANUAL 정보 (수동 등록일 때만)
+    private final String manualLocation;
+    private final String manualDescription;
+    private final Long manualCreatedById;
+
+    // ===== 미디어 (S3 저장 결과) =====
+    // IncidentDetailModal에서 그대로 사용
+    private final String clipUrl;        // VIDEO 1개(최신)
+    private final List<String> frameUrls; // FRAME(overlay) 여러 개
     
     // 응급 상세 (EMERGENCY 타입일 때만)
     private final String patientName;
@@ -68,6 +83,16 @@ public class IncidentDetailDto {
     
     private static final DateTimeFormatter TIME_FORMATTER = 
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+
+    private static String formatKst(OffsetDateTime t) {
+        if (t == null) return null;
+        try {
+            return t.atZoneSameInstant(KST).toLocalDateTime().format(TIME_FORMATTER);
+        } catch (Exception e) {
+            return t.toString();
+        }
+    }
 
     // 기본 생성자 (CCTV 좌표 없이)
     public IncidentDetailDto(IncidentListView view) {
@@ -76,6 +101,16 @@ public class IncidentDetailDto {
     
     // CCTV 좌표 포함 생성자
     public IncidentDetailDto(IncidentListView view, Double latitude, Double longitude) {
+        this(view, latitude, longitude, null, Collections.emptyList());
+    }
+
+    // CCTV 좌표 + 미디어 포함 생성자
+    public IncidentDetailDto(IncidentListView view, Double latitude, Double longitude, String clipUrl, List<String> frameUrls) {
+        this(view, latitude, longitude, clipUrl, frameUrls, null);
+    }
+
+    // CCTV 좌표 + 미디어 + 수동등록(incident_manual) 포함 생성자
+    public IncidentDetailDto(IncidentListView view, Double latitude, Double longitude, String clipUrl, List<String> frameUrls, IncidentManual manual) {
         this.id = view.getIncidentId();
         this.accidentCode = view.getIncidentCode();
         
@@ -98,9 +133,7 @@ public class IncidentDetailDto {
         this.locationDesc = view.getLocationDesc();
         
         // 시간 포맷
-        this.time = view.getDetectedAt() != null 
-                ? view.getDetectedAt().format(TIME_FORMATTER) 
-                : "";
+        this.time = view.getDetectedAt() != null ? formatKst(view.getDetectedAt()) : "";
         
         // 상태 한글 변환
         this.status = convertStatusToKorean(view.getStatus(), view.getIncidentType());
@@ -115,17 +148,23 @@ public class IncidentDetailDto {
         // 탐지 근거
         boolean isAuto = "AUTO".equals(view.getSourceType());
         this.isAIDetection = isAuto;
-        this.detectionBasis = isAuto
-                ? "AI 자동 탐지" + (view.getConfidenceReason() != null ? ": " + view.getConfidenceReason() : "")
-                : "수동 등록";
+        // ✅ 중복 방지: detectionBasis에는 방식만 표시하고, 근거는 confidenceReason에서만 표시한다.
+        this.detectionBasis = isAuto ? "AI 자동 탐지" : "수동 등록";
         
         // 메모
-        this.note = view.getMemo();
+        // ✅ 과거 데이터 호환: memo가 AI JSON 원문(= 화면에 노출되면 깨짐)인 경우 숨김 처리
+        String memo = view.getMemo();
+        if (memo != null) {
+            String t = memo.trim();
+            // 매우 단순한 휴리스틱: JSON object이고 analysis_result 같은 키를 포함하면 "원문"으로 판단
+            if (t.startsWith("{") && (t.contains("\"analysis_result\"") || t.contains("\"analysisResult\""))) {
+                memo = null;
+            }
+        }
+        this.note = memo;
         
         // 처리완료 시간
-        this.responseTime = view.getResolvedAt() != null 
-                ? view.getResolvedAt().format(TIME_FORMATTER) 
-                : null;
+        this.responseTime = view.getResolvedAt() != null ? formatKst(view.getResolvedAt()) : null;
         
         // 소요 시간
         this.duration = view.getProcessingMinutes() != null 
@@ -142,8 +181,16 @@ public class IncidentDetailDto {
         this.severityReason = view.getSeverityReason();
         this.detectedFeatures = view.getDetectedFeatures();
         this.autoCreatedAt = view.getAutoCreatedAt() != null
-                ? view.getAutoCreatedAt().format(TIME_FORMATTER)
+                ? formatKst(view.getAutoCreatedAt())
                 : null;
+
+        // MANUAL 정보 (incident_manual)
+        this.manualLocation = manual != null ? manual.getManualLocation() : null;
+        this.manualDescription = manual != null ? manual.getManualDescription() : null;
+        this.manualCreatedById = manual != null ? manual.getCreatedById() : null;
+
+        this.clipUrl = clipUrl;
+        this.frameUrls = frameUrls != null ? frameUrls : Collections.emptyList();
         
         // 응급 상세
         this.patientName = view.getEmergencyPatientName();

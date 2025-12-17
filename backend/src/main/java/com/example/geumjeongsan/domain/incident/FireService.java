@@ -11,7 +11,6 @@ import com.example.geumjeongsan.domain.cctv.CCTV;
 import com.example.geumjeongsan.domain.cctv.CCTVRepository;
 import com.example.geumjeongsan.domain.weather.Weather;
 import com.example.geumjeongsan.service.RealtimeSseService;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import lombok.extern.slf4j.Slf4j;
@@ -45,7 +44,6 @@ public class FireService {
     private final IncidentAutoRepository incidentAutoRepository;
     private final RealtimeSseService realtimeSseService;
     private final EntityManager entityManager;
-    private final ObjectMapper objectMapper;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
 
@@ -62,7 +60,7 @@ public class FireService {
                       IncidentAutoRepository incidentAutoRepository,
                       RealtimeSseService realtimeSseService,
                       EntityManager entityManager,
-                      ObjectMapper objectMapper) {
+                      com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
         this.incidentRepository = incidentRepository;
         this.fireDetailRepository = fireDetailRepository;
         this.incidentSummaryRepository = incidentSummaryRepository;
@@ -73,7 +71,6 @@ public class FireService {
         this.incidentAutoRepository = incidentAutoRepository;
         this.realtimeSseService = realtimeSseService;
         this.entityManager = entityManager;
-        this.objectMapper = objectMapper;
     }
 
     private String resolveCctvCode(Long cctvId) {
@@ -132,7 +129,8 @@ public class FireService {
             Map<String, Object> aiJson,
             Long cctvId,
             String locationDesc,
-            Weather weather
+            Weather weather,
+            OffsetDateTime detectedAtKst
     ) throws Exception {
 
         @SuppressWarnings("unchecked")
@@ -147,6 +145,8 @@ public class FireService {
         }
 
         OffsetDateTime now = OffsetDateTime.now(KST);
+        // detectedAt은 반드시 KST로 저장 (요청에서 오면 그 값을 우선)
+        OffsetDateTime detectedAt = detectedAtKst != null ? detectedAtKst : now;
 
         // 1) Incident 생성
         Incident incident = new Incident();
@@ -154,7 +154,7 @@ public class FireService {
         incident.setSourceType("AUTO");
         incident.setStatus("PENDING");
         incident.setCctvId(cctvId);
-        incident.setDetectedAt(now);
+        incident.setDetectedAt(detectedAt);
         incident.setLocationDesc(locationDesc != null ? locationDesc : "CCTV 자동 탐지(화재)");
         incident.setCreatedAt(now);
         incident.setUpdatedAt(now);
@@ -162,8 +162,22 @@ public class FireService {
         String riskLevel = ar.get("risk_level") != null ? ar.get("risk_level").toString() : null;
         incident.setSeverityLevel(normalizeSeverityFromRiskLevel(riskLevel));
 
-        // JSON 원문 저장
-        incident.setMemo(objectMapper.writeValueAsString(aiJson));
+        // ✅ incident.memo는 "사람이 읽는 메모"로만 사용한다.
+        // 과거에는 AI JSON 원문을 그대로 넣어 UI에서 깨져 보이는 문제가 있었음.
+        // AUTO(화재)에서는 FireDetail.note와 같은 요약을 incident.memo에도 저장해
+        // 상세 화면/리포트에서 일관되게 표시되도록 한다.
+        String message = ar.get("message") != null ? ar.get("message").toString() : null;
+        String confidenceReason = ar.get("detection_confidence_reason") != null ? ar.get("detection_confidence_reason").toString() : null;
+        String smokeRegion = ar.get("smoke_region") != null ? ar.get("smoke_region").toString() : null;
+        String features = joinFeatures(ar.get("detected_features"));
+
+        StringBuilder memoBuilder = new StringBuilder();
+        if (message != null && !message.isBlank()) memoBuilder.append(message);
+        if (confidenceReason != null && !confidenceReason.isBlank()) memoBuilder.append(memoBuilder.length() > 0 ? "\n" : "").append("근거: ").append(confidenceReason);
+        if (smokeRegion != null && !smokeRegion.isBlank()) memoBuilder.append(memoBuilder.length() > 0 ? "\n" : "").append("연기영역: ").append(smokeRegion);
+        if (features != null && !features.isBlank()) memoBuilder.append(memoBuilder.length() > 0 ? "\n" : "").append("특징: ").append(features);
+        String memo = memoBuilder.length() > 0 ? memoBuilder.toString() : null;
+        incident.setMemo(memo);
 
         // incident_code: F-YYMMDD-XXXA
         String dateStr = incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd"));
@@ -194,17 +208,8 @@ public class FireService {
         detail.setSpreadDirection(ar.get("spread_direction") != null ? ar.get("spread_direction").toString() : null);
         detail.setSpreadRisk(ar.get("spread_risk_level") != null ? ar.get("spread_risk_level").toString() : null);
 
-        String message = ar.get("message") != null ? ar.get("message").toString() : null;
-        String confidenceReason = ar.get("detection_confidence_reason") != null ? ar.get("detection_confidence_reason").toString() : null;
-        String smokeRegion = ar.get("smoke_region") != null ? ar.get("smoke_region").toString() : null;
-        String features = joinFeatures(ar.get("detected_features"));
-
-        StringBuilder note = new StringBuilder();
-        if (message != null && !message.isBlank()) note.append(message);
-        if (confidenceReason != null && !confidenceReason.isBlank()) note.append(note.length() > 0 ? "\n" : "").append("근거: ").append(confidenceReason);
-        if (smokeRegion != null && !smokeRegion.isBlank()) note.append(note.length() > 0 ? "\n" : "").append("연기영역: ").append(smokeRegion);
-        if (features != null && !features.isBlank()) note.append(note.length() > 0 ? "\n" : "").append("특징: ").append(features);
-        detail.setNote(note.length() > 0 ? note.toString() : null);
+        // FireDetail.note도 incident.memo와 동일한 "사람용 요약"을 사용
+        detail.setNote(memo);
         detail.setNearbyRisks(features);
 
         // 날씨 -> windSpeed/windInfo 세팅(best-effort)
@@ -573,7 +578,7 @@ public class FireService {
      * 화재 사건 상세정보 업데이트 (수동 등록 전용)
      */
     @Transactional
-    public void updateFireDetail(Long id, String memo, String severityLevel) {
+    public void updateFireDetail(Long id, String memo, String severityLevel, Long actorId) {
         Incident incident = incidentRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("화재 사건을 찾을 수 없습니다: " + id));
         
@@ -620,7 +625,7 @@ public class FireService {
             action.setNextStatus(incident.getStatus());  // 상태는 변경되지 않음
             action.setMemo("상세 정보 수정: " + changedFieldsStr);
             action.setCreatedAt(OffsetDateTime.now());
-            // actorId는 추후 인증 시스템 구현 시 설정
+            action.setActorId(actorId);
             incidentActionRepository.save(action);
         }
     }

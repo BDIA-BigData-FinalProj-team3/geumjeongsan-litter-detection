@@ -8,6 +8,7 @@ import com.example.geumjeongsan.api.dto.FireIncidentItem;
 import com.example.geumjeongsan.api.dto.IncidentCreateResponse;
 import com.example.geumjeongsan.api.dto.SimpleHotspotDto;
 import com.example.geumjeongsan.api.dto.FireStatsDto;
+import com.example.geumjeongsan.api.dto.IncidentWorkflowUpdateRequest;
 import com.example.geumjeongsan.domain.dashboard.DailyStats;
 import com.example.geumjeongsan.domain.dashboard.DailyStatsRepository;
 import com.example.geumjeongsan.domain.dashboard.AvgResponseTime;
@@ -15,6 +16,7 @@ import com.example.geumjeongsan.domain.dashboard.AvgResponseTimeRepository;
 import com.example.geumjeongsan.domain.incident.FireService;
 import com.example.geumjeongsan.domain.incident.IncidentListView;
 import com.example.geumjeongsan.domain.incident.IncidentListViewRepository;
+import com.example.geumjeongsan.domain.incident.IncidentManualRepository;
 import com.example.geumjeongsan.domain.incident.IncidentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,6 +40,7 @@ public class FireController {
     private final IncidentListViewRepository incidentListViewRepository;
     private final FireService fireService;
     private final IncidentService incidentService;
+    private final IncidentManualRepository incidentManualRepository;
 
     /**
      * 화재 통계
@@ -183,7 +186,9 @@ public class FireController {
             }
         }
         
-        return new IncidentDetailDto(view, latitude, longitude);
+        var media = incidentService.getIncidentMediaBundle(id);
+        var manual = incidentManualRepository.findByIncidentId(id).orElse(null);
+        return new IncidentDetailDto(view, latitude, longitude, media.clipUrl(), media.frameUrls(), manual);
     }
     
     /**
@@ -230,6 +235,16 @@ public class FireController {
         log.info("✏️ [Fire] Updating fire incident - id: {}", id);
         return fireService.updateFire(id, request);
     }
+
+    /**
+     * 공통 workflow 업데이트 (상태변경 + 담당자배정 + actor 기록)
+     * PUT /api/fire/{id}/workflow
+     */
+    @PutMapping("/{id}/workflow")
+    public Map<String, Object> updateWorkflow(@PathVariable Long id, @RequestBody IncidentWorkflowUpdateRequest req) {
+        incidentService.updateIncidentWorkflow(id, req);
+        return Map.of("ok", true);
+    }
     
     /**
      * 화재 사건 상세정보 업데이트 (수동 등록)
@@ -245,13 +260,19 @@ public class FireController {
             fireService.updateFireDetail(
                     id,
                     request.get("memo"),
-                    request.get("severity")
+                    request.get("severity"),
+                    parseActorId(request.get("actorId"))
             );
             return Map.of("message", "수정 완료");
         } catch (RuntimeException e) {
             log.error("❌ [Fire] Failed to update detail: {}", e.getMessage());
             throw e;
         }
+    }
+
+    private static Long parseActorId(String actorIdStr) {
+        if (actorIdStr == null || actorIdStr.isBlank()) return null;
+        try { return Long.parseLong(actorIdStr); } catch (Exception e) { return null; }
     }
     
     /**
@@ -265,7 +286,12 @@ public class FireController {
         try {
             log.info("🚫 [Fire] Marking as false positive - id: {}", id);
             String reason = request.get("reason");
-            incidentService.markAsFalsePositive(id, reason);
+            Long actorId = null;
+            try {
+                String actorIdStr = request.get("actorId");
+                if (actorIdStr != null && !actorIdStr.isBlank()) actorId = Long.parseLong(actorIdStr);
+            } catch (Exception ignore) {}
+            incidentService.markAsFalsePositive(id, actorId, reason);
             return Map.of("message", "오탐 처리 완료");
         } catch (RuntimeException e) {
             log.error("❌ [Fire] Failed to mark as false positive: {}", e.getMessage());

@@ -8,6 +8,8 @@ import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { getActiveFires, getCompletedFires, getFireStats, getFireHotspots, createFire, updateFireStatus, getFireDetail, updateFireDetail, getMainMapWeather, type FireStatsResponse, type HotspotResponse } from '../services/api';
 import { getCurrentUser } from '../services/auth';
+import { localDateTimeToKstIso } from '../utils/time';
+import AssigneeSelectModal from '../components/AssigneeSelectModal';
 
 interface FireDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -64,6 +66,8 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
   const [searchError, setSearchError] = useState<string | null>(null);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState<number | null>(null);
   const [dropdownPosition, setDropdownPosition] = useState<{top: number, left: number} | null>(null);
+  const [assigneeModalOpen, setAssigneeModalOpen] = useState(false);
+  const [pendingStatusChange, setPendingStatusChange] = useState<{ id: number; newStatus: string; dbStatus: string } | null>(null);
   
   // 페이지네이션
   const [currentPage, setCurrentPage] = useState(0);
@@ -164,6 +168,15 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                      : newStatus === '진화중' ? 'EXTINGUISHING' 
                      : newStatus === '대응중' ? 'IN_PROGRESS'
                      : 'PENDING';
+
+      // 진화중/진화완료는 처리자(STAFF) 선택 모달을 띄움
+      if (newStatus === '진화중' || newStatus === '진화완료') {
+        setPendingStatusChange({ id, newStatus, dbStatus });
+        setAssigneeModalOpen(true);
+        setStatusDropdownOpen(null);
+        setDropdownPosition(null);
+        return;
+      }
       
       // 백엔드 API 호출
       await updateFireStatus(id, dbStatus);
@@ -198,6 +211,36 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
     } catch (error) {
       console.error('상태 업데이트 실패:', error);
       alert('상태 변경에 실패했습니다.');
+    }
+  };
+
+  const confirmAssigneeAndUpdate = async (assignedToId: number) => {
+    if (!pendingStatusChange) return;
+    const { id, newStatus, dbStatus } = pendingStatusChange;
+    try {
+      await updateFireStatus(id, dbStatus, { assignedToId });
+
+      if (newStatus === '진화완료') {
+        const [active, completed] = await Promise.all([getActiveFires(), getCompletedFires()]);
+        const filteredActive = active.filter(f => f.type === '화재');
+        const filteredCompleted = completed.filter(f => f.type === '화재');
+        const filteredActiveFinal = filteredActive.filter(f => !completedIncidents.has(f.cctvId));
+        setActiveFires(filteredActiveFinal);
+        setCompletedFires(filteredCompleted);
+        setFireCount(filteredActiveFinal.length);
+      } else {
+        const active = await getActiveFires();
+        const filteredActive = active.filter(f => f.type === '화재');
+        const filteredActiveFinal = filteredActive.filter(f => !completedIncidents.has(f.cctvId));
+        setActiveFires(filteredActiveFinal);
+        setFireCount(filteredActiveFinal.length);
+      }
+    } catch (error) {
+      console.error('상태 업데이트 실패:', error);
+      alert('상태 변경에 실패했습니다.');
+    } finally {
+      setAssigneeModalOpen(false);
+      setPendingStatusChange(null);
     }
   };
 
@@ -340,7 +383,8 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
       
       // Backend API 호출
       const result = await createFire({
-        detectedAt: new Date(newRecord.time).toISOString(),
+        // datetime-local 입력값을 KST(+09:00) ISO로 변환해 UTC 밀림 방지
+        detectedAt: localDateTimeToKstIso(newRecord.time),
         locationDesc: newRecord.location,
         severityLevel: newRecord.severity.toUpperCase(),
         memo: newRecord.memo || undefined,
@@ -439,6 +483,16 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
 
   return (
     <div className="flex h-screen">
+      <AssigneeSelectModal
+        open={assigneeModalOpen}
+        incidentType="FIRE"
+        title="처리자 선택 (화재)"
+        onClose={() => {
+          setAssigneeModalOpen(false);
+          setPendingStatusChange(null);
+        }}
+        onConfirm={(assignedToId) => confirmAssigneeAndUpdate(assignedToId)}
+      />
       {/* Sidebar - 반응형 (모바일: 75vw, PC: 고정) */}
       <div 
         className="fixed top-0 left-0 z-50 h-screen transition-transform duration-300 ease-in-out"
@@ -696,8 +750,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                             }
                           } catch (error) {
                             console.error('❌ [Fire] Failed to load detail:', error);
-                            // 실패 시 목록 데이터 사용
-                            setSelectedDetail(fire as any);
+                            alert('상세정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.');
                             setIsEditing(false);
                             setEditedDetail(null);
                           }
@@ -867,8 +920,8 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
         </div>
       </div>
 
-      {/* 상세정보 모달 */}
-      {selectedDetail && (
+      {/* 상세정보 모달 (legacy) - IncidentDetailModal로 통일 (아래 블록 사용) */}
+      {false && selectedDetail && (
         <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={() => setSelectedDetail(null)}>
           <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             {/* 모달 헤더 */}
@@ -1138,115 +1191,36 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
         </div>
       )}
 
-      {/* 상세정보 모달 */}
+      {/* 상세정보 모달 - IncidentDetailModal 단일 사용 */}
       {selectedDetail && (
-        <>
-          {/* AI 자동 탐지 vs 수동 등록 */}
-          {(selectedDetail as any).detectionBasis?.includes('AI') || (selectedDetail as any).detectionBasis?.includes('자동') ? (
-            /* AI 자동 탐지 - 새 컴포넌트 사용 */
-            <IncidentDetailModal
-              type="fire"
-              detail={selectedDetail as any}
-              isEditing={isEditing}
-              editedDetail={editedDetail as any}
-              onClose={() => { setSelectedDetail(null); setIsEditing(false); }}
-              onEditClick={handleEditClick}
-              onSave={handleSave}
-              onCancel={handleCancel}
-              onFieldChange={handleFieldChange}
-              onFalsePositiveComplete={async () => {
-                // 오탐 처리 후 데이터 다시 로드
-                const [active, completed, statsData, hotspotsData] = await Promise.all([
-                  getActiveFires(),
-                  getCompletedFires(),
-                  getFireStats(),
-                  getFireHotspots('this_month', 1),
-                ]);
-                const filteredActive = active.filter(f => f.type === '화재');
-                const filteredCompleted = completed.filter(f => f.type === '화재');
-                const filteredActiveFinal = filteredActive.filter(f => !completedIncidents.has(f.cctvId));
-                setActiveFires(filteredActiveFinal);
-                setCompletedFires(filteredCompleted);
-                setFireCount(filteredActiveFinal.length);
-                setStats(statsData);
-                setHotspots(hotspotsData);
-              }}
-            />
-          ) : (
-            /* 수동 등록 - 간단한 모달 */
-            <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={() => setSelectedDetail(null)}>
-              <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-                <div className="flex items-center justify-between p-6 border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)' }}>
-                  <h2 className="text-xl font-semibold text-gray-100">상세정보</h2>
-                  <button onClick={() => { setSelectedDetail(null); setIsEditing(false); }} className="text-gray-100 hover:text-white transition-colors">
-                    <X className="w-6 h-6" />
-                  </button>
-                </div>
-                <div className="p-6">
-                  {/* 상세정보 패널 - 전체 너비 */}
-                  <div className="flex flex-col">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
-                    <div className="grid grid-cols-2 gap-x-8 gap-y-5 flex-1">
-                      {/* 왼쪽 열 - 기본 정보 */}
-                      <div className="space-y-4">
-                        <div><label className="text-sm text-gray-600">사고 코드</label><p className="text-gray-900 mt-1">{selectedDetail.accidentCode}</p></div>
-                        <div><label className="text-sm text-gray-600">발생시간</label><p className="text-gray-900 mt-1">{selectedDetail.time}</p></div>
-                        <div><label className="text-sm text-gray-600">유형</label><p className="text-gray-900 mt-1">화재</p></div>
-                        <div>
-                          <label className="text-sm text-gray-600">심각도</label>
-                          {isEditing && editedDetail ? (
-                            <select value={editedDetail.severity} onChange={(e) => handleFieldChange('severity', e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-300 text-gray-900" style={{ borderRadius: '0px' }}>
-                              <option value="상">상</option>
-                              <option value="중">중</option>
-                              <option value="하">하</option>
-                            </select>
-                          ) : (
-                            <p className="mt-1"><span className={`px-2 py-1 text-xs ${selectedDetail.severity === '상' ? 'bg-red-100 text-red-700' : selectedDetail.severity === '중' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}`} style={{ borderRadius: '0px' }}>{selectedDetail.severity}</span></p>
-                          )}
-                        </div>
-                        <div><label className="text-sm text-gray-600">상태</label><p className="text-gray-900 mt-1">{selectedDetail.status}</p></div>
-                        <div><label className="text-sm text-gray-600">처리자</label><p className="text-gray-900 mt-1">{selectedDetail.handler}</p></div>
-                        <div><label className="text-sm text-gray-600">등록 방식</label><p className="text-gray-900 mt-1">수동 등록</p></div>
-                      </div>
-                      {/* 오른쪽 열 - 추가 정보 */}
-                      <div className="space-y-4">
-                        <div><label className="text-sm text-gray-600">위치</label><p className="text-gray-900 mt-1">{selectedDetail.location || '-'}</p></div>
-                        <div>
-                          <label className="text-sm text-gray-600">메모</label>
-                          {isEditing && editedDetail ? (
-                            <textarea value={(editedDetail as any).memo || ''} onChange={(e) => handleFieldChange('note', e.target.value)} className="w-full mt-1 px-3 py-2 border border-gray-300" style={{ borderRadius: '0px' }} rows={3} />
-                          ) : (
-                            <p className="text-gray-900 mt-1">{(selectedDetail as any).memo || '-'}</p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* 하단 버튼 */}
-                    <div className="flex justify-end gap-3 mt-4">
-                      {isEditing ? (
-                        <>
-                          <button onClick={handleCancel} className="px-6 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors" style={{ borderRadius: '0px' }}>
-                            취소
-                          </button>
-                          <button onClick={handleSave} className="px-6 py-2 bg-emerald-600 text-white hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2" style={{ borderRadius: '0px' }}>
-                            <Save className="w-4 h-4" />
-                            저장
-                          </button>
-                        </>
-                      ) : (
-                        <button onClick={handleEditClick} className="px-6 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center gap-2" style={{ borderRadius: '0px' }}>
-                          <Edit2 className="w-4 h-4" />
-                          수정
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-            </div>
-          </div>
-        )}
-        </>
+        <IncidentDetailModal
+          type="fire"
+          detail={selectedDetail as any}
+          isEditing={isEditing}
+          editedDetail={editedDetail as any}
+          onClose={() => { setSelectedDetail(null); setIsEditing(false); setEditedDetail(null); }}
+          onEditClick={handleEditClick}
+          onSave={handleSave}
+          onCancel={handleCancel}
+          onFieldChange={handleFieldChange}
+          onFalsePositiveComplete={async () => {
+            // 오탐 처리 후 데이터 다시 로드
+            const [active, completed, statsData, hotspotsData] = await Promise.all([
+              getActiveFires(),
+              getCompletedFires(),
+              getFireStats(),
+              getFireHotspots('this_month', 1),
+            ]);
+            const filteredActive = active.filter(f => f.type === '화재');
+            const filteredCompleted = completed.filter(f => f.type === '화재');
+            const filteredActiveFinal = filteredActive.filter(f => !completedIncidents.has(f.cctvId));
+            setActiveFires(filteredActiveFinal);
+            setCompletedFires(filteredCompleted);
+            setFireCount(filteredActiveFinal.length);
+            setStats(statsData);
+            setHotspots(hotspotsData);
+          }}
+        />
       )}
 
       {/* 신규 기록 등록 모달 */}

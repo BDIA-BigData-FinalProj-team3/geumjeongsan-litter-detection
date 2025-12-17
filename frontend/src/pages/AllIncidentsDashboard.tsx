@@ -8,6 +8,8 @@ import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { getAllIncidentsStats, getAllIncidentsList, getAllIncidentDetail, createEmergency, createFire, createTrash, createRockfall, getRockfallDetail, updateEmergencyStatus, updateFireStatus, updateTrashStatus, updateEmergencyDetail, updateFireDetail, updateTrashDetail, updateRockfallDetail } from '../services/api';
 import { getCurrentUser } from '../services/auth';
+import { localDateTimeToKstIso, nowKstDateTimeLocal } from '../utils/time';
+import AssigneeSelectModal from '../components/AssigneeSelectModal';
 
 interface AllIncidentsDashboardProps {
   onNavigate?: (screen: string) => void;
@@ -72,6 +74,8 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
   const [searchError, setSearchError] = useState<string | null>(null);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState<number | null>(null);
   const [dropdownPosition, setDropdownPosition] = useState<{top: number, left: number} | null>(null);
+  const [assigneeModalOpen, setAssigneeModalOpen] = useState(false);
+  const [pendingStatusChange, setPendingStatusChange] = useState<{ id: number; newStatus: string; dbStatus: string; incidentType: string } | null>(null);
   
   // 신규 유형 선택 모달
   const [showTypeSelectModal, setShowTypeSelectModal] = useState(false);
@@ -240,12 +244,26 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                  : newStatus === '대응중' ? 'IN_PROGRESS' 
                  : 'PENDING';
       }
+
+      const needsAssignee = (incidentType === '화재')
+        ? (newStatus === '진화중' || newStatus === '진화완료')
+        : (newStatus === '대응중' || newStatus === '처리완료');
+
+      if (needsAssignee) {
+        setPendingStatusChange({ id, newStatus, dbStatus, incidentType });
+        setAssigneeModalOpen(true);
+        setStatusDropdownOpen(null);
+        setDropdownPosition(null);
+        return;
+      }
       
       // 타입별 API 호출
       if (incidentType === '화재') {
         await updateFireStatus(id, dbStatus);
       } else if (incidentType === '응급') {
         await updateEmergencyStatus(id, dbStatus);
+      } else if (incidentType === '낙석') {
+        await updateRockfallStatus(id, dbStatus);
       } else {
         await updateTrashStatus(id, dbStatus);
       }
@@ -282,6 +300,36 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
     } catch (error) {
       console.error('상태 업데이트 실패:', error);
       alert('상태 변경에 실패했습니다.');
+    }
+  };
+
+  const confirmAssigneeAndUpdate = async (assignedToId: number) => {
+    if (!pendingStatusChange) return;
+    const { id, newStatus, dbStatus, incidentType } = pendingStatusChange;
+    try {
+      if (incidentType === '화재') {
+        await updateFireStatus(id, dbStatus, { assignedToId });
+      } else if (incidentType === '응급') {
+        await updateEmergencyStatus(id, dbStatus, { assignedToId });
+      } else if (incidentType === '낙석') {
+        await updateRockfallStatus(id, dbStatus, { assignedToId });
+      } else {
+        await updateTrashStatus(id, dbStatus, { assignedToId });
+      }
+
+      // 전체현황은 리스트를 다시 로드 (안전)
+      const [activeList, completedList] = await Promise.all([
+        getAllIncidentsList('active'),
+        getAllIncidentsList('completed'),
+      ]);
+      setActiveIncidents(activeList || []);
+      setCompletedIncidentsList(completedList || []);
+    } catch (e) {
+      console.error('상태 업데이트 실패:', e);
+      alert('상태 변경에 실패했습니다.');
+    } finally {
+      setAssigneeModalOpen(false);
+      setPendingStatusChange(null);
     }
   };
 
@@ -452,6 +500,19 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
 
   return (
     <div className="flex h-screen">
+      <AssigneeSelectModal
+        open={assigneeModalOpen}
+        incidentType={pendingStatusChange?.incidentType === '화재' ? 'FIRE'
+          : pendingStatusChange?.incidentType === '응급' ? 'EMERGENCY'
+          : pendingStatusChange?.incidentType === '낙석' ? 'ROCKFALL'
+          : 'TRASH'}
+        title={`처리자 선택 (${pendingStatusChange?.incidentType ?? ''})`}
+        onClose={() => {
+          setAssigneeModalOpen(false);
+          setPendingStatusChange(null);
+        }}
+        onConfirm={(assignedToId) => confirmAssigneeAndUpdate(assignedToId)}
+      />
       {/* Sidebar - 반응형 (모바일: 75vw, PC: 고정) */}
       <div 
         className="fixed top-0 left-0 z-50 h-screen transition-transform duration-300 ease-in-out"
@@ -712,8 +773,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                               }
                             } catch (error) {
                               console.error('❌ [AllIncidents] Failed to load detail:', error);
-                              // 실패 시 목록 데이터 사용
-                              setSelectedDetail(incident as any);
+                              alert('상세정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.');
                               setIsEditing(false);
                               setEditedDetail(null);
                             }
@@ -942,7 +1002,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                 onClick={() => {
                   setShowTypeSelectModal(false);
                   setRockfallRecord({
-                    time: new Date().toISOString().slice(0, 16),
+                    time: nowKstDateTimeLocal(),
                     location: '',
                     severity: 'medium',
                     memo: '',
@@ -1160,7 +1220,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                       const createdById = currentUser?.userId || 1; // 로그인한 사용자 ID, 없으면 기본값 1
                       
                       const result = await createEmergency({
-                        detectedAt: new Date(emergencyRecord.time).toISOString(),
+                        detectedAt: localDateTimeToKstIso(emergencyRecord.time),
                         locationDesc: emergencyRecord.location,
                         severityLevel: emergencyRecord.severity.toUpperCase(),
                         memo: emergencyRecord.memo || undefined,
@@ -1338,7 +1398,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                       const createdById = currentUser?.userId || 1; // 로그인한 사용자 ID, 없으면 기본값 1
                       
                       const result = await createFire({
-                        detectedAt: new Date(fireRecord.time).toISOString(),
+                        detectedAt: localDateTimeToKstIso(fireRecord.time),
                         locationDesc: fireRecord.location,
                         severityLevel: fireRecord.severity.toUpperCase(),
                         memo: fireRecord.memo || undefined,
@@ -1519,7 +1579,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                       const createdById = currentUser?.userId || 1; // 로그인한 사용자 ID, 없으면 기본값 1
                       
                       const result = await createTrash({
-                        detectedAt: new Date(trashRecord.time).toISOString(),
+                        detectedAt: localDateTimeToKstIso(trashRecord.time),
                         locationDesc: trashRecord.location,
                         severityLevel: trashRecord.severity.toUpperCase(),
                         memo: trashRecord.memo || undefined,
@@ -1712,7 +1772,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
                     const createdById = currentUser?.userId || 1; // 로그인한 사용자 ID, 없으면 기본값 1
                     
                     const result = await createRockfall({
-                      detectedAt: new Date(rockfallRecord.time).toISOString(),
+                      detectedAt: localDateTimeToKstIso(rockfallRecord.time),
                       locationDesc: rockfallRecord.location,
                       severityLevel: rockfallRecord.severity.toUpperCase(),
                       rockSizeClass: rockfallRecord.rockSizeClass,
@@ -1758,114 +1818,30 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
 
       {/* 상세정보 모달 */}
       {selectedDetail && (
-        <>
-          {/* AI 자동 탐지 vs 수동 등록 */}
-          {(selectedDetail as any).detectionBasis?.includes('AI') || (selectedDetail as any).detectionBasis?.includes('자동') ? (
-            /* AI 자동 탐지 - 새 컴포넌트 사용 */
-            <IncidentDetailModal
-              type={selectedDetail.type === '화재' ? 'fire' : selectedDetail.type === '쓰레기' ? 'trash' : selectedDetail.type === '낙석' ? 'rockfall' : 'emergency'}
-              detail={selectedDetail as any}
-              isEditing={isEditing}
-              editedDetail={editedDetail as any}
-              onClose={() => { setSelectedDetail(null); setIsEditing(false); }}
-              onEditClick={handleEditClick}
-              onSave={handleSave}
-              onCancel={handleCancel}
-              onFieldChange={handleFieldChange}
-              onFalsePositiveComplete={async () => {
-                // 오탐 처리 후 데이터 다시 로드
-                const [active, completed, statsData] = await Promise.all([
-                  getAllIncidentsList('active'),
-                  getAllIncidentsList('completed'),
-                  getAllIncidentsStats(),
-                ]);
-                const completedCctvIds = new Set(completed.map(c => c.cctvId));
-                const filteredActiveFinal = active.filter(i => !completedCctvIds.has(i.cctvId));
-                setActiveIncidents(filteredActiveFinal);
-                setCompletedIncidentsList(completed);
-                setStats(statsData);
-              }}
-            />
-          ) : (
-            /* 수동 등록 - 간단한 모달 */
-            <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4" onClick={() => setSelectedDetail(null)}>
-              <div className="bg-white rounded-lg shadow-xl max-w-5xl w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-                <div className="flex items-center justify-between p-6 border-b border-gray-200" style={{ backgroundColor: 'var(--ecoguard-header-bg)' }}>
-                  <h2 className="text-xl font-semibold text-gray-100">상세정보</h2>
-                  <button onClick={() => setSelectedDetail(null)} className="text-gray-100 hover:text-white transition-colors">
-                    <X className="w-6 h-6" />
-                  </button>
-                </div>
-                <div className="p-6">
-                  {/* 상세정보 패널 - 전체 너비 */}
-                  <div className="flex flex-col">
-                    <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
-                    <div className="flex gap-4 flex-1">
-                      {/* 왼쪽 열 - 기본 정보 */}
-                      <div className="flex-1 space-y-4">
-                        <div><label className="text-sm text-gray-600">사고 코드</label><p className="text-gray-900 mt-1">{selectedDetail.accidentCode}</p></div>
-                        <div><label className="text-sm text-gray-600">발생시간</label><p className="text-gray-900 mt-1">{selectedDetail.time}</p></div>
-                        <div><label className="text-sm text-gray-600">유형</label><p className="text-gray-900 mt-1">{selectedDetail.type}</p></div>
-                        <div><label className="text-sm text-gray-600">심각도</label><p className="mt-1"><span className={`px-2 py-1 text-xs ${selectedDetail.severity === '상' ? 'bg-red-100 text-red-700' : selectedDetail.severity === '중' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'}`} style={{ borderRadius: '0px' }}>{selectedDetail.severity}</span></p></div>
-                        <div><label className="text-sm text-gray-600">상태</label><p className="text-gray-900 mt-1">{selectedDetail.status}</p></div>
-                        <div><label className="text-sm text-gray-600">처리자</label><p className="text-gray-900 mt-1">{selectedDetail.handler}</p></div>
-                        <div><label className="text-sm text-gray-600">등록 방식</label><p className="text-gray-900 mt-1">수동 등록</p></div>
-                      </div>
-                      {/* 오른쪽 열 - 추가 정보 */}
-                      <div className="flex-1 space-y-4">
-                        <div><label className="text-sm text-gray-600">위치</label><p className="text-gray-900 mt-1">{selectedDetail.location || '-'}</p></div>
-                        {selectedDetail.responseTime && (
-                          <div><label className="text-sm text-gray-600">처리완료시각</label><p className="text-gray-900 mt-1">{selectedDetail.responseTime}</p></div>
-                        )}
-                        {selectedDetail.duration && (
-                          <div><label className="text-sm text-gray-600">소요시간</label><p className="text-gray-900 mt-1">{selectedDetail.duration}</p></div>
-                        )}
-                        <div><label className="text-sm text-gray-600">메모</label><p className="text-gray-900 mt-1">{(selectedDetail as any).memo || '-'}</p></div>
-                        {selectedDetail.type === '응급' && (
-                          <>
-                            <div><label className="text-sm text-gray-600">환자명</label><p className="text-gray-900 mt-1">{(selectedDetail as any).patientName || '미상'}</p></div>
-                            <div><label className="text-sm text-gray-600">성별</label><p className="text-gray-900 mt-1">{(selectedDetail as any).patientGender || '미상'}</p></div>
-                            <div><label className="text-sm text-gray-600">이송병원 및 처리 기관</label><p className="text-gray-900 mt-1">{(selectedDetail as any).transferHospital || '-'}</p></div>
-                          </>
-                        )}
-                        {selectedDetail.type === '쓰레기' && (
-                          <>
-                            <div><label className="text-sm text-gray-600">쓰레기 종류</label><p className="text-gray-900 mt-1">{(selectedDetail as any).trashType || '-'}</p></div>
-                            <div><label className="text-sm text-gray-600">양</label><p className="text-gray-900 mt-1">{(selectedDetail as any).amount || '-'}</p></div>
-                          </>
-                        )}
-                        {selectedDetail.type === '낙석' && (
-                          <>
-                            <div><label className="text-sm text-gray-600">암괴 규모</label><p className="text-gray-900 mt-1">{(selectedDetail as any).rockSizeClass || '-'}</p></div>
-                            <div><label className="text-sm text-gray-600">피해 대상 유형</label><p className="text-gray-900 mt-1">{(selectedDetail as any).affectedAssetType || '-'}</p></div>
-                            {(selectedDetail as any).affectedAssetName && (
-                              <div><label className="text-sm text-gray-600">피해 대상 식별</label><p className="text-gray-900 mt-1">{(selectedDetail as any).affectedAssetName}</p></div>
-                            )}
-                            {(selectedDetail as any).damageDescription && (
-                              <div><label className="text-sm text-gray-600">피해 설명</label><p className="text-gray-900 mt-1 whitespace-pre-wrap">{(selectedDetail as any).damageDescription}</p></div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* 하단 버튼 */}
-                    <div className="flex justify-end gap-3 mt-4">
-                      <button 
-                        onClick={() => { setEditedDetail({...selectedDetail}); setIsEditing(true); }}
-                        className="px-6 py-2 bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors flex items-center justify-center gap-2" 
-                        style={{ borderRadius: '0px' }}
-                      >
-                        <Edit2 className="w-4 h-4" />
-                        수정
-                      </button>
-                    </div>
-                  </div>
-                </div>
-            </div>
-          </div>
-          )}
-        </>
+        <IncidentDetailModal
+          type={selectedDetail.type === '화재' ? 'fire' : selectedDetail.type === '쓰레기' ? 'trash' : selectedDetail.type === '낙석' ? 'rockfall' : 'emergency'}
+          detail={selectedDetail as any}
+          isEditing={isEditing}
+          editedDetail={editedDetail as any}
+          onClose={() => { setSelectedDetail(null); setIsEditing(false); setEditedDetail(null); }}
+          onEditClick={handleEditClick}
+          onSave={handleSave}
+          onCancel={handleCancel}
+          onFieldChange={handleFieldChange}
+          onFalsePositiveComplete={async () => {
+            // 오탐 처리 후 데이터 다시 로드
+            const [active, completed, statsData] = await Promise.all([
+              getAllIncidentsList('active'),
+              getAllIncidentsList('completed'),
+              getAllIncidentsStats(),
+            ]);
+            const completedCctvIds = new Set(completed.map(c => c.cctvId));
+            const filteredActiveFinal = active.filter(i => !completedCctvIds.has(i.cctvId));
+            setActiveIncidents(filteredActiveFinal);
+            setCompletedIncidentsList(completed);
+            setStats(statsData);
+          }}
+        />
       )}
     </div>
   );

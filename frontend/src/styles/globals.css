@@ -287,3 +287,47 @@ html {
 .custom-incident-marker [style*="animation: ping"] {
   animation: ping 1s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
+
+/* 지도 마커 배지(숫자/경고) 위치 통일: 오른쪽 위로 살짝 */
+.map-marker-wrap {
+  position: relative;
+  width: 64px;
+  height: 82px;
+}
+
+/* 숫자 배지(카운트) */
+.map-marker-badge {
+  position: absolute;
+  top: -6px;     /* 위로 살짝 */
+  right: -6px;   /* 오른쪽으로 살짝 */
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgba(0,0,0,.25);
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* CCTV 경고(NEED_CHECK) 노란 점 */
+.map-marker-warn {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: #EAB308;
+  border: 2px solid #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 3;
+}

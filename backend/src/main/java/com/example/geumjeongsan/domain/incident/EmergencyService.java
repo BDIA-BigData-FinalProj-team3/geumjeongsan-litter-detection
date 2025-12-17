@@ -10,6 +10,7 @@ import com.example.geumjeongsan.api.dto.EmergencyStatsDto;
 import com.example.geumjeongsan.api.dto.IncidentCreateResponse;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -22,8 +23,10 @@ import com.example.geumjeongsan.domain.cctv.CCTVRepository;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -34,15 +37,21 @@ public class EmergencyService {
     private final IncidentSummaryRepository incidentSummaryRepository;
     private final IncidentActionRepository incidentActionRepository;
     private final IncidentManualRepository incidentManualRepository;
+    private final IncidentAutoRepository incidentAutoRepository;
     private final CCTVRepository cctvRepository;
     private final EntityManager entityManager;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+    private static final ZoneOffset KST = ZoneOffset.ofHours(9);
+
+    @Value("${gemini.api.model:}")
+    private String geminiModelName;
 
     public EmergencyService(IncidentRepository incidentRepository,
                            EmergencyDetailRepository emergencyDetailRepository,
                            IncidentSummaryRepository incidentSummaryRepository,
                            IncidentActionRepository incidentActionRepository,
                            IncidentManualRepository incidentManualRepository,
+                           IncidentAutoRepository incidentAutoRepository,
                            CCTVRepository cctvRepository,
                            EntityManager entityManager) {
         this.incidentRepository = incidentRepository;
@@ -50,8 +59,180 @@ public class EmergencyService {
         this.incidentSummaryRepository = incidentSummaryRepository;
         this.incidentActionRepository = incidentActionRepository;
         this.incidentManualRepository = incidentManualRepository;
+        this.incidentAutoRepository = incidentAutoRepository;
         this.cctvRepository = cctvRepository;
         this.entityManager = entityManager;
+    }
+
+    private static String joinFeatures(Object v) {
+        if (v == null) return null;
+        try {
+            if (v instanceof List<?> list) {
+                return list.stream()
+                        .map(x -> x == null ? "" : x.toString())
+                        .filter(s -> !s.isBlank())
+                        .collect(Collectors.joining(", "));
+            }
+        } catch (Exception ignore) {}
+        return v.toString();
+    }
+
+    private static String normalizeSeverity(String severityLevel) {
+        if (severityLevel == null) return "MEDIUM";
+        String s = severityLevel.trim().toUpperCase();
+        if ("VERY_HIGH".equals(s)) return "HIGH";
+        if ("VERY_LOW".equals(s)) return "LOW";
+        if ("HIGH".equals(s) || "MEDIUM".equals(s) || "LOW".equals(s)) return s;
+        return "MEDIUM";
+    }
+
+    /**
+     * Gemini 응급 분석 결과(JSON Map)로 AUTO 응급 사건 저장
+     */
+    @Transactional
+    public IncidentCreateResponse createEmergencyFromGemini(
+            Map<String, Object> geminiJson,
+            Long cctvId,
+            String locationDesc,
+            OffsetDateTime detectedAtKst
+    ) {
+        if (geminiJson == null) throw new IllegalArgumentException("Gemini 결과가 비어 있습니다.");
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> incidentMap = (Map<String, Object>) geminiJson.get("incident");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> emergencyDetailMap = (Map<String, Object>) geminiJson.get("emergency_detail");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> incidentAutoMap = (Map<String, Object>) geminiJson.get("incident_auto");
+
+        if (incidentMap == null) throw new IllegalArgumentException("Gemini 결과에 incident가 없습니다.");
+        String incidentType = incidentMap.get("incident_type") != null ? incidentMap.get("incident_type").toString() : null;
+        if (!"EMERGENCY".equals(incidentType)) {
+            throw new IllegalArgumentException("응급 사건이 아닙니다: " + incidentType);
+        }
+
+        OffsetDateTime now = OffsetDateTime.now(KST);
+        OffsetDateTime detectedAt = detectedAtKst != null ? detectedAtKst : now;
+
+        // 1) Incident 생성
+        Incident incident = new Incident();
+        incident.setIncidentType("EMERGENCY");
+        incident.setSourceType("AUTO");
+        incident.setStatus("PENDING");
+        incident.setCctvId(cctvId);
+        incident.setDetectedAt(detectedAt);
+        incident.setLocationDesc(locationDesc != null ? locationDesc : "CCTV 자동 탐지(응급)");
+        incident.setCreatedAt(now);
+        incident.setUpdatedAt(now);
+
+        String severityLevel = normalizeSeverity(incidentMap.get("severity_level") != null ? incidentMap.get("severity_level").toString() : null);
+        incident.setSeverityLevel(severityLevel);
+
+        String description = geminiJson.get("description") != null ? geminiJson.get("description").toString() : null;
+        String reportScore = geminiJson.get("report_possibility_score") != null ? geminiJson.get("report_possibility_score").toString() : null;
+        String emergencyLevel = geminiJson.get("emergency_level") != null ? geminiJson.get("emergency_level").toString() : null;
+
+        StringBuilder memoBuilder = new StringBuilder();
+        memoBuilder.append("AI 응급 분석");
+        if (emergencyLevel != null && !emergencyLevel.isBlank()) memoBuilder.append("\n긴급도: ").append(emergencyLevel);
+        if (reportScore != null && !reportScore.isBlank()) memoBuilder.append("\n").append(reportScore);
+        if (description != null && !description.isBlank()) memoBuilder.append("\n요약: ").append(description);
+        incident.setMemo(memoBuilder.toString());
+
+        // incident_code: E-YYMMDD-XXXA
+        String dateStr = incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd"));
+        String prefix = String.format("E-%s-", dateStr);
+        Incident lastIncident = incidentRepository.findTopByIncidentCodeStartingWithOrderByIncidentCodeDesc(prefix);
+        int nextSequence = 1;
+        if (lastIncident != null && lastIncident.getIncidentCode() != null) {
+            String lastCode = lastIncident.getIncidentCode();
+            try {
+                String[] parts = lastCode.split("-");
+                if (parts.length >= 3) {
+                    String seqPart = parts[2].substring(0, 3);
+                    nextSequence = Integer.parseInt(seqPart) + 1;
+                }
+            } catch (Exception ignore) {
+                nextSequence = 1;
+            }
+        }
+        String sequence = String.format("%03d", nextSequence);
+        incident.setIncidentCode(String.format("%s%sA", prefix, sequence));
+
+        incident = incidentRepository.save(incident);
+
+        // 2) EmergencyDetail 생성/저장
+        EmergencyDetail detail = new EmergencyDetail();
+        detail.setIncidentId(incident.getId());
+        detail.setSeverityLevel(severityLevel);
+        detail.setLocationDesc(locationDesc);
+        detail.setOccurredAt(detectedAt);
+        detail.setCreatedAt(now);
+
+        // injured_count
+        Integer injuredCount = null;
+        if (emergencyDetailMap != null) {
+            Object ic = emergencyDetailMap.get("injured_count");
+            if (ic instanceof Number n) injuredCount = n.intValue();
+            else if (ic != null) {
+                try { injuredCount = Integer.parseInt(ic.toString()); } catch (Exception ignore) {}
+            }
+        }
+        detail.setInjuredCount(injuredCount);
+
+        // UI 노출용 필드(최소한): emergencyType/symptom에 요약 저장
+        detail.setEmergencyType(emergencyLevel != null && !emergencyLevel.isBlank() ? ("AI-" + emergencyLevel) : "AI-응급");
+        StringBuilder symptomBuilder = new StringBuilder();
+        if (reportScore != null && !reportScore.isBlank()) symptomBuilder.append(reportScore);
+        if (description != null && !description.isBlank()) symptomBuilder.append(symptomBuilder.length() > 0 ? "\n" : "").append(description);
+        detail.setSymptom(symptomBuilder.length() > 0 ? symptomBuilder.toString() : null);
+
+        emergencyDetailRepository.save(detail);
+
+        // 3) IncidentAuto 저장
+        if (incidentAutoMap != null) {
+            IncidentAuto auto = new IncidentAuto();
+            auto.setIncidentId(incident.getId());
+            auto.setDetectionModel(geminiModelName != null && !geminiModelName.isBlank() ? geminiModelName : "gemini");
+            auto.setDetectionVersion("emergency-analysis");
+            auto.setLocationDesc(locationDesc);
+            auto.setIsValid(true);
+            auto.setAutoCreatedAt(now);
+
+            Object confObj = incidentAutoMap.get("detection_confidence");
+            if (confObj instanceof Number n) auto.setDetectionConfidence(n.doubleValue());
+            else if (confObj != null) {
+                try { auto.setDetectionConfidence(Double.parseDouble(confObj.toString())); } catch (Exception ignore) { auto.setDetectionConfidence(0.0); }
+            }
+
+            // 키 호환: detection_confidence_reason / confidence_reason
+            Object cr = incidentAutoMap.get("detection_confidence_reason");
+            if (cr == null) cr = incidentAutoMap.get("confidence_reason");
+            auto.setConfidenceReason(cr != null ? cr.toString() : null);
+
+            Object sr = incidentAutoMap.get("severity_level_reason");
+            auto.setSeverityReason(sr != null ? sr.toString() : null);
+
+            Object features = incidentAutoMap.get("detected_features");
+            auto.setDetectedFeatures(joinFeatures(features));
+
+            incidentAutoRepository.save(auto);
+        }
+
+        // 4) IncidentAction 로그 저장(CREATED)
+        IncidentAction action = new IncidentAction();
+        action.setIncidentId(incident.getId());
+        action.setActionType("CREATED");
+        action.setPrevStatus(null);
+        action.setNextStatus("PENDING");
+        action.setActorId(null);
+        action.setAcknowledgedAt(null);
+        action.setResolvedAt(null);
+        action.setMemo("Gemini AI 자동 탐지(응급)");
+        action.setCreatedAt(now);
+        incidentActionRepository.save(action);
+
+        return IncidentCreateResponse.success(incident.getId(), incident.getIncidentCode());
     }
 
     private String resolveCctvCode(Long cctvId) {
@@ -527,8 +708,9 @@ public class EmergencyService {
      * 응급 사건 상세정보 업데이트 (수동 등록 전용)
      */
     @Transactional
-    public void updateEmergencyDetail(Long id, String memo, String severityLevel, 
-                                      String patientName, String patientGender, String transferHospital) {
+    public void updateEmergencyDetail(Long id, String memo, String severityLevel,
+                                      String patientName, String patientGender, String transferHospital,
+                                      Long actorId) {
         Incident incident = incidentRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("응급 기록을 찾을 수 없습니다: " + id));
         
@@ -603,7 +785,7 @@ public class EmergencyService {
             action.setNextStatus(incident.getStatus());  // 상태는 변경되지 않음
             action.setMemo("상세 정보 수정: " + changedFieldsStr);
             action.setCreatedAt(OffsetDateTime.now());
-            // actorId는 추후 인증 시스템 구현 시 설정
+            action.setActorId(actorId);
             incidentActionRepository.save(action);
         }
     }

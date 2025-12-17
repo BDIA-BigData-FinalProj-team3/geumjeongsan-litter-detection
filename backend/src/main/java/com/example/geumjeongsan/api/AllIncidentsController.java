@@ -3,6 +3,7 @@ package com.example.geumjeongsan.api;
 import com.example.geumjeongsan.api.dto.AllIncidentDto;
 import com.example.geumjeongsan.api.dto.IncidentDetailDto;
 import com.example.geumjeongsan.api.dto.AllIncidentsStatsDto;
+import com.example.geumjeongsan.api.dto.IncidentWorkflowUpdateRequest;
 import com.example.geumjeongsan.domain.dashboard.*;
 import com.example.geumjeongsan.domain.incident.*;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +29,7 @@ public class AllIncidentsController {
     private final AvgResponseTimeRepository avgResponseTimeRepository;
     private final IncidentListViewRepository incidentListViewRepository;
     private final IncidentService incidentService;
+    private final IncidentManualRepository incidentManualRepository;
 
     /**
      * 전체현황 페이지 상단 통계
@@ -134,7 +136,9 @@ public class AllIncidentsController {
             }
         }
         
-        return new IncidentDetailDto(view, latitude, longitude);
+        var media = incidentService.getIncidentMediaBundle(id);
+        var manual = incidentManualRepository.findByIncidentId(id).orElse(null);
+        return new IncidentDetailDto(view, latitude, longitude, media.clipUrl(), media.frameUrls(), manual);
     }
     
     /**
@@ -148,12 +152,27 @@ public class AllIncidentsController {
         try {
             log.info("🚫 [AllIncidents] Marking as false positive - id: {}", id);
             String reason = request.get("reason");
-            incidentService.markAsFalsePositive(id, reason);
+            Long actorId = null;
+            try {
+                String actorIdStr = request.get("actorId");
+                if (actorIdStr != null && !actorIdStr.isBlank()) actorId = Long.parseLong(actorIdStr);
+            } catch (Exception ignore) {}
+            incidentService.markAsFalsePositive(id, actorId, reason);
             return Map.of("message", "오탐 처리 완료");
         } catch (RuntimeException e) {
             log.error("❌ [AllIncidents] Failed to mark as false positive: {}", e.getMessage());
             throw e;
         }
+    }
+
+    /**
+     * 공통 workflow 업데이트 (상태변경 + 담당자배정 + actor 기록)
+     * PUT /api/all-incidents/{id}/workflow
+     */
+    @PutMapping("/{id}/workflow")
+    public Map<String, Object> updateWorkflow(@PathVariable Long id, @RequestBody IncidentWorkflowUpdateRequest req) {
+        incidentService.updateIncidentWorkflow(id, req);
+        return Map.of("ok", true);
     }
 }
 

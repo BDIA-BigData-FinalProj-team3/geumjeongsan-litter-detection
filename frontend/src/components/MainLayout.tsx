@@ -10,7 +10,8 @@ function MainLayoutContent() {
   const getCurrentPath = () => {
     const pathMap: Record<string, string> = {
       '/map': 'main-map',
-      '/dashboard': 'dashboard',
+      // /dashboard는 통계(Statistics) 화면을 렌더링하므로 활성 메뉴도 통계에 매핑
+      '/dashboard': 'statistics',
       '/emergency': 'emergency-dashboard',
       '/fire': 'fire-dashboard',
       '/rockfall': 'rockfall-dashboard',

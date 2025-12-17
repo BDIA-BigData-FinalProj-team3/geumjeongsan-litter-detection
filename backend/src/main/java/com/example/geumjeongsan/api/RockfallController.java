@@ -1,11 +1,12 @@
 package com.example.geumjeongsan.api;
 
-import com.example.geumjeongsan.api.dto.IncidentCreateResponse;
 import com.example.geumjeongsan.api.dto.IncidentStatusUpdateRequest;
+import com.example.geumjeongsan.api.dto.IncidentWorkflowUpdateRequest;
 import com.example.geumjeongsan.api.dto.RockfallCreateRequest;
 import com.example.geumjeongsan.api.dto.RockfallDashboardResponse;
 import com.example.geumjeongsan.api.dto.RockfallDetailDto;
 import com.example.geumjeongsan.domain.incident.RockfallService;
+import com.example.geumjeongsan.domain.incident.IncidentService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -19,9 +20,11 @@ public class RockfallController {
 
     private static final Logger log = LoggerFactory.getLogger(RockfallController.class);
     private final RockfallService rockfallService;
+    private final IncidentService incidentService;
 
-    public RockfallController(RockfallService rockfallService) {
+    public RockfallController(RockfallService rockfallService, IncidentService incidentService) {
         this.rockfallService = rockfallService;
+        this.incidentService = incidentService;
     }
 
     // 낙석 현황 + 목록 (발생/처리완료)
@@ -79,9 +82,15 @@ public class RockfallController {
                 request.get("rockSizeClass"),
                 request.get("affectedAssetType"),
                 request.get("affectedAssetName"),
-                request.get("damageDescription")
+                request.get("damageDescription"),
+                parseActorId(request.get("actorId"))
         );
         return ResponseEntity.ok(Map.of("message", "수정 완료"));
+    }
+
+    private static Long parseActorId(String actorIdStr) {
+        if (actorIdStr == null || actorIdStr.isBlank()) return null;
+        try { return Long.parseLong(actorIdStr); } catch (Exception e) { return null; }
     }
 
     // 낙석 사건 상태 업데이트
@@ -97,6 +106,16 @@ public class RockfallController {
         } catch (Exception e) {
             return ResponseEntity.badRequest().build();
         }
+    }
+
+    /**
+     * 공통 workflow 업데이트 (상태변경 + 담당자배정 + actor 기록)
+     * PUT /api/rockfalls/{id}/workflow
+     */
+    @PutMapping("/{id}/workflow")
+    public ResponseEntity<?> updateWorkflow(@PathVariable Long id, @RequestBody IncidentWorkflowUpdateRequest req) {
+        incidentService.updateIncidentWorkflow(id, req);
+        return ResponseEntity.ok(Map.of("ok", true));
     }
 }
 

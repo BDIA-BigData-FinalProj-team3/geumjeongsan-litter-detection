@@ -6,6 +6,7 @@ import com.example.geumjeongsan.api.dto.EmergencyCreateRequest;
 import com.example.geumjeongsan.api.dto.EmergencyResponse;
 import com.example.geumjeongsan.api.dto.IncidentCreateResponse;
 import com.example.geumjeongsan.api.dto.IncidentStatusUpdateRequest;
+import com.example.geumjeongsan.api.dto.IncidentWorkflowUpdateRequest;
 import com.example.geumjeongsan.api.dto.SimpleHotspotDto;
 import com.example.geumjeongsan.api.dto.EmergencyStatsDto;
 import com.example.geumjeongsan.domain.dashboard.DailyStats;
@@ -16,6 +17,7 @@ import com.example.geumjeongsan.domain.incident.EmergencyService;
 import com.example.geumjeongsan.domain.incident.IncidentListView;
 import com.example.geumjeongsan.domain.incident.IncidentListViewRepository;
 import com.example.geumjeongsan.domain.incident.IncidentService;
+import com.example.geumjeongsan.domain.incident.IncidentManualRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -40,6 +42,7 @@ public class EmergencyController {
     private final IncidentListViewRepository incidentListViewRepository;
     private final EmergencyService emergencyService;
     private final IncidentService incidentService;
+    private final IncidentManualRepository incidentManualRepository;
 
     /**
      * 응급 통계
@@ -192,7 +195,9 @@ public class EmergencyController {
             }
         }
         
-        return new IncidentDetailDto(view, latitude, longitude);
+        var media = incidentService.getIncidentMediaBundle(id);
+        var manual = incidentManualRepository.findByIncidentId(id).orElse(null);
+        return new IncidentDetailDto(view, latitude, longitude, media.clipUrl(), media.frameUrls(), manual);
     }
     
     /**
@@ -242,7 +247,8 @@ public class EmergencyController {
                     request.get("severity"),
                     request.get("patientName"),
                     request.get("patientGender"),
-                    request.get("transferHospital")
+                    request.get("transferHospital"),
+                    parseActorId(request.get("actorId"))
             );
             return ResponseEntity.ok(Map.of("message", "수정 완료"));
         } catch (RuntimeException e) {
@@ -250,6 +256,12 @@ public class EmergencyController {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
+
+    private static Long parseActorId(String actorIdStr) {
+        if (actorIdStr == null || actorIdStr.isBlank()) return null;
+        try { return Long.parseLong(actorIdStr); } catch (Exception e) { return null; }
+    }
+
     
     /**
      * 신규 응급 사건 등록
@@ -282,7 +294,12 @@ public class EmergencyController {
         try {
             log.info("🚫 [Emergency] Marking as false positive - id: {}", id);
             String reason = request.get("reason");
-            incidentService.markAsFalsePositive(id, reason);
+            Long actorId = null;
+            try {
+                String actorIdStr = request.get("actorId");
+                if (actorIdStr != null && !actorIdStr.isBlank()) actorId = Long.parseLong(actorIdStr);
+            } catch (Exception ignore) {}
+            incidentService.markAsFalsePositive(id, actorId, reason);
             return ResponseEntity.ok(Map.of("message", "오탐 처리 완료"));
         } catch (RuntimeException e) {
             log.error("❌ [Emergency] Failed to mark as false positive: {}", e.getMessage());
@@ -292,5 +309,15 @@ public class EmergencyController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", e.getMessage()));
         }
+    }
+
+    /**
+     * 공통 workflow 업데이트 (상태변경 + 담당자배정 + actor 기록)
+     * PUT /api/emergency/{id}/workflow
+     */
+    @PutMapping("/{id}/workflow")
+    public ResponseEntity<?> updateWorkflow(@PathVariable Long id, @RequestBody IncidentWorkflowUpdateRequest req) {
+        incidentService.updateIncidentWorkflow(id, req);
+        return ResponseEntity.ok(Map.of("ok", true));
     }
 }

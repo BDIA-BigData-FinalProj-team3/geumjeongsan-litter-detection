@@ -3,10 +3,11 @@ import { FileText, Download, Printer, Calendar, ChevronLeft, ChevronRight, Plus,
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import Sidebar from '../components/Sidebar';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
-import { getMonthlyStats, getMajorIncidents, getAvailableReportMonths } from '../services/api';
+import { getMonthlyStats, getMajorIncidents, getAvailableReportMonths, getIncidentsList } from '../services/api';
 import { getCurrentUser } from '../services/auth';
 import { mockMonthlyStats } from '../services/mock';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
+import { formatKstDate, nowKstDate } from '../utils/time';
 import {
   safePct,
   labelIncidentType,
@@ -81,6 +82,7 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
   });
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [targetIncidentId, setTargetIncidentId] = useState<number | null>(null);
+  const [isAddingIncident, setIsAddingIncident] = useState(false);
 
   // 메모 관련 상태
   const [editingMemoId, setEditingMemoId] = useState<number | null>(null);
@@ -125,27 +127,11 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
       const month = String(selectedMonth.getMonth() + 1).padStart(2, '0');
       const monthStr = `${year}-${month}`;
 
-      const [stats, incidents] = await Promise.all([
-        getMonthlyStats(monthStr),
-        getMajorIncidents(monthStr),
-      ]);
+      const stats = await getMonthlyStats(monthStr);
       setMonthlyStats(stats);
 
-      // ✅ 핵심: 백엔드/목업이 어떤 포맷으로 오든 내부 state는 ENUM으로 통일
-      const normalizedIncidents = (incidents || []).map((x: any) => ({
-        id: x.id ?? x.incident_id ?? Date.now() + Math.random(),
-        incidentId: String(x.incidentId ?? x.incident_id ?? ''),
-        date: normalizeDateToInput(x.date ?? x.detectedAt ?? x.detected_at) || new Date().toISOString().slice(0, 10),
-        type: normalizeIncidentType(x.type ?? x.incidentType ?? x.incident_type),
-        location: String(x.location ?? x.locationDesc ?? x.location_desc ?? ''),
-        severity: normalizeSeverity(x.severity ?? x.severityLevel ?? x.severity_level),
-        status: normalizeIncidentStatus(x.status),
-        responseTime: String(x.responseTime ?? ''),
-        memo: String(x.memo ?? ''),
-        origin: normalizeSourceType(x.origin ?? x.sourceType ?? x.source_type),
-      }));
-
-      setMajorIncidents(normalizedIncidents);
+      // 주요사건 목록은 기본적으로 비어있게 하고, 사건추가 버튼으로만 추가
+      setMajorIncidents([]);
     };
     
     loadReportData();
@@ -279,8 +265,9 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
   const handleDownload = () => {
     // PDF 저장 = 브라우저 인쇄 창을 띄워서 "PDF로 저장"을 선택하게 함
     const prevTitle = document.title;
-    const monthStrForTitle = `${selectedMonth.getFullYear()}년 ${selectedMonth.getMonth() + 1}월`;
-    document.title = `${monthStrForTitle} 월간운영보고서`;
+    // ✅ 브라우저 "머리글/바닥글"이 켜져있을 때 상단 중앙에 title이 찍히는 걸 최소화하기 위해 빈 값 사용
+    // (머리글/바닥글 자체는 사용자가 인쇄창에서 꺼야 완전히 사라짐)
+    document.title = '';
 
     // 렌더링 안정화(일부 브라우저에서 title 반영 타이밍)
     setTimeout(() => {
@@ -317,19 +304,17 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
   const manualPercent = 100 - aiPercent;
 
   const handleAddIncident = () => {
-    const newIncident = {
-      id: Date.now(),
-      incidentId: '',
-      date: new Date().toISOString().split('T')[0],
-      type: 'FIRE',          // ✅ ENUM으로
-      location: '',
-      severity: 'MEDIUM',    // ✅ ENUM으로
-      status: 'RESOLVED',    // ✅ ENUM으로
-      responseTime: '',
-      memo: '',
-      origin: 'MANUAL',      // ✅ ENUM으로
-    };
-    setMajorIncidents([...majorIncidents, newIncident]);
+    setIsAddingIncident(true);
+
+    // 추가 모드에서는 특정 행을 타겟팅하지 않음
+    setTargetIncidentId(null);
+
+    // 필터 비우고 결과 바로 표시
+    const blank = { incidentId: '', date: '', type: '', location: '', severity: '', status: '' };
+    setSearchFilters(blank);
+    handleSearch(blank);
+
+    setShowSearchModal(true);
   };
 
   const handleRemoveIncident = (id: number) => {
@@ -363,50 +348,141 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
   };
 
   // 검색 실행
-  const handleSearch = (filters = searchFilters) => {
+  const handleSearch = async (filters = searchFilters) => {
     // 선택된 월의 시작일과 종료일 계산
     const monthStart = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1);
     const monthEnd = new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0);
-    const monthStartStr = monthStart.toISOString().slice(0, 10);
-    const monthEndStr = monthEnd.toISOString().slice(0, 10);
+    // KST 기준 YYYY-MM-DD (UTC 변환으로 인한 날짜 밀림 방지)
+    const monthStartStr = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(monthStart);
+    const monthEndStr = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(monthEnd);
 
-    // TODO: 실제 API 호출로 사건 검색
-    // 지금은 더미 데이터 (ENUM 형식으로 통일)
-    const dummyResults = [
-      { id: 1, incidentId: 'INC-001', date: '2025-01-15', type: 'FIRE', location: '금정산 정상', severity: 'HIGH', status: 'RESOLVED' },
-      { id: 2, incidentId: 'INC-002', date: '2025-01-16', type: 'TRASH', location: '금정산 중턱', severity: 'MEDIUM', status: 'PENDING' },
-      { id: 3, incidentId: 'INC-003', date: '2025-01-17', type: 'EMERGENCY', location: '금정산 하단', severity: 'LOW', status: 'RESOLVED' },
-      { id: 4, incidentId: 'INC-004', date: '2025-01-18', type: 'ROCKFALL', location: '금정산 상단', severity: 'HIGH', status: 'IN_PROGRESS' },
-      { id: 5, incidentId: 'INC-005', date: '2025-01-19', type: 'FIRE', location: '금정산 하단', severity: 'MEDIUM', status: 'RESOLVED' },
-      { id: 6, incidentId: 'INC-006', date: '2025-01-20', type: 'TRASH', location: '금정산 정상', severity: 'LOW', status: 'PENDING' },
-    ].filter(item => {
-      // 선택된 월의 날짜 범위 내에서만 검색
-      if (item.date < monthStartStr || item.date > monthEndStr) return false;
-      
-      // 필터 비교 시 ENUM으로 정규화하여 비교
-      if (filters.incidentId && !item.incidentId.includes(filters.incidentId)) return false;
-      if (filters.date && item.date !== filters.date) return false;
-      if (filters.type && normalizeIncidentType(item.type) !== normalizeIncidentType(filters.type)) return false;
-      if (filters.location && !item.location.includes(filters.location)) return false;
-      if (filters.severity && normalizeSeverity(item.severity) !== normalizeSeverity(filters.severity)) return false;
-      if (filters.status && normalizeIncidentStatus(item.status) !== normalizeIncidentStatus(filters.status)) return false;
-      return true;
-    });
+    try {
+      // ✅ 실제 DB에서 전체 사건 목록 가져오기
+      const list = await getIncidentsList();
 
-    setSearchResults(dummyResults.slice(0, 5)); // 최대 5개
+      const hasFilters = filters.incidentId || filters.date || filters.type || filters.location || filters.severity || filters.status;
+      const qIncident = (filters.incidentId || '').trim().toLowerCase();
+      const qLoc = (filters.location || '').trim().toLowerCase();
+
+      const results = (Array.isArray(list) ? list : [])
+        .map((x: any) => {
+          // 백엔드 필드명 매핑 (IncidentListView 기준)
+          const rawType = x.incidentType;
+          const rawStatus = x.status;
+          const rawSeverity = x.severityLevel;
+          const rawDate = x.detectedAt;
+          
+          // 날짜를 YYYY-MM-DD 형식으로 변환
+          let date = '';
+          if (rawDate) {
+            try {
+              const d = new Date(rawDate);
+              date = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+            } catch (e) {
+              console.warn('Date parsing error:', rawDate, e);
+            }
+          }
+
+          const incidentIdStr = String(x.incidentCode || x.incidentId || '');
+          const cctvIdStr = String(x.cctvCode || x.cctvId || '');
+          const locationStr = String(x.locationDesc || '');
+
+          return {
+            incidentId: incidentIdStr,
+            date,
+            type: normalizeIncidentType(rawType),
+            location: locationStr,
+            cctvId: cctvIdStr,
+            severity: normalizeSeverity(rawSeverity),
+            status: normalizeIncidentStatus(rawStatus),
+          };
+        })
+        // ✅ 선택된 월 범위 내 사건만 필터링
+        .filter((item: any) => {
+          if (!item.date) return false;
+          return item.date >= monthStartStr && item.date <= monthEndStr;
+        })
+        // ✅ OR 조건 검색: 하나라도 필터 조건에 해당되면 표시
+        .filter((item: any) => {
+          if (!hasFilters) return true; // 필터가 없으면 전체 표시
+
+          const matchesIncidentId =
+            !qIncident ||
+            String(item.incidentId || '').toLowerCase().includes(qIncident);
+
+          const matchesDate =
+            !filters.date || item.date === filters.date;
+
+          const matchesType =
+            !filters.type ||
+            normalizeIncidentType(item.type) === normalizeIncidentType(filters.type);
+
+          // ✅ 위치 또는 CCTV ID 둘 중 하나만 매칭되어도 통과
+          const matchesLocationOrCctv =
+            !qLoc ||
+            String(item.location || '').toLowerCase().includes(qLoc) ||
+            String(item.cctvId || '').toLowerCase().includes(qLoc);
+
+          const matchesSeverity =
+            !filters.severity ||
+            normalizeSeverity(item.severity) === normalizeSeverity(filters.severity);
+
+          const matchesStatus =
+            !filters.status ||
+            normalizeIncidentStatus(item.status) === normalizeIncidentStatus(filters.status);
+
+          // 하나라도 매칭되면 통과
+          return (
+            matchesIncidentId ||
+            matchesDate ||
+            matchesType ||
+            matchesLocationOrCctv ||
+            matchesSeverity ||
+            matchesStatus
+          );
+        });
+
+      setSearchResults(results);
+    } catch (error) {
+      console.error('❌ [MonthlyReport] Failed to search incidents:', error);
+      setSearchResults([]);
+    }
   };
 
   // 검색 결과 선택
   const handleSelectSearchResult = (result: any) => {
+    if (isAddingIncident) {
+      // 추가 모드: 새 행 생성해서 push
+      const newIncident = {
+        id: Date.now(),
+        incidentId: result.incidentId,
+        date: result.date,
+        type: normalizeIncidentType(result.type),
+        location: result.location,
+        severity: normalizeSeverity(result.severity),
+        status: normalizeIncidentStatus(result.status),
+        responseTime: '',
+        memo: '',
+        origin: 'MANUAL',
+      };
+
+      setMajorIncidents((prev) => [...prev, newIncident]);
+
+      setShowSearchModal(false);
+      setIsAddingIncident(false);
+      return;
+    }
+
+    // (기존) 특정 행(돋보기 검색)에서 선택했을 때는 그 행에 채우기
     if (!targetIncidentId) return;
 
-    // 검색 결과를 ENUM으로 정규화하여 저장
     handleIncidentChange(targetIncidentId, 'incidentId', result.incidentId);
     handleIncidentChange(targetIncidentId, 'date', result.date);
     handleIncidentChange(targetIncidentId, 'type', normalizeIncidentType(result.type));
     handleIncidentChange(targetIncidentId, 'location', result.location);
     handleIncidentChange(targetIncidentId, 'severity', normalizeSeverity(result.severity));
     handleIncidentChange(targetIncidentId, 'status', normalizeIncidentStatus(result.status));
+
     setShowSearchModal(false);
     setTargetIncidentId(null);
   };
@@ -564,8 +640,8 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
           {/* 보고서 미리보기 */}
           {showPreview && (
             <div className="bg-white shadow-lg border border-gray-300 max-w-5xl mx-auto" style={{ borderRadius: '0px' }}>
-              {/* 보고서 헤더 */}
-              <div className="border-b-4 border-emerald-600 p-8 bg-gray-50">
+              {/* 보고서 헤더(표지): 화면에서는 보이되, PDF(인쇄)에서는 1페이지를 차지하므로 숨김 */}
+              <div className="border-b-4 border-emerald-600 p-8 bg-gray-50 screen-only report-cover">
                 <div className="text-center">
                   <div className="flex items-center justify-center gap-3 mb-4 -translate-x-3">
                     <svg width="48" height="48" viewBox="0 0 32 32" fill="none">
@@ -578,14 +654,11 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                   <h2 className="text-gray-800 mb-2" style={{ fontSize: '24px', fontWeight: '600' }}>월간 운영 보고서</h2>
                   <p className="text-gray-600" style={{ fontSize: '18px' }}>{monthStr}</p>
                 </div>
-                <div className="mt-6 pt-6 border-t border-gray-300 flex justify-between text-sm text-gray-600">
-                  <div>
-                    <p>발행일: {publishDateStr}</p>
-                    <p>담당부서: {writerDept}</p>
-                  </div>
-                  <div className="text-right">
-                    <p>작성자: {writerName}</p>
-                    <p>연락처: {writerPhone}</p>
+                <div className="mt-6 pt-6 border-t border-gray-300 flex justify-end text-gray-600">
+                  <div className="flex items-center gap-4 text-base">
+                    <span>발행일: {publishDateStr}</span>
+                    <span>{writerDept}</span>
+                    <span>{writerName}</span>
                   </div>
                 </div>
                 
@@ -604,12 +677,12 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                       <tr>
                         <td
                           style={{
-                            width: '72px',
+                            width: '48px',
                             textAlign: 'center',
                             verticalAlign: 'middle',
                             borderRight: '1px solid #9CA3AF',
                             fontWeight: 600,
-                            padding: '8px 4px',
+                            padding: '6px 2px',
                           }}
                         >
                           결
@@ -624,12 +697,12 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                       <tr>
                         <td
                           style={{
-                            width: '72px',
+                            width: '48px',
                             textAlign: 'center',
                             verticalAlign: 'middle',
                             borderRight: '1px solid #9CA3AF',
                             fontWeight: 600,
-                            padding: '8px 4px',
+                            padding: '6px 2px',
                           }}
                         >
                           재
@@ -653,14 +726,15 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                   <h3 className="text-gray-900 mb-4 pb-2 border-b-2 border-gray-300" style={{ fontSize: '20px', fontWeight: '600' }}>
                     1. 월간 요약
                   </h3>
+                  {/* 첫 줄: 전체사건, CCTV 운영률 */}
                   <div className="grid grid-cols-2 gap-4 mb-4">
-                    {/* 화재 감지 */}
+                    {/* 전체사건 */}
                     <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
                       <div className="flex items-center justify-between">
                         <div className="flex-1">
-                          <p className="text-sm text-gray-600 mb-1">화재 감지</p>
+                          <p className="text-sm text-gray-600 mb-1">전체사건</p>
                           <p className="text-gray-900 mb-2" style={{ fontSize: '16px', fontWeight: '600' }}>
-                            처리완료 {monthlyStats.fire.resolved}/{monthlyStats.fire.total}건
+                            처리완료 {monthlyStats.fire.resolved + monthlyStats.trash.resolved + monthlyStats.emergency.resolved + rockfallStats.resolved}/{monthlyStats.fire.total + monthlyStats.trash.total + monthlyStats.emergency.total + rockfallStats.total}건
                           </p>
                           <p className="text-xs text-gray-500">처리완료율</p>
                         </div>
@@ -669,8 +743,8 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                             <PieChart>
                               <Pie
                                 data={[
-                                  { name: '완료', value: monthlyStats.fire.resolved },
-                                  { name: '미완료', value: monthlyStats.fire.pending }
+                                  { name: '완료', value: monthlyStats.fire.resolved + monthlyStats.trash.resolved + monthlyStats.emergency.resolved + rockfallStats.resolved },
+                                  { name: '미완료', value: monthlyStats.fire.pending + monthlyStats.trash.pending + monthlyStats.emergency.pending + rockfallStats.pending }
                                 ]}
                                 cx="50%"
                                 cy="50%"
@@ -687,88 +761,10 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                           </ResponsiveContainer>
                           <div className="absolute inset-0 flex items-center justify-center">
                             <span className="text-gray-900 font-bold text-sm">
-                              {safePct(monthlyStats.fire.resolved, monthlyStats.fire.total)}%
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* 쓰레기 투기 */}
-                    <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <p className="text-sm text-gray-600 mb-1">쓰레기 투기</p>
-                          <p className="text-gray-900 mb-2" style={{ fontSize: '16px', fontWeight: '600' }}>
-                            처리완료 {monthlyStats.trash.resolved}/{monthlyStats.trash.total}건
-                          </p>
-                          <p className="text-xs text-gray-500">처리완료율</p>
-                        </div>
-                        <div className="relative" style={{ width: '100px', height: '100px' }}>
-                          <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                              <Pie
-                                data={[
-                                  { name: '완료', value: monthlyStats.trash.resolved },
-                                  { name: '미완료', value: monthlyStats.trash.pending }
-                                ]}
-                                cx="50%"
-                                cy="50%"
-                                innerRadius={30}
-                                outerRadius={40}
-                                dataKey="value"
-                                startAngle={90}
-                                endAngle={-270}
-                              >
-                                <Cell fill="#60a5fa" />
-                                <Cell fill="#dbeafe" />
-                              </Pie>
-                            </PieChart>
-                          </ResponsiveContainer>
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <span className="text-gray-900 font-bold text-sm">
-                              {safePct(monthlyStats.trash.resolved, monthlyStats.trash.total)}%
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    {/* 응급 상황 */}
-                    <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <p className="text-sm text-gray-600 mb-1">응급 상황</p>
-                          <p className="text-gray-900 mb-2" style={{ fontSize: '16px', fontWeight: '600' }}>
-                            처리완료 {monthlyStats.emergency.resolved}/{monthlyStats.emergency.total}건
-                          </p>
-                          <p className="text-xs text-gray-500">처리완료율</p>
-                        </div>
-                        <div className="relative" style={{ width: '100px', height: '100px' }}>
-                          <ResponsiveContainer width="100%" height="100%">
-                            <PieChart>
-                              <Pie
-                                data={[
-                                  { name: '완료', value: monthlyStats.emergency.resolved },
-                                  { name: '미완료', value: monthlyStats.emergency.pending }
-                                ]}
-                                cx="50%"
-                                cy="50%"
-                                innerRadius={30}
-                                outerRadius={40}
-                                dataKey="value"
-                                startAngle={90}
-                                endAngle={-270}
-                              >
-                                <Cell fill="#60a5fa" />
-                                <Cell fill="#dbeafe" />
-                              </Pie>
-                            </PieChart>
-                          </ResponsiveContainer>
-                          <div className="absolute inset-0 flex items-center justify-center">
-                            <span className="text-gray-900 font-bold text-sm">
-                              {safePct(monthlyStats.emergency.resolved, monthlyStats.emergency.total)}%
+                              {safePct(
+                                monthlyStats.fire.resolved + monthlyStats.trash.resolved + monthlyStats.emergency.resolved + rockfallStats.resolved,
+                                monthlyStats.fire.total + monthlyStats.trash.total + monthlyStats.emergency.total + rockfallStats.total
+                              )}%
                             </span>
                           </div>
                         </div>
@@ -816,12 +812,136 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                     </div>
                   </div>
 
-                  {/* 낙석 사건 카드 */}
-                  <div className="grid grid-cols-2 gap-4 mt-4">
-                    <div className="bg-blue-50 border-l-4 border-blue-400 p-4 col-span-2">
+                  {/* 두 번째 줄: 산불 사건, 응급상황 */}
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    {/* 산불 사건 */}
+                    <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
                       <div className="flex items-center justify-between">
                         <div className="flex-1">
-                          <p className="text-sm text-gray-600 mb-1">낙석 사건</p>
+                          <p className="text-sm text-gray-600 mb-1">산불 사건</p>
+                          <p className="text-gray-900 mb-2" style={{ fontSize: '16px', fontWeight: '600' }}>
+                            처리완료 {monthlyStats.fire.resolved}/{monthlyStats.fire.total}건
+                          </p>
+                          <p className="text-xs text-gray-500">처리완료율</p>
+                        </div>
+                        <div className="relative" style={{ width: '100px', height: '100px' }}>
+                          <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                              <Pie
+                                data={[
+                                  { name: '완료', value: monthlyStats.fire.resolved },
+                                  { name: '미완료', value: monthlyStats.fire.pending }
+                                ]}
+                                cx="50%"
+                                cy="50%"
+                                innerRadius={30}
+                                outerRadius={40}
+                                dataKey="value"
+                                startAngle={90}
+                                endAngle={-270}
+                              >
+                                <Cell fill="#60a5fa" />
+                                <Cell fill="#dbeafe" />
+                              </Pie>
+                            </PieChart>
+                          </ResponsiveContainer>
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="text-gray-900 font-bold text-sm">
+                              {safePct(monthlyStats.fire.resolved, monthlyStats.fire.total)}%
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 응급 상황 */}
+                    <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <p className="text-sm text-gray-600 mb-1">응급상황</p>
+                          <p className="text-gray-900 mb-2" style={{ fontSize: '16px', fontWeight: '600' }}>
+                            처리완료 {monthlyStats.emergency.resolved}/{monthlyStats.emergency.total}건
+                          </p>
+                          <p className="text-xs text-gray-500">처리완료율</p>
+                        </div>
+                        <div className="relative" style={{ width: '100px', height: '100px' }}>
+                          <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                              <Pie
+                                data={[
+                                  { name: '완료', value: monthlyStats.emergency.resolved },
+                                  { name: '미완료', value: monthlyStats.emergency.pending }
+                                ]}
+                                cx="50%"
+                                cy="50%"
+                                innerRadius={30}
+                                outerRadius={40}
+                                dataKey="value"
+                                startAngle={90}
+                                endAngle={-270}
+                              >
+                                <Cell fill="#60a5fa" />
+                                <Cell fill="#dbeafe" />
+                              </Pie>
+                            </PieChart>
+                          </ResponsiveContainer>
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="text-gray-900 font-bold text-sm">
+                              {safePct(monthlyStats.emergency.resolved, monthlyStats.emergency.total)}%
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 세 번째 줄: 쓰레기투기, 낙석사건 */}
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* 쓰레기 투기 */}
+                    <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <p className="text-sm text-gray-600 mb-1">쓰레기투기</p>
+                          <p className="text-gray-900 mb-2" style={{ fontSize: '16px', fontWeight: '600' }}>
+                            처리완료 {monthlyStats.trash.resolved}/{monthlyStats.trash.total}건
+                          </p>
+                          <p className="text-xs text-gray-500">처리완료율</p>
+                        </div>
+                        <div className="relative" style={{ width: '100px', height: '100px' }}>
+                          <ResponsiveContainer width="100%" height="100%">
+                            <PieChart>
+                              <Pie
+                                data={[
+                                  { name: '완료', value: monthlyStats.trash.resolved },
+                                  { name: '미완료', value: monthlyStats.trash.pending }
+                                ]}
+                                cx="50%"
+                                cy="50%"
+                                innerRadius={30}
+                                outerRadius={40}
+                                dataKey="value"
+                                startAngle={90}
+                                endAngle={-270}
+                              >
+                                <Cell fill="#60a5fa" />
+                                <Cell fill="#dbeafe" />
+                              </Pie>
+                            </PieChart>
+                          </ResponsiveContainer>
+                          <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="text-gray-900 font-bold text-sm">
+                              {safePct(monthlyStats.trash.resolved, monthlyStats.trash.total)}%
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 낙석 사건 */}
+                    <div className="bg-blue-50 border-l-4 border-blue-400 p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <p className="text-sm text-gray-600 mb-1">낙석사건</p>
                           <p className="text-gray-900 mb-2" style={{ fontSize: '16px', fontWeight: '600' }}>
                             처리완료 {rockfallStats.resolved}/{rockfallStats.total}건
                           </p>
@@ -999,8 +1119,6 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                           <th className="text-center py-3 px-4 text-gray-700">대응시간</th>
                           <th className="text-center py-3 px-4 text-gray-700">상태</th>
                           <th className="text-center py-3 px-4 text-gray-700">발생경로</th>
-                          <th className="text-center py-3 px-4 text-gray-700">메모</th>
-                          <th className="text-center py-3 px-4 text-gray-700">삭제</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1039,8 +1157,8 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                                 type="date"
                                 value={incident.date}
                                 onChange={(e) => handleIncidentChange(incident.id, 'date', e.target.value)}
-                                min={new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1).toISOString().slice(0, 10)}
-                                max={new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0).toISOString().slice(0, 10)}
+                                min={formatKstDate(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1))}
+                                max={formatKstDate(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0))}
                                 className="screen-only w-full px-2 py-1 border border-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm text-gray-900"
                                 style={{ borderRadius: '0px' }}
                               />
@@ -1144,64 +1262,6 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                                 <option value="MIXED">혼합</option>
                               </select>
                             </td>
-
-                            {/* 메모 */}
-                            <td className="py-3 px-4 text-center">
-                              {/* 인쇄용: 메모 내용만 출력 */}
-                              <span className="print-only text-xs text-gray-700">
-                                {incident.memo || ''}
-                              </span>
-
-                              {/* 화면용: 메모 편집 UI */}
-                              {editingMemoId === incident.id ? (
-                                <div className="screen-only flex flex-col gap-1">
-                                  <textarea
-                                    value={memoText}
-                                    onChange={(e) => setMemoText(e.target.value)}
-                                    placeholder="메모 입력"
-                                    className="w-full px-2 py-1 border border-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-xs text-gray-900 resize-none print-plain"
-                                    style={{ borderRadius: '0px' }}
-                                    rows={2}
-                                  />
-                                  <div className="flex gap-1 justify-center">
-                                    <button
-                                      onClick={() => handleSaveMemo(incident.id)}
-                                      className="px-2 py-0.5 text-xs bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
-                                      style={{ borderRadius: '0px' }}
-                                    >
-                                      저장
-                                    </button>
-                                    <button
-                                      onClick={handleCancelMemo}
-                                      className="px-2 py-0.5 text-xs bg-gray-200 text-gray-700 hover:bg-gray-300 transition-colors"
-                                      style={{ borderRadius: '0px' }}
-                                    >
-                                      취소
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <button
-                                  onClick={() => handleOpenMemo(incident.id)}
-                                  className="screen-only p-1 text-gray-600 hover:text-emerald-600 transition-colors"
-                                  title={incident.memo ? `메모: ${incident.memo}` : '메모 추가'}
-                                >
-                                  <MessageSquare
-                                    className="w-4 h-4"
-                                    style={{ color: incident.memo ? '#059669' : '#6B7280' }}
-                                  />
-                                </button>
-                              )}
-                            </td>
-                            <td className="py-3 px-4 text-center">
-                              <button
-                                onClick={() => handleRemoveIncident(incident.id)}
-                                className="p-1 text-red-600 hover:bg-red-50 transition-colors"
-                                style={{ borderRadius: '0px' }}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -1270,14 +1330,9 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                   </div>
                 </section>
 
-                {/* 서명란 - 페이지 하단으로 */}
-                <div className="signature-footer mt-8 pt-6 border-t-2 border-gray-300">
-                  <div className="text-right">
-                    <p className="text-sm text-gray-600 mb-1">{publishDateStr}</p>
-                    <p className="text-sm text-gray-900">환경관리과장 [인]</p>
-                  </div>
-                </div>
               </div>
+              {/* ✅ 인쇄용 페이지 번호(브라우저 머리글/바닥글 대신) */}
+              <div className="print-only print-page-footer" />
             </div>
           )}
         </div>
@@ -1293,6 +1348,7 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                 onClick={() => {
                   setShowSearchModal(false);
                   setTargetIncidentId(null);
+                  setIsAddingIncident(false);
                 }}
                 className="p-1 text-gray-400 hover:text-gray-600 transition-colors"
               >
@@ -1325,8 +1381,8 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                   handleSearch(next);
                 }}
                 onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                min={new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1).toISOString().slice(0, 10)}
-                max={new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0).toISOString().slice(0, 10)}
+                min={formatKstDate(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth(), 1))}
+                max={formatKstDate(new Date(selectedMonth.getFullYear(), selectedMonth.getMonth() + 1, 0))}
                 className="px-3 py-2 border border-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-500 text-sm"
                 style={{ borderRadius: '0px' }}
               />
@@ -1403,16 +1459,17 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                 검색
               </button>
               <button
-                onClick={() => {
-                  setSearchFilters({
+                onClick={async () => {
+                  const blank = {
                     incidentId: '',
                     date: '',
                     type: '',
                     location: '',
                     severity: '',
                     status: ''
-                  });
-                  setSearchResults([]);
+                  };
+                  setSearchFilters(blank);
+                  await handleSearch(blank);
                 }}
                 className="px-4 py-2 border border-gray-300 text-gray-700 hover:bg-gray-50 transition-colors"
                 style={{ borderRadius: '0px' }}
@@ -1435,7 +1492,7 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
                       <div>
                         <div className="font-semibold text-sm text-gray-900">{result.incidentId}</div>
                         <div className="text-xs text-gray-600">
-                          {result.date} | {labelIncidentType(result.type)} | {result.location}
+                          {result.date} | {labelIncidentType(result.type)} | {result.location}{result.cctvId ? `/${result.cctvId}` : ''}
                         </div>
                       </div>
                       <div className="text-xs text-gray-500">
@@ -1454,18 +1511,22 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
 
       {/* 인쇄 스타일 */}
       <style>{`
-        /* 1. 다시 여백 0으로 설정 (헤더 숨김 시도) */
+        /* 1. A4 고정 (PDF 저장 안정화) */
         @page {
-          margin: 0;
-          size: auto;
+          size: A4 portrait;
+          margin: 20mm 15mm;
         }
 
         @media print {
+          /* (선택) 배경색/색상 인쇄 유지 */
+          * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+          }
+
           /* 2. 스크롤 방지 및 다중 페이지 흐름 필수 설정 */
           * {
             overflow: visible !important;
-            height: auto !important;
-            max-height: none !important;
           }
 
           html, body {
@@ -1478,12 +1539,11 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
 
           /* 3. 메인 컨텐츠 컨테이너 */
           .bg-white.shadow-lg {
-            width: 100% !important;
-            max-width: 100% !important;
-            margin: 0 !important;
-            
-            /* 상단 15mm 여백 확보 */
-            padding: 15mm 10mm 10mm 10mm !important; 
+            /* A4(210mm) - 좌우 여백(15mm*2) = 180mm */
+            width: 180mm !important;
+            max-width: 180mm !important;
+            margin: 0 auto !important;
+            padding: 0 !important;
             
             box-shadow: none !important;
             border: none !important;
@@ -1524,18 +1584,52 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
             display: inline !important;
           }
 
+          /* ✅ 표지(헤더/결재라인) 페이지 제거 */
+          .report-cover {
+            display: none !important;
+          }
+
           /* 7. 섹션 처리 */
           section {
             margin-bottom: 20px !important;
-            page-break-inside: avoid;
+            /* ✅ 섹션 전체가 통째로 다음 페이지로 밀리면서 큰 공백이 생기는 걸 방지 */
+            break-inside: auto !important;
+            page-break-inside: auto !important;
           }
-          
-          /* 8. 서명란 위치 */
-          .signature-footer {
-            margin-top: 60px !important;
+
+          /* 기존에 설정한 avoid-break만 보호 */
+          .avoid-break {
+            break-inside: avoid !important;
             page-break-inside: avoid !important;
           }
 
+          /* ✅ PDF에서만 월간 요약 2열 그리드가 1열로 무너지는 케이스 방지 */
+          .grid.grid-cols-2 {
+            display: grid !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 16px !important;
+          }
+          .grid.grid-cols-2 > div {
+            break-inside: avoid !important;
+            page-break-inside: avoid !important;
+          }
+
+          /* ✅ 인쇄용 페이지 번호 */
+          .print-page-footer {
+            display: block !important;
+            position: fixed;
+            left: 0;
+            right: 0;
+            bottom: 6mm;
+            padding-right: 10mm;
+            text-align: right;
+            font-size: 11px;
+            color: #6B7280;
+          }
+          .print-page-footer::after {
+            content: counter(page) " / " counter(pages);
+          }
+          
           /* 9. 기타 스타일 */
           .print-plain {
             border: none !important;

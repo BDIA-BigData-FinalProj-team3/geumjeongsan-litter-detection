@@ -17,9 +17,10 @@ import EmergencyMarkerIcon from '../components/EmergencyMarkerIcon';
 import TrashMarkerIcon from '../components/TrashMarkerIcon';
 import CCTVOnMarkerIcon from '../components/CCTVOnMarkerIcon';
 import CCTVOffMarkerIcon from '../components/CCTVOffMarkerIcon';
+import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
-import { getFireNotifications, getEmergencyNotifications, getTrashNotifications, getHelicopterLocations, getHotspots, getCCTVVideoClips, getCCTVMedia, getCCTVList, getActiveIncidents, getIncidentMarkers, getCCTVStatus, getMainMapWeather, getCCTVIncidents, getTrails, getRiskMapHeatmap, getFireDetail, getEmergencyDetail, getTrashDetail, getRockfallRiskData, type RiskMapHeatmapItem, type RockfallRiskItem } from '../services/api';
+import { getFireNotifications, getEmergencyNotifications, getTrashNotifications, getHelicopterLocations, getHotspots, getCCTVVideoClips, getCCTVMedia, getCCTVList, getActiveIncidents, getIncidentMarkers, getCCTVStatus, getMainMapWeather, getCCTVIncidents, getTrails, getRiskMapHeatmap, getUnifiedIncidentDetail, getRockfallRiskData, type RiskMapHeatmapItem, type RockfallRiskItem } from '../services/api';
 import { getRockfallRiskColor, getRockfallRiskColorWithOpacity, getRockfallRiskLevel } from '../utils/rockfallColors';
 import type { VideoClip } from '../services/mock';
 import type { CCTVMedia } from '../services/api';
@@ -587,6 +588,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   const [riskMapDropdownPosition, setRiskMapDropdownPosition] = useState({ top: 0, left: 0 });
   const [selectedNotification, setSelectedNotification] = useState<{
     cctvId: string;
+    incidentId?: string;
     type: 'fire' | 'emergency' | 'trash';
     location: string;
     time: string;
@@ -603,20 +605,14 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     type: 'fire' | 'emergency' | 'trash';
   } | null>(null);
   
-  // 개별 사건 상세보기 팝업 State
+  // ✅ 개별 사건 상세보기 팝업 State (대시보드 상세 단일 소스: IncidentDetailDto)
   const [incidentDetailPopup, setIncidentDetailPopup] = useState<{
-    type: 'fire';
-    detail: FireDetail;
-  } | {
-    type: 'emergency';
-    detail: EmergencyDetail;
-  } | {
-    type: 'trash';
-    detail: TrashDetail;
+    type: 'emergency' | 'fire' | 'trash' | 'rockfall';
+    detail: any;
   } | null>(null);
   
   const [isEditingIncident, setIsEditingIncident] = useState(false);
-  const [editedIncidentDetail, setEditedIncidentDetail] = useState<FireDetail | EmergencyDetail | TrashDetail | null>(null);
+  const [editedIncidentDetail, setEditedIncidentDetail] = useState<any | null>(null);
   
   // 오탐 처리 모달 State
   const [showFalseReportModal, setShowFalseReportModal] = useState(false);
@@ -670,6 +666,80 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     
     loadVideoClips();
   }, [videoDetailPopup]);
+
+  // IncidentDetailDto.type(한글) → IncidentDetailModal prop type
+  const toModalType = (koreanType?: string): 'fire' | 'emergency' | 'trash' | 'rockfall' => {
+    switch (koreanType) {
+      case '화재': return 'fire';
+      case '응급': return 'emergency';
+      case '쓰레기': return 'trash';
+      case '낙석': return 'rockfall';
+      default: return 'trash';
+    }
+  };
+
+  type MapNotificationItem = {
+    id: string;
+    cctvId: string;
+    location: string;
+    time: string;
+    confidence: string;
+    type: 'fire' | 'emergency' | 'trash';
+  };
+
+  const openIncidentDetailFromNotification = async (n: MapNotificationItem) => {
+    // 지도 하이라이트는 즉시 반영
+    setHighlightedCCTV(n.cctvId);
+
+    const incidentId = Number.parseInt(String(n.id), 10);
+    if (!Number.isFinite(incidentId)) {
+      // DB ID가 없으면(또는 파싱 실패) 기존 알림 팝업만 표시
+      setSelectedNotification({
+        cctvId: n.cctvId,
+        incidentId: undefined,
+        type: n.type,
+        location: n.location,
+        time: n.time,
+        confidence: n.confidence,
+      });
+      return;
+    }
+
+    try {
+      const detailData = await getUnifiedIncidentDetail(incidentId);
+      if (!detailData) {
+        setSelectedNotification({
+          cctvId: n.cctvId,
+          incidentId: String(incidentId),
+          type: n.type,
+          location: n.location,
+          time: n.time,
+          confidence: n.confidence,
+        });
+        alert('사건 정보를 가져올 수 없습니다.');
+        return;
+      }
+
+      // 상세 모달 오픈 (기존 단일 소스 사용)
+      setIncidentDetailPopup({ type: toModalType(detailData.type), detail: detailData });
+
+      // 알림 UI 정리
+      setShowNotifications(false);
+      setSelectedNotification(null);
+      setVideoDetailPopup(null);
+    } catch (error) {
+      console.error('❌ [MainMap] Failed to open incident detail from notification:', error);
+      setSelectedNotification({
+        cctvId: n.cctvId,
+        incidentId: String(incidentId),
+        type: n.type,
+        location: n.location,
+        time: n.time,
+        confidence: n.confidence,
+      });
+      alert('사건 정보를 가져오는 중 오류가 발생했습니다.');
+    }
+  };
 
   // selectedCCTV가 변경될 때 영상 리스트 로드
   useEffect(() => {
@@ -743,12 +813,9 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     return () => clearInterval(interval);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 알림 개수 변경 시 카운트 업데이트 및 전체 알림 데이터 업데이트
+  // 알림 개수 변경 시 "전체 알림 데이터"만 업데이트
+  // ✅ 사이드바 배지(진행중 사건 수)는 IncidentCountProvider에서 DB(진행중 사건) 기준으로 주기 갱신하므로 여기서 덮어쓰지 않음
   useEffect(() => {
-    setFireCount(fireNotifications.length);
-    setEmergencyCount(emergencyNotifications.length);
-    setTrashCount(trashNotifications.length);
-    
     // 모든 알림을 하나의 배열로 합치고 타입 정보 추가
     const allNotifs = [
       ...fireNotifications.map(n => ({ ...n, type: 'fire' as const })),
@@ -756,7 +823,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
       ...trashNotifications.map(n => ({ ...n, type: 'trash' as const }))
     ];
     setAllNotifications(allNotifs);
-  }, [fireNotifications, emergencyNotifications, trashNotifications, setFireCount, setEmergencyCount, setTrashCount, setAllNotifications]);
+  }, [fireNotifications, emergencyNotifications, trashNotifications, setAllNotifications]);
 
   const [removedCCTVs, setRemovedCCTVs] = useState<Set<string>>(new Set());
 
@@ -957,26 +1024,22 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   const [helicopterLocations, setHelicopterLocations] = useState<Array<{ id: string; x: number; y: number }>>([]);
   const [hotspotLocations, setHotspotLocations] = useState<Array<{ cctvId: string; x: number; y: number; location: string; count: number; type: 'fire' | 'emergency' | 'trash' }>>([]);
   const [trails, setTrails] = useState<any[]>([]);
+  const [mapDataLoading, setMapDataLoading] = useState(false);
+  const [mapDataError, setMapDataError] = useState<string | null>(null);
   
-  // Convert backend CCTV data to map-compatible format
-  const convertToMapMarker = (backendCCTV: BackendCCTVMarker): MapCCTVMarker => {
-    // 지도 이미지(금정산)의 대략적인 Bounding Box (추정치)
-    // 실제 지도 이미지의 경계 좌표를 정확히 맞춰야 마커가 제 위치에 뜸
-    // TODO: 정확한 지도 Bounding Box 좌표로 교체 필요
-    const MAP_BOUNDS = {
-      minLon: 129.05,  // 서쪽 끝 (금정산 실제 좌표)
-      maxLon: 129.075, // 동쪽 끝
-      minLat: 35.225,  // 남쪽 끝
-      maxLat: 35.245   // 북쪽 끝
-    };
-
-    // 위경도 -> 화면 % 좌표 변환 (0 ~ 100%)
-    let x = ((backendCCTV.longitude - MAP_BOUNDS.minLon) / (MAP_BOUNDS.maxLon - MAP_BOUNDS.minLon)) * 100;
-    let y = 100 - ((backendCCTV.latitude - MAP_BOUNDS.minLat) / (MAP_BOUNDS.maxLat - MAP_BOUNDS.minLat)) * 100;
-
-    // 범위 벗어나면 강제 클램핑 (화면 밖으로 안 나가게)
+  // 위경도 -> 화면 % 좌표 변환(0~100). 지도 경계(mapMaxBounds)를 기준으로 변환
+  const latLngToPercent = (latitude: number, longitude: number) => {
+    const [[minLat, minLng], [maxLat, maxLng]] = mapMaxBounds;
+    let x = ((longitude - minLng) / (maxLng - minLng)) * 100;
+    let y = 100 - ((latitude - minLat) / (maxLat - minLat)) * 100;
     x = Math.max(0, Math.min(100, x));
     y = Math.max(0, Math.min(100, y));
+    return { x, y };
+  };
+
+  // Convert backend CCTV data to map-compatible format
+  const convertToMapMarker = (backendCCTV: BackendCCTVMarker): MapCCTVMarker => {
+    const { x, y } = latLngToPercent(backendCCTV.latitude, backendCCTV.longitude);
     
     // Determine incidents from lastIncidentType
     const incidents: { fire?: number; emergency?: number; trash?: number } = {};
@@ -1006,15 +1069,17 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   // API에서 CCTV 마커, 헬리콥터 위치, 날씨 로드
   useEffect(() => {
     const loadMapData = async () => {
+      setMapDataLoading(true);
+      setMapDataError(null);
       try {
-        console.log("🚀 [MainMap] Loading Map Data...");
+        if (import.meta.env.DEV) console.log("🚀 [MainMap] Loading Map Data...");
         const [incidentMarkers, helicopters, weatherData] = await Promise.all([
           getIncidentMarkers(), // ✅ 새 API: CCTV별로 그룹화된 데이터
           getHelicopterLocations(),
           getMainMapWeather(), // ✅ 날씨 정보
         ]);
         
-        console.log("✅ [MainMap] Loaded Incident Markers:", incidentMarkers);
+        if (import.meta.env.DEV) console.log("✅ [MainMap] Loaded Incident Markers:", incidentMarkers);
 
         if (!incidentMarkers || incidentMarkers.length === 0) {
           console.warn("⚠️ [MainMap] No incident marker data received from API.");
@@ -1035,11 +1100,10 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             const longitude = marker.geom?.x || 0;  // ✅ 직접 x 접근
             const latitude = marker.geom?.y || 0;   // ✅ 직접 y 접근
             
-            // 위도/경도 → 백분율 변환 (금정산 범위 기준)
-            const x = ((longitude - 129.0) / (129.1 - 129.0)) * 100;
-            const y = ((35.3 - latitude) / (35.3 - 35.2)) * 100;
+            // 위도/경도 → 백분율 변환 (mapMaxBounds 기준)
+            const { x, y } = latLngToPercent(latitude, longitude);
             
-            console.log(`📍 [Marker] ${marker.cctvCode}: (${longitude}, ${latitude}) -> (${x.toFixed(2)}%, ${y.toFixed(2)}%)`);
+            if (import.meta.env.DEV) console.log(`📍 [Marker] ${marker.cctvCode}: (${longitude}, ${latitude}) -> (${x.toFixed(2)}%, ${y.toFixed(2)}%)`);
             
             return {
               id: marker.cctvCode,
@@ -1068,6 +1132,9 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         setWeather(weatherData);
       } catch (error) {
         console.error("❌ [MainMap] Error loading map data:", error);
+        setMapDataError('지도 데이터를 불러오지 못했습니다. (백엔드/DB 연결 상태를 확인해주세요)');
+      } finally {
+        setMapDataLoading(false);
       }
     };
     
@@ -1111,9 +1178,8 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             const longitude = status.geom?.x || 0;
             const latitude = status.geom?.y || 0;
             
-            // 위도/경도 → 백분율 변환
-            const x = ((longitude - 129.0) / (129.1 - 129.0)) * 100;
-            const y = ((35.3 - latitude) / (35.3 - 35.2)) * 100;
+            // 위도/경도 → 백분율 변환 (mapMaxBounds 기준)
+            const { x, y } = latLngToPercent(latitude, longitude);
             
             console.log(`📹 [CCTV] ${status.cctvCode}: ${status.displayStatus} (${longitude}, ${latitude})`);
             
@@ -1167,8 +1233,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               const longitude = marker.geom?.x || 0;
               const latitude = marker.geom?.y || 0;
               
-              const x = ((longitude - 129.0) / (129.1 - 129.0)) * 100;
-              const y = ((35.3 - latitude) / (35.3 - 35.2)) * 100;
+              const { x, y } = latLngToPercent(latitude, longitude);
               
               return {
                 id: marker.cctvCode,
@@ -1712,12 +1777,36 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                     return (
                       <div key={`${notification.type}-${notification.id}`} style={{ backgroundColor: bgColor, width: '100%', minHeight: isMobile ? '80px' : '79.742px', padding: isMobile ? '10px' : '8px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>
                         <div className="flex items-start justify-between">
-                          <button onClick={() => { setSelectedNotification({ cctvId: notification.cctvId, type: notification.type, location: notification.location, time: notification.time, confidence: notification.confidence }); setHighlightedCCTV(notification.cctvId); }} className="hover:opacity-80">
+                          <button
+                            onClick={async () => {
+                              await openIncidentDetailFromNotification({
+                                id: notification.id,
+                                cctvId: notification.cctvId,
+                                location: notification.location,
+                                time: notification.time,
+                                confidence: notification.confidence,
+                                type: notification.type,
+                              });
+                            }}
+                            className="hover:opacity-80"
+                          >
                             <span style={{ fontSize: '15px', color: titleColor, fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.cctvId}</span>
                           </button>
                           <span style={{ fontSize: '11px', color: textColor, fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.timeAgo}</span>
                         </div>
-                        <button onClick={() => { setSelectedNotification({ cctvId: notification.cctvId, type: notification.type, location: notification.location, time: notification.time, confidence: notification.confidence }); setHighlightedCCTV(notification.cctvId); }} className="text-left w-full">
+                        <button
+                          onClick={async () => {
+                            await openIncidentDetailFromNotification({
+                              id: notification.id,
+                              cctvId: notification.cctvId,
+                              location: notification.location,
+                              time: notification.time,
+                              confidence: notification.confidence,
+                              type: notification.type,
+                            });
+                          }}
+                          className="text-left w-full"
+                        >
                           <p style={{ fontSize: '12px', color: textColor, fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.location}에서 {eventText} 탐지</p>
                         </button>
                         <div className="flex items-center justify-between">
@@ -1743,12 +1832,36 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                 {fireNotifications.map((notification) => (
                   <div key={notification.id} style={{ backgroundColor: '#FFC7C7', width: '100%', minHeight: isMobile ? '80px' : '79.742px', padding: isMobile ? '10px' : '8px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>
                     <div className="flex items-start justify-between">
-                      <button onClick={() => { setSelectedNotification({ cctvId: notification.cctvId, type: 'fire', location: notification.location, time: notification.time, confidence: notification.confidence }); setHighlightedCCTV(notification.cctvId); }} className="hover:opacity-80">
+                      <button
+                        onClick={async () => {
+                          await openIncidentDetailFromNotification({
+                            id: notification.id,
+                            cctvId: notification.cctvId,
+                            location: notification.location,
+                            time: notification.time,
+                            confidence: notification.confidence,
+                            type: 'fire',
+                          });
+                        }}
+                        className="hover:opacity-80"
+                      >
                         <span style={{ fontSize: '15px', color: '#FF5A5A', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.cctvId}</span>
                       </button>
                       <span style={{ fontSize: '11px', color: '#962C2C', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.timeAgo}</span>
                     </div>
-                    <button onClick={() => { setSelectedNotification({ cctvId: notification.cctvId, type: 'fire', location: notification.location, time: notification.time, confidence: notification.confidence }); setHighlightedCCTV(notification.cctvId); }} className="text-left w-full">
+                    <button
+                      onClick={async () => {
+                        await openIncidentDetailFromNotification({
+                          id: notification.id,
+                          cctvId: notification.cctvId,
+                          location: notification.location,
+                          time: notification.time,
+                          confidence: notification.confidence,
+                          type: 'fire',
+                        });
+                      }}
+                      className="text-left w-full"
+                    >
                       <p style={{ fontSize: '12px', color: '#962C2C', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.location}에서 화재 탐지</p>
                     </button>
                     <div className="flex items-center justify-between">
@@ -1767,12 +1880,36 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                 {emergencyNotifications.map((notification) => (
                   <div key={notification.id} style={{ backgroundColor: '#FFB366', width: '100%', minHeight: isMobile ? '80px' : '79.742px', padding: isMobile ? '10px' : '8px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>
                     <div className="flex items-start justify-between">
-                      <button onClick={() => { setSelectedNotification({ cctvId: notification.cctvId, type: 'emergency', location: notification.location, time: notification.time, confidence: notification.confidence }); setHighlightedCCTV(notification.cctvId); }} className="hover:opacity-80">
+                      <button
+                        onClick={async () => {
+                          await openIncidentDetailFromNotification({
+                            id: notification.id,
+                            cctvId: notification.cctvId,
+                            location: notification.location,
+                            time: notification.time,
+                            confidence: notification.confidence,
+                            type: 'emergency',
+                          });
+                        }}
+                        className="hover:opacity-80"
+                      >
                         <span style={{ fontSize: '15px', color: '#CC6600', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.cctvId}</span>
                       </button>
                       <span style={{ fontSize: '11px', color: '#994D00', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.timeAgo}</span>
                     </div>
-                    <button onClick={() => { setSelectedNotification({ cctvId: notification.cctvId, type: 'emergency', location: notification.location, time: notification.time, confidence: notification.confidence }); setHighlightedCCTV(notification.cctvId); }} className="text-left w-full">
+                    <button
+                      onClick={async () => {
+                        await openIncidentDetailFromNotification({
+                          id: notification.id,
+                          cctvId: notification.cctvId,
+                          location: notification.location,
+                          time: notification.time,
+                          confidence: notification.confidence,
+                          type: 'emergency',
+                        });
+                      }}
+                      className="text-left w-full"
+                    >
                       <p style={{ fontSize: '12px', color: '#994D00', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.location}에서 응급 탐지</p>
                     </button>
                     <div className="flex items-center justify-between">
@@ -1791,12 +1928,36 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                 {trashNotifications.map((notification) => (
                   <div key={notification.id} style={{ backgroundColor: '#9BACBF', width: '100%', minHeight: isMobile ? '80px' : '79.742px', padding: isMobile ? '10px' : '8px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>
                     <div className="flex items-start justify-between">
-                      <button onClick={() => { setSelectedNotification({ cctvId: notification.cctvId, type: 'trash', location: notification.location, time: notification.time, confidence: notification.confidence }); setHighlightedCCTV(notification.cctvId); }} className="hover:opacity-80">
+                      <button
+                        onClick={async () => {
+                          await openIncidentDetailFromNotification({
+                            id: notification.id,
+                            cctvId: notification.cctvId,
+                            location: notification.location,
+                            time: notification.time,
+                            confidence: notification.confidence,
+                            type: 'trash',
+                          });
+                        }}
+                        className="hover:opacity-80"
+                      >
                         <span style={{ fontSize: '15px', color: '#142744', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.cctvId}</span>
                       </button>
                       <span style={{ fontSize: '11px', color: '#224A6D', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.timeAgo}</span>
                     </div>
-                    <button onClick={() => { setSelectedNotification({ cctvId: notification.cctvId, type: 'trash', location: notification.location, time: notification.time, confidence: notification.confidence }); setHighlightedCCTV(notification.cctvId); }} className="text-left w-full">
+                    <button
+                      onClick={async () => {
+                        await openIncidentDetailFromNotification({
+                          id: notification.id,
+                          cctvId: notification.cctvId,
+                          location: notification.location,
+                          time: notification.time,
+                          confidence: notification.confidence,
+                          type: 'trash',
+                        });
+                      }}
+                      className="text-left w-full"
+                    >
                       <p style={{ fontSize: '12px', color: '#224A6D', fontFamily: 'NanumSquareBold, NanumSquare, sans-serif', fontWeight: 700 }}>{notification.location}에서 쓰레기 투기 탐지</p>
                     </button>
                     <div className="flex items-center justify-between">
@@ -2075,6 +2236,20 @@ export default function MainMap({ onNavigate }: MainMapProps) {
       )}
 
       <div className="flex-1 relative bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300" style={{ marginLeft: sidebarOpen ? (isMobile ? '0px' : '256px') : '0px', transition: 'margin-left 0.3s' }}>
+        {/* 데이터 로딩/에러 상태 (전문가 UX: 명확한 상태 표시) */}
+        {mapDataLoading && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/40 backdrop-blur-sm">
+            <div className="bg-white border border-gray-200 px-4 py-3 shadow-md text-gray-900 text-sm font-semibold">
+              지도 데이터 불러오는 중…
+            </div>
+          </div>
+        )}
+        {mapDataError && !mapDataLoading && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-20 bg-red-50 border border-red-200 text-red-700 px-4 py-2 text-sm shadow-md">
+            {mapDataError}
+          </div>
+        )}
+
         {/* 알림 버튼 - 오른쪽 상단 - 반응형 */}
         <div className="absolute top-6 z-20" style={{ right: isMobile ? '12px' : '24px' }}>
           <NotificationBellButton 
@@ -2289,7 +2464,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                 </div>`;
               } else if (isNeedCheck) {
                 // NEED_CHECK 마커 (기존 ON + 경고 아이콘)
-                iconHtml = `<div style="width: 64px; height: 82px; position: relative; pointer-events: auto;">
+                iconHtml = `<div class="map-marker-wrap" style="pointer-events: auto;">
                   <svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="95.975 -44.5 98 126" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75)); pointer-events: none !important;">
                     <g style="pointer-events: none !important;">
                       <g>
@@ -2301,7 +2476,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                       <text transform="matrix(1 0 0 1 124.0278 2.4097)" fill="#FFFFFF" font-family="NanumSquareB" font-size="20">ON</text>
                     </g>
                   </svg>
-                  <div style="position: absolute; top: -4px; right: 8px; width: 16px; height: 16px; background: #EAB308; border-radius: 50%; border: 2px solid white; display: flex; align-items: center; justify-content: center; pointer-events: none !important;">
+                  <div class="map-marker-warn">
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" style="pointer-events: none !important;">
                       <circle cx="12" cy="12" r="10"/>
                       <line x1="12" y1="8" x2="12" y2="12"/>
@@ -2366,7 +2541,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               let iconHtml = '';
               if (priority.type === 'fire') {
                 // 화재 마커
-                iconHtml = `<div style="width: 64px; height: 82px; position: relative;">
+                iconHtml = `<div class="map-marker-wrap">
                   <svg viewBox="0 0 96.72 125.04" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75));">
                     <g>
                       <path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" d="M74.481,41.241c0,18.358-33.24,61.788-33.24,61.788 S8,59.6,8,41.241C8,22.882,22.883,8,41.241,8S74.481,22.882,74.481,41.241z"/>
@@ -2376,11 +2551,11 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                       <path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" d="M39.315,62.526c-1.129-0.265-2.201-0.461-3.24-0.768 c-3.325-0.981-6.234-2.669-8.475-5.351c-3.346-4.005-3.923-8.571-2.506-13.47c0.9-3.116,2.497-5.878,4.46-8.513 c1.253,1.481,2.71,2.619,4.431,3.455c0.192-1.104,0.336-2.173,0.57-3.221c0.486-2.171,1.583-4.062,2.759-5.922 c0.688-1.088,1.359-2.202,1.874-3.377c0.9-2.051,0.513-4.109-0.238-6.125c-0.096-0.258-0.192-0.516-0.286-0.775 c-0.005-0.014,0.018-0.037,0.061-0.123c0.323,0.133,0.664,0.25,0.983,0.41c5.765,2.889,9.475,7.502,11.36,13.621 c0.751,2.437,1.179,4.941,1.136,7.492c-0.02,1.173,1.105,1.772,1.99,1.183c0.793-0.528,1.469-1.236,2.168-1.895 c0.28-0.264,0.485-0.607,0.835-1.056c0.18,0.884,0.358,1.626,0.478,2.377c0.55,3.489,0.664,6.97-0.154,10.445 c-1.42,6.037-6.055,10.397-12.136,11.284c0.237-0.108,0.475-0.216,0.713-0.324c2.647-1.206,4.573-3.046,5.035-6.039 c0.138-0.891,0.072-1.846-0.075-2.742c-0.33-1.998-1.318-3.71-2.477-5.282c-0.792,0.606-1.55,1.186-2.468,1.888 c-0.06-2.291-1.013-4.01-2.138-5.657c-0.935-1.371-1.033-2.822-0.469-4.35c0.046-0.126,0.088-0.254,0.132-0.381 c-0.041-0.056-0.082-0.111-0.123-0.167c-0.83,0.53-1.714,0.993-2.482,1.603c-2.485,1.972-3.836,4.612-4.328,7.712 c-0.104,0.658-0.141,1.328-0.183,1.994c-0.052,0.837-0.525,1.109-1.242,0.667c-0.27-0.167-0.502-0.402-0.73-0.629 c-0.209-0.209-0.389-0.448-0.732-0.852c-0.151,1.162-0.342,2.141-0.396,3.126c-0.17,3.073,0.414,5.919,2.922,7.986 C37.194,61.451,38.253,61.901,39.315,62.526z"/>
                     </g>
                   </svg>
-                  ${priority.count > 1 ? `<div style="position: absolute; top: 0; right: 0; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 11px; font-weight: bold; background: #DC2626; border: 2px solid white;">${priority.count}</div>` : ''}
+                  ${priority.count > 1 ? `<div class="map-marker-badge" style="background:#DC2626;">${priority.count}</div>` : ''}
                 </div>`;
               } else if (priority.type === 'emergency') {
                 // 응급 마커
-                iconHtml = `<div style="width: 64px; height: 82px; position: relative;">
+                iconHtml = `<div class="map-marker-wrap">
                   <svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="86.725 -31.25 97 126" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75));">
                     <g>
                       <g>
@@ -2392,11 +2567,11 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                       <polygon fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" points="142.863,5.29 132.968,5.29 132.968,-4.604 123.301,-4.604 123.301,5.29 113.406,5.29 113.406,14.956 123.301,14.956 123.301,24.853 132.968,24.853 132.968,14.956 142.863,14.956"/>
                     </g>
                   </svg>
-                  ${priority.count > 1 ? `<div style="position: absolute; top: 0; right: 0; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 11px; font-weight: bold; background: #F97316; border: 2px solid white;">${priority.count}</div>` : ''}
+                  ${priority.count > 1 ? `<div class="map-marker-badge" style="background:#F97316;">${priority.count}</div>` : ''}
                 </div>`;
               } else {
                 // 쓰레기 마커
-                iconHtml = `<div style="width: 64px; height: 82px; position: relative;">
+                iconHtml = `<div class="map-marker-wrap">
                   <svg viewBox="-147.14 4.02 65 80" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75));">
                     <g>
                       <g>
@@ -2413,7 +2588,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                       </g>
                     </g>
                   </svg>
-                  ${priority.count > 1 ? `<div style="position: absolute; top: 0; right: 0; width: 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; color: white; font-size: 10px; font-weight: bold; background: #10B981; border: 2px solid white;">${priority.count}</div>` : ''}
+                  ${priority.count > 1 ? `<div class="map-marker-badge" style="background:#10B981;">${priority.count}</div>` : ''}
                 </div>`;
               }
               
@@ -3222,60 +3397,30 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                         <div className="flex gap-2">
                           <button
                             onClick={async () => {
-                              // 사건 상세정보 팝업 열기
-                              // media에 incidentId가 있으면 실제 DB에서 가져오기
-                              if ((media as any).incidentId) {
-                                const incidentId = typeof (media as any).incidentId === 'string' 
-                                  ? parseInt((media as any).incidentId) 
-                                  : (media as any).incidentId;
-                                
-                                try {
-                                  let detailData;
-                                  if (mockIncidentType === 'fire') {
-                                    detailData = await getFireDetail(incidentId);
-                                  } else if (mockIncidentType === 'emergency') {
-                                    detailData = await getEmergencyDetail(incidentId);
-                                  } else {
-                                    detailData = await getTrashDetail(incidentId);
-                                  }
-                                  
-                                  if (detailData) {
-                                    setIncidentDetailPopup({
-                                      type: mockIncidentType as 'fire' | 'emergency' | 'trash',
-                                      detail: {
-                                        accidentCode: detailData.accidentCode || (media as any).incidentCode || `INC-${incidentId}`,
-                                        cctvId: detailData.cctvCode || detailData.cctvId || selectedCCTV?.cctv.cctvCode || selectedCCTV?.cctv.id || 'CCTV-001',
-                                        location: detailData.location || selectedCCTV?.cctv.location || '위치 정보 없음',
-                                        detectedAt: detailData.time || media.timestamp,
-                                        confidence: detailData.confidence || '85%',
-                                        status: detailData.status || mockIncidentStatus,
-                                        processor: detailData.handler || '담당자',
-                                        modelName: detailData.modelName || 'FireDetect-v2',
-                                        modelVersion: detailData.modelVersion || '2.1.0'
-                                      } as any
-                                    });
-                                    return;
-                                  }
-                                } catch (error) {
-                                  console.error('❌ [MainMap] Failed to load incident detail:', error);
-                                }
+                              // ✅ 상세는 DB(대시보드 상세) 단일 소스만 사용
+                              if (!(media as any).incidentId) {
+                                alert('DB에 저장된 사건만 상세정보를 볼 수 있습니다.');
+                                return;
                               }
-                              
-                              // incidentId가 없거나 API 호출 실패 시 임시 데이터 사용
-                              setIncidentDetailPopup({
-                                type: mockIncidentType as 'fire' | 'emergency' | 'trash',
-                                detail: {
-                                  accidentCode: (media as any).incidentCode || '정보 없음',
-                                  cctvId: selectedCCTV?.cctv.cctvCode || selectedCCTV?.cctv.id || 'CCTV-001',
-                                  location: selectedCCTV?.cctv.location || '위치 정보 없음',
-                                  detectedAt: media.timestamp,
-                                  confidence: '85%',
-                                  status: mockIncidentStatus,
-                                  processor: '담당자',
-                                  modelName: 'FireDetect-v2',
-                                  modelVersion: '2.1.0'
-                                } as any
-                              });
+
+                              const incidentId = typeof (media as any).incidentId === 'string'
+                                ? parseInt((media as any).incidentId)
+                                : (media as any).incidentId;
+
+                              try {
+                                const detailData = await getUnifiedIncidentDetail(incidentId);
+                                if (!detailData) {
+                                  alert('사건 정보를 가져올 수 없습니다.');
+                                  return;
+                                }
+                                setIncidentDetailPopup({
+                                  type: toModalType(detailData.type),
+                                  detail: detailData,
+                                });
+                              } catch (error) {
+                                console.error('❌ [MainMap] Failed to load incident detail:', error);
+                                alert('사건 정보를 가져오는 중 오류가 발생했습니다.');
+                              }
                             }}
                             className="flex-1 px-3 py-2 text-xs bg-blue-500 text-white hover:bg-blue-600 transition-colors flex items-center justify-center gap-1"
                             style={{ borderRadius: '0px' }}
@@ -3686,70 +3831,12 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                 const incidentId = parseInt(videoDetailPopup.incidentId);
                 
                 try {
-                  if (videoDetailPopup.type === 'fire') {
-                    // 화재 상세 정보 API 호출
-                    const detailData = await getFireDetail(incidentId);
-                    if (!detailData) {
-                      alert('사건 정보를 가져올 수 없습니다.');
-                      return;
-                    }
-                    
-                    const fireDetail: FireDetail = {
-                      id: detailData.id,
-                      accidentCode: detailData.accidentCode || videoDetailPopup.incidentCode || `INC-${incidentId}`,
-                      cctvId: detailData.cctvCode || detailData.cctvId || videoDetailPopup.cctvId,
-                      time: detailData.time || videoDetailPopup.time,
-                      status: detailData.status || '대기중',
-                      severity: detailData.severity === '상' ? 'high' : detailData.severity === '중' ? 'medium' : 'low',
-                      windSpeed: detailData.windSpeed || detailData.windInfo || '정보 없음',
-                      handler: detailData.handler || '미배정',
-                      location: detailData.location || videoDetailPopup.location,
-                      detectionBasis: detailData.detectionBasis || 'AI 자동 탐지',
-                    };
-                    setIncidentDetailPopup({ type: 'fire', detail: fireDetail });
-                  } else if (videoDetailPopup.type === 'emergency') {
-                    // 응급 상세 정보 API 호출
-                    const detailData = await getEmergencyDetail(incidentId);
-                    if (!detailData) {
-                      alert('사건 정보를 가져올 수 없습니다.');
-                      return;
-                    }
-                    
-                    const emergencyDetail: EmergencyDetail = {
-                      id: detailData.id,
-                      accidentCode: detailData.accidentCode || videoDetailPopup.incidentCode || `INC-${incidentId}`,
-                      type: detailData.type || '응급',
-                      cctvId: detailData.cctvCode || detailData.cctvId || videoDetailPopup.cctvId,
-                      time: detailData.time || videoDetailPopup.time,
-                      status: detailData.status || '대기중',
-                      severity: detailData.severity === '상' ? 'high' : detailData.severity === '중' ? 'medium' : 'low',
-                      handler: detailData.handler || '미배정',
-                      location: detailData.location || videoDetailPopup.location,
-                      detectionBasis: detailData.detectionBasis || 'AI 자동 탐지',
-                    };
-                    setIncidentDetailPopup({ type: 'emergency', detail: emergencyDetail });
-                  } else {
-                    // 쓰레기 상세 정보 API 호출
-                    const detailData = await getTrashDetail(incidentId);
-                    if (!detailData) {
-                      alert('사건 정보를 가져올 수 없습니다.');
-                      return;
-                    }
-                    
-                    const trashDetail: TrashDetail = {
-                      id: detailData.id,
-                      accidentCode: detailData.accidentCode || videoDetailPopup.incidentCode || `INC-${incidentId}`,
-                      cctvId: detailData.cctvCode || detailData.cctvId || videoDetailPopup.cctvId,
-                      time: detailData.time || videoDetailPopup.time,
-                      status: detailData.status || '미처리',
-                      severity: detailData.severity === '상' ? 'high' : detailData.severity === '중' ? 'medium' : 'low',
-                      type: detailData.trashType || '무단투기',
-                      handler: detailData.handler || '미배정',
-                      location: detailData.location || videoDetailPopup.location,
-                      detectionBasis: detailData.detectionBasis || 'AI 자동 탐지',
-                    };
-                    setIncidentDetailPopup({ type: 'trash', detail: trashDetail });
+                  const detailData = await getUnifiedIncidentDetail(incidentId);
+                  if (!detailData) {
+                    alert('사건 정보를 가져올 수 없습니다.');
+                    return;
                   }
+                  setIncidentDetailPopup({ type: toModalType(detailData.type), detail: detailData });
                 } catch (error) {
                   console.error('❌ [MainMap] Failed to load incident detail:', error);
                   alert('사건 정보를 가져오는 중 오류가 발생했습니다.');
@@ -3846,8 +3933,34 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         </div>
       )}
 
-      {/* 개별 사건 상세보기 팝업 - 반응형 */}
-      {incidentDetailPopup && incidentDetailPopup.type === 'fire' && (
+      {/* ✅ 개별 사건 상세보기: 대시보드 상세 단일 소스(IncidentDetailDto) */}
+      {incidentDetailPopup && (
+        <IncidentDetailModal
+          type={incidentDetailPopup.type}
+          detail={incidentDetailPopup.detail}
+          isEditing={isEditingIncident}
+          editedDetail={editedIncidentDetail}
+          onClose={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); setEditedIncidentDetail(null); }}
+          onEditClick={() => {
+            setIsEditingIncident(true);
+            setEditedIncidentDetail({ ...incidentDetailPopup.detail });
+          }}
+          onSave={() => {
+            setIsEditingIncident(false);
+            setEditedIncidentDetail(null);
+          }}
+          onCancel={() => {
+            setIsEditingIncident(false);
+            setEditedIncidentDetail(null);
+          }}
+          onFieldChange={(field, value) => {
+            setEditedIncidentDetail((prev: any) => ({ ...(prev || {}), [field]: value }));
+          }}
+        />
+      )}
+
+      {/* (legacy) 개별 사건 상세보기 팝업 - 더 이상 사용하지 않음 */}
+      {incidentDetailPopup && incidentDetailPopup.type === 'fire' && false && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" style={{ zIndex: 10000, padding: isMobile ? '0' : '16px' }} onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }}>
           <div className="bg-white shadow-xl w-full overflow-y-auto" style={{ maxWidth: isMobile ? '100vw' : '1100px', maxHeight: isMobile ? '100vh' : '95vh', borderRadius: isMobile ? '0' : '8px' }} onClick={(e) => e.stopPropagation()}>
             {/* 모달 헤더 */}
@@ -4162,7 +4275,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
       )}
 
       {/* 응급 상세보기 팝업 - 반응형 */}
-      {incidentDetailPopup && incidentDetailPopup.type === 'emergency' && (
+      {incidentDetailPopup && incidentDetailPopup.type === 'emergency' && false && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" style={{ zIndex: 10000, padding: isMobile ? '0' : '16px' }} onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }}>
           <div className="bg-white shadow-xl w-full overflow-y-auto" style={{ maxWidth: isMobile ? '100vw' : '1100px', maxHeight: isMobile ? '100vh' : '95vh', borderRadius: isMobile ? '0' : '8px' }} onClick={(e) => e.stopPropagation()}>
             {/* 모달 헤더 */}
@@ -4536,7 +4649,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
       )}
 
       {/* 쓰레기 투기 상세보기 팝업 - 반응형 */}
-      {incidentDetailPopup && incidentDetailPopup.type === 'trash' && (
+      {incidentDetailPopup && incidentDetailPopup.type === 'trash' && false && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" style={{ zIndex: 10000, padding: isMobile ? '0' : '16px' }} onClick={() => { setIncidentDetailPopup(null); setIsEditingIncident(false); }}>
           <div className="bg-white shadow-xl w-full overflow-y-auto" style={{ maxWidth: isMobile ? '100vw' : '1100px', maxHeight: isMobile ? '100vh' : '95vh', borderRadius: isMobile ? '0' : '8px' }} onClick={(e) => e.stopPropagation()}>
             {/* 모달 헤더 */}
@@ -5136,8 +5249,8 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         );
       })()}
 
-      {/* 오탐 처리 모달 - 반응형 */}
-      {showFalseReportModal && (
+      {/* (legacy) 오탐 처리 모달 - 더 이상 사용하지 않음 */}
+      {showFalseReportModal && false && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center" style={{ zIndex: 15000, padding: isMobile ? '20px' : '16px' }} onClick={() => { setShowFalseReportModal(false); setFalseReportReason(''); }}>
           <div className="bg-white shadow-xl w-full" style={{ borderRadius: isMobile ? '12px' : '8px', maxWidth: isMobile ? '90vw' : '28rem' }} onClick={(e) => e.stopPropagation()}>
             {/* 모달 헤더 */}
