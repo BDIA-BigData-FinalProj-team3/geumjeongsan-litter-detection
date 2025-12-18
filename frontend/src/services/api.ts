@@ -2407,10 +2407,9 @@ export const analyzeEmergencyVideo = async (
 
 /**
  * 쓰레기 프레임(1장) Gemini 분석 + (옵션) DB 저장
- * POST /api/cctv/{cctvCode}/frame/analyze-trash-gemini-base64
+ * POST /api/cctv/{cctvCode}/frame/analyze-with-gemini
  * 
- * CloudFront가 multipart/form-data를 차단하므로,
- * Blob을 Base64로 변환하여 JSON으로 전송
+ * Qwen과 동일한 multipart/form-data 방식 사용 (CloudFront 호환)
  * - 프론트에서 비디오 재생 중 버튼 클릭 시점의 프레임을 캡처하여 전송
  * - 백엔드에서 원본 프레임을 S3에 저장 (증거 보관)
  */
@@ -2419,28 +2418,19 @@ export const analyzeTrashFrameWithGemini = async (
   file: Blob,
   params?: { saveToDb?: boolean }
 ): Promise<any> => {
-  // 1. Blob -> Base64 변환 (dataURL prefix 제거)
-  const base64 = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = String(reader.result || '');
-      // data:image/jpeg;base64, 제거하고 순수 base64만 추출
-      const base64Data = result.includes(',') ? result.split(',')[1] : result;
-      resolve(base64Data);
-    };
-    reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
-    reader.readAsDataURL(file);
-  });
+  // FormData로 전송 (Qwen과 동일한 방식)
+  const formData = new FormData();
+  formData.append('image', file, 'frame.jpg');
+  if (params?.saveToDb !== undefined) {
+    formData.append('saveToDb', String(params.saveToDb));
+  }
 
-  // 2. JSON 요청 (CloudFront 호환)
-  const url = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/frame/analyze-trash-gemini-base64`;
+  // multipart/form-data 요청
+  const url = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/frame/analyze-with-gemini`;
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      imageBase64: base64,
-      saveToDb: params?.saveToDb ?? true
-    })
+    body: formData
+    // Content-Type은 브라우저가 자동으로 설정 (multipart/form-data; boundary=...)
   });
   
   if (!res.ok) {
