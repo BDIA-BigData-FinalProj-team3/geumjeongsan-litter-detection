@@ -79,6 +79,9 @@ public class CCTVController {
     @Value("${gemini.prompt.emergency-analysis:}")
     private String emergencyAnalysisPrompt;
 
+    @Value("${gemini.prompt.fire-bbox-analysis:}")
+    private String fireBboxAnalysisPrompt;
+
     /**
      * FFmpeg 실행 커맨드/경로
      * - 기본값: "ffmpeg" (PATH에서 찾음)
@@ -765,6 +768,133 @@ public class CCTVController {
             
         } catch (Exception e) {
             log.error("❌ [CCTV] Failed to analyze frame with Gemini for {}", cctvCode, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+    
+    /**
+     * 화재 분석: 여러 프레임을 Gemini로 분석
+     * POST /api/cctv/{cctvCode}/frame/analyze-fire-multi
+     *
+     * @param cctvCode - CCTV 코드 (예: "CCTV-002")
+     * @param imageFiles - 업로드된 이미지 파일들 (4장)
+     * @param saveToDb - DB 저장 여부 (기본 true)
+     * @return 화재 분석 결과
+     */
+    @PostMapping("/{cctvCode}/frame/analyze-fire-multi")
+    public ResponseEntity<?> analyzeFireFrames(
+            @PathVariable String cctvCode,
+            @RequestParam("images") MultipartFile[] imageFiles,
+            @RequestParam(value = "saveToDb", defaultValue = "true") boolean saveToDb
+    ) {
+        try {
+            log.info("🔥 [CCTV] Analyzing {} fire frames for: {}", imageFiles.length, cctvCode);
+            
+            String cameraId = cctvCode.toLowerCase();
+            List<String> frameUrls = new ArrayList<>();
+            List<String> overlayUrls = new ArrayList<>();
+            int totalDetectionCount = 0;
+            boolean fireDetected = false;
+            
+            // 각 프레임 처리
+            for (int i = 0; i < imageFiles.length; i++) {
+                log.info("🖼️ [CCTV] Processing frame {}/{}", i + 1, imageFiles.length);
+                
+                byte[] imageBytes = imageFiles[i].getBytes();
+                
+                // 1. S3에 원본 업로드
+                String frameKey = s3Service.uploadFrame(imageBytes, cameraId);
+                String frameUrl = s3Service.toHttpUrl(frameKey);
+                frameUrls.add(frameUrl);
+                log.info("📤 [CCTV] Frame {} uploaded to S3: {}", i + 1, frameKey);
+                
+                // 2. Gemini 분석 (fire-bbox-analysis 프롬프트)
+                String base64 = Base64.getEncoder().encodeToString(imageBytes);
+                
+                String prompt = (fireBboxAnalysisPrompt != null && !fireBboxAnalysisPrompt.isBlank())
+                        ? fireBboxAnalysisPrompt
+                        : "Detect fire and smoke in this image and return JSON with detections array.";
+                
+                log.info("🤖 [CCTV] Calling Gemini for frame {}", i + 1);
+                String geminiText = geminiService.analyzeImage(prompt, base64);
+                Map<String, Object> parsedJson = extractJsonFromGeminiResponse(geminiText);
+                
+                if (parsedJson == null) {
+                    log.warn("⚠️ [CCTV] Failed to parse Gemini response for frame {}", i + 1);
+                    continue;
+                }
+                
+                // 3. detections 추출
+                List<Map<String, Object>> detections = new ArrayList<>();
+                if (parsedJson.get("detections") instanceof List<?> list) {
+                    try {
+                        @SuppressWarnings("unchecked")
+                        List<Map<String, Object>> dets = (List<Map<String, Object>>) list;
+                        detections = dets != null ? dets : new ArrayList<>();
+                    } catch (Exception ignore) {}
+                }
+                
+                if (!detections.isEmpty()) {
+                    fireDetected = true;
+                    totalDetectionCount += detections.size();
+                    log.info("🔥 [CCTV] Frame {} detected {} fire/smoke objects", i + 1, detections.size());
+                    
+                    // 4. overlay 생성 + S3 업로드
+                    try {
+                        byte[] overlayBytes = imageOverlayService.drawOverlayJpeg(imageBytes, detections);
+                        String overlayKey = s3Service.uploadOverlayFrame(overlayBytes, cameraId);
+                        String overlayUrl = s3Service.toHttpUrl(overlayKey);
+                        overlayUrls.add(overlayUrl);
+                        log.info("✅ [CCTV] Frame {} overlay uploaded: {}", i + 1, overlayUrl);
+                    } catch (Exception e) {
+                        log.warn("⚠️ [CCTV] Failed to create overlay for frame {}: {}", i + 1, e.getMessage());
+                    }
+                } else {
+                    log.info("✅ [CCTV] Frame {}: No fire/smoke detected", i + 1);
+                }
+            }
+            
+            // 5. DB 저장 (화재 감지 시)
+            Long incidentId = null;
+            String incidentCode = null;
+            boolean savedToDbResult = false;
+            
+            if (saveToDb && fireDetected) {
+                try {
+                    log.info("💾 [CCTV] Saving fire incident to database");
+                    Long resolvedCctvId = resolveCctvId(null, cctvCode);
+                    
+                    // TODO: FireService 구현 후 활성화
+                    // var createResponse = fireService.createFireIncident(...);
+                    // incidentId = createResponse.getIncidentId();
+                    // incidentCode = createResponse.getIncidentCode();
+                    // savedToDbResult = true;
+                    
+                    log.warn("⚠️ [CCTV] Fire incident DB save not implemented yet");
+                    
+                } catch (Exception e) {
+                    log.error("❌ [CCTV] Failed to save fire incident to DB", e);
+                }
+            }
+            
+            // 6. 응답
+            Map<String, Object> response = new HashMap<>();
+            response.put("fireDetected", fireDetected);
+            response.put("frameUrls", frameUrls);
+            response.put("overlayUrls", overlayUrls);
+            response.put("detectionCount", totalDetectionCount);
+            response.put("savedToDb", savedToDbResult);
+            if (incidentId != null) {
+                response.put("incidentId", incidentId);
+                response.put("incidentCode", incidentCode);
+            }
+            
+            log.info("✅ [CCTV] Fire analysis complete: detected={}, count={}", fireDetected, totalDetectionCount);
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            log.error("❌ [CCTV] Failed to analyze fire frames", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", e.getMessage()));
         }

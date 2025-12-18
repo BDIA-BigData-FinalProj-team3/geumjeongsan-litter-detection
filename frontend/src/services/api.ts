@@ -2460,6 +2460,52 @@ export const analyzeTrashFrameWithGemini = async (
 };
 
 /**
+ * 화재 분석: 여러 프레임을 Gemini로 분석
+ * POST /api/cctv/{cctvCode}/frame/analyze-fire-multi
+ */
+export const analyzeFireFrames = async (
+  cctvCode: string,
+  frames: Blob[], // 4장
+  params?: { saveToDb?: boolean }
+): Promise<any> => {
+  // FormData로 4장 전송
+  const formData = new FormData();
+  
+  // 각 프레임을 'images' 키로 추가
+  frames.forEach((frame, index) => {
+    formData.append('images', frame, `frame_${index}.jpg`);
+  });
+  
+  if (params?.saveToDb !== undefined) {
+    formData.append('saveToDb', String(params.saveToDb));
+  }
+
+  const url = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/frame/analyze-fire-multi`;
+  const res = await fetch(url, {
+    method: 'POST',
+    body: formData  // multipart/form-data
+  });
+  
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(text || `화재 분석 실패 (${res.status})`);
+  }
+  
+  const result = await res.json();
+  
+  // 백엔드 응답 형식 변환
+  return {
+    fireDetected: result.fireDetected || false,
+    frameUrls: result.frameUrls || [],
+    overlayUrls: result.overlayUrls || [],
+    detectionCount: result.detectionCount || 0,
+    incidentId: result.incidentId,
+    incidentCode: result.incidentCode,
+    savedToDb: result.savedToDb || false
+  };
+};
+
+/**
  * 화재 비디오 분석 (Gemini) + (옵션) DB 저장
  * POST /api/fire-detection/analyze-video
  */
