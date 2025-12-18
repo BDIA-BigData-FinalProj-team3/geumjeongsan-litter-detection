@@ -3,7 +3,7 @@ import { FileText, Download, Printer, Calendar, ChevronLeft, ChevronRight, Plus,
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import Sidebar from '../components/Sidebar';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
-import { getMonthlyStats, getMajorIncidents, getAvailableReportMonths, getIncidentsList } from '../services/api';
+import { getMonthlyStats, getMajorIncidents, getAvailableReportMonths, getIncidentsList, getModelAccuracy } from '../services/api';
 import { getCurrentUser } from '../services/auth';
 import { mockMonthlyStats } from '../services/mock';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
@@ -63,12 +63,17 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
 
   // AI 탐지 vs 신고 요약 (백엔드에서 받은 데이터 사용)
 
-  // AI 정확도 요약 (더미 데이터)
-  const aiAccuracySummary = [
-    { type: '화재', accuracy: 92, detected: 100, correct: 92 },
-    { type: '응급', accuracy: 88, detected: 50, correct: 44 },
-    { type: '쓰레기', accuracy: 85, detected: 200, correct: 170 },
-  ];
+  // ✅ AI 정확도 요약 (DB 기반)
+  const [aiAccuracySummary, setAiAccuracySummary] = useState<Array<{
+    type: string;
+    accuracy: number;
+    detected: number;
+    correct: number;
+  }>>([
+    { type: '화재', accuracy: 0, detected: 0, correct: 0 },
+    { type: '응급', accuracy: 0, detected: 0, correct: 0 },
+    { type: '쓰레기', accuracy: 0, detected: 0, correct: 0 },
+  ]);
 
   // 검색 관련 상태
   const [showSearchModal, setShowSearchModal] = useState(false);
@@ -127,8 +132,60 @@ export default function MonthlyReport({ onNavigate }: MonthlyReportProps) {
       const month = String(selectedMonth.getMonth() + 1).padStart(2, '0');
       const monthStr = `${year}-${month}`;
 
+      // 월간 통계 로드
       const stats = await getMonthlyStats(monthStr);
       setMonthlyStats(stats);
+
+      // ✅ AI 정확도 데이터 로드 (해당 월 기준)
+      try {
+        const firstDay = `${monthStr}-01`;
+        const lastDay = new Date(year, selectedMonth.getMonth() + 1, 0).getDate();
+        const lastDayStr = `${monthStr}-${String(lastDay).padStart(2, '0')}`;
+        
+        const modelAccuracyData = await getModelAccuracy('MONTH', firstDay, lastDayStr);
+        
+        if (modelAccuracyData && modelAccuracyData.length > 0) {
+          // 데이터를 타입별로 그룹화하여 정확도 계산
+          const accuracyByType: Record<string, { detected: number; correct: number }> = {};
+          
+          modelAccuracyData.forEach((item: any) => {
+            const type = item.incidentType === 'FIRE' ? '화재' 
+                      : item.incidentType === 'EMERGENCY' ? '응급'
+                      : item.incidentType === 'TRASH' ? '쓰레기'
+                      : null;
+            
+            if (type) {
+              if (!accuracyByType[type]) {
+                accuracyByType[type] = { detected: 0, correct: 0 };
+              }
+              accuracyByType[type].detected += item.totalAutoIncidents || 0;
+              accuracyByType[type].correct += item.trueIncidents || 0;
+            }
+          });
+          
+          // 정확도 계산 및 state 업데이트
+          const newAccuracySummary = ['화재', '응급', '쓰레기'].map(type => {
+            const data = accuracyByType[type] || { detected: 0, correct: 0 };
+            const accuracy = data.detected > 0 
+              ? Math.round((data.correct / data.detected) * 100) 
+              : 0;
+            
+            return {
+              type,
+              accuracy,
+              detected: data.detected,
+              correct: data.correct,
+            };
+          });
+          
+          setAiAccuracySummary(newAccuracySummary);
+          console.log('✅ [MonthlyReport] AI 정확도 데이터 로드 완료:', newAccuracySummary);
+        } else {
+          console.warn('⚠️ [MonthlyReport] AI 정확도 데이터 없음');
+        }
+      } catch (error) {
+        console.error('❌ [MonthlyReport] AI 정확도 데이터 로드 실패:', error);
+      }
 
       // 주요사건 목록은 기본적으로 비어있게 하고, 사건추가 버튼으로만 추가
       setMajorIncidents([]);

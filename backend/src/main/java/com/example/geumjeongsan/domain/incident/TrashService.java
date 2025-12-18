@@ -628,23 +628,6 @@ public class TrashService {
         incident.setLocationDesc(locationDesc != null ? locationDesc : "CCTV 자동 탐지");
         incident.setCreatedAt(OffsetDateTime.now(KST));
         incident.setUpdatedAt(OffsetDateTime.now(KST));
-
-        // ✅ incident.memo는 "사람이 읽는 메모"로만 사용한다.
-        // Gemini 원문 JSON을 incident.memo에 넣지 않고, 화면 표시용 요약만 저장한다.
-        // (원문이 필요하면 서버 로그/추후 별도 저장소로 분리)
-        String mainCategory = null;
-        String objectAmount = null;
-        if (trashDetailMap != null) {
-            mainCategory = (String) trashDetailMap.get("main_category");
-            objectAmount = (String) trashDetailMap.get("object_amount");
-        }
-        String autoReason = incidentAutoMap != null ? (String) incidentAutoMap.get("confidence_reason") : null;
-        StringBuilder memoBuilder = new StringBuilder();
-        memoBuilder.append("AI 자동 탐지(쓰레기)");
-        if (mainCategory != null && !mainCategory.isBlank()) memoBuilder.append("\n분류: ").append(mainCategory);
-        if (objectAmount != null && !objectAmount.isBlank()) memoBuilder.append("\n규모: ").append(objectAmount);
-        if (autoReason != null && !autoReason.isBlank()) memoBuilder.append("\n근거: ").append(autoReason);
-        incident.setMemo(memoBuilder.toString());
         
         // severity_level 변환 (VERY_HIGH, HIGH, MEDIUM, LOW, VERY_LOW -> DB 형식)
         String severityLevel = (String) incidentMap.get("severity_level");

@@ -135,28 +135,6 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
     setTrashCount(activeTrashIncidents.length);
   }, [activeTrashIncidents, setTrashCount]);
 
-  // 기존 completedTrashIncidents 초기값 제거 (API에서 로드하므로)
-  const _ignoredCompletedData = [
-    { id: 4, accidentCode: 'TRASH-004', cctvId: 'CCTV-002', time: '2025-11-25 13:00', responseTime: '2025-11-25 13:28', duration: '28분', status: '처리완료', severity: 'low', type: '음식물', handler: '환경 관리 직원', location: '등산로 2', detectionBasis: 'AI 자동 탐지: 음식물 쓰레기 투기 감지' },
-    { id: 5, accidentCode: 'TRASH-005', cctvId: 'CCTV-004', time: '2025-11-25 12:00', responseTime: '2025-11-25 12:35', duration: '35분', status: '처리완료', severity: 'medium', type: '플라스틱', handler: '환경 관리 직원', location: '휴게소 1', detectionBasis: 'AI 자동 탐지: 플라스틱 쓰레기 투기 감지' },
-    { id: 6, accidentCode: 'TRASH-006', cctvId: 'CCTV-003', time: '2025-11-25 11:00', responseTime: '2025-11-25 11:30', duration: '30분', status: '처리완료', severity: 'low', type: '일반쓰레기', handler: '환경 관리 직원', location: '등산로 3', detectionBasis: 'AI 자동 탐지: 쓰레기 투기 행위 감지' },
-    { id: 19, accidentCode: 'TRASH-019', cctvId: 'CCTV-020', time: '2025-11-25 10:45', responseTime: '2025-11-25 11:10', duration: '25분', status: '처리완료', severity: 'medium', type: '대형쓰레기', handler: '환경 관리 직원', location: '등산로 8', detectionBasis: 'AI 자동 탐지: 대형 쓰레기 투기 감지' },
-    { id: 20, accidentCode: 'TRASH-020', cctvId: 'CCTV-021', time: '2025-11-25 10:30', responseTime: '2025-11-25 10:55', duration: '25분', status: '처리완료', severity: 'high', type: '플라스틱', handler: '환경 관리 직원', location: '전망대 5', detectionBasis: 'AI 자동 탐지: 플라스틱 쓰레기 투기 감지' },
-    { id: 21, accidentCode: 'TRASH-021', cctvId: 'CCTV-022', time: '2025-11-25 10:15', responseTime: '2025-11-25 10:40', duration: '25분', status: '처리완료', severity: 'low', type: '음식물', handler: '환경 관리 직원', location: '휴게소 5', detectionBasis: 'AI 자동 탐지: 음식물 쓰레기 투기 감지' },
-    { id: 22, accidentCode: 'TRASH-022', cctvId: 'CCTV-023', time: '2025-11-25 10:00', responseTime: '2025-11-25 10:25', duration: '25분', status: '처리완료', severity: 'medium', type: '일반쓰레기', handler: '환경 관리 직원', location: '등산로 9', detectionBasis: 'AI 자동 탐지: 쓰레기 투기 행위 감지' },
-    { id: 23, accidentCode: 'TRASH-023', cctvId: 'CCTV-024', time: '2025-11-25 09:45', responseTime: '2025-11-25 10:10', duration: '25분', status: '처리완료', severity: 'high', type: '대형쓰레기', handler: '환경 관리 직원', location: '등산로 10', detectionBasis: 'AI 자동 탐지: 대형 쓰레기 투기 감지' },
-    { id: 24, accidentCode: 'TRASH-024', cctvId: 'CCTV-025', time: '2025-11-25 09:30', responseTime: '2025-11-25 09:55', duration: '25분', status: '처리완료', severity: 'medium', type: '플라스틱', handler: '환경 관리 직원', location: '전망대 6', detectionBasis: 'AI 자동 탐지: 플라스틱 쓰레기 투기 감지' },
-    { id: 25, accidentCode: 'TRASH-025', cctvId: 'CCTV-026', time: '2025-11-25 09:15', responseTime: '2025-11-25 09:40', duration: '25분', status: '처리완료', severity: 'low', type: '음식물', handler: '환경 관리 직원', location: '휴게소 6', detectionBasis: 'AI 자동 탐지: 음식물 쓰레기 투기 감지' },
-    { id: 26, accidentCode: 'TRASH-026', cctvId: 'CCTV-027', time: '2025-11-25 09:00', responseTime: '2025-11-25 09:25', duration: '25분', status: '처리완료', severity: 'medium', type: '일반쓰레기', handler: '환경 관리 직원', location: '등산로 11', detectionBasis: 'AI 자동 탐지: 쓰레기 투기 행위 감지' },
-    { id: 27, accidentCode: 'TRASH-027', cctvId: 'CCTV-028', time: '2025-11-25 08:45', responseTime: '2025-11-25 09:10', duration: '25분', status: '처리완료', severity: 'high', type: '대형쓰레기', handler: '환경 관리 직원', location: '등산로 12', detectionBasis: 'AI 자동 탐지: 대형 쓰레기 투기 감지' },
-    { id: 28, accidentCode: 'TRASH-028', cctvId: 'CCTV-029', time: '2025-11-25 08:30', responseTime: '2025-11-25 08:55', duration: '25분', status: '처리완료', severity: 'medium', type: '플라스틱', handler: '환경 관리 직원', location: '전망대 7', detectionBasis: 'AI 자동 탐지: 플라스틱 쓰레기 투기 감지' },
-    { id: 29, accidentCode: 'TRASH-029', cctvId: 'CCTV-030', time: '2025-11-25 08:15', responseTime: '2025-11-25 08:40', duration: '25분', status: '처리완료', severity: 'low', type: '음식물', handler: '환경 관리 직원', location: '휴게소 7', detectionBasis: 'AI 자동 탐지: 음식물 쓰레기 투기 감지' },
-    { id: 30, accidentCode: 'TRASH-030', cctvId: 'CCTV-031', time: '2025-11-25 08:00', responseTime: '2025-11-25 08:25', duration: '25분', status: '처리완료', severity: 'medium', type: '일반쓰레기', handler: '환경 관리 직원', location: '등산로 13', detectionBasis: 'AI 자동 탐지: 쓰레기 투기 행위 감지' },
-    { id: 31, accidentCode: 'TRASH-031', cctvId: 'CCTV-032', time: '2025-11-25 07:45', responseTime: '2025-11-25 08:10', duration: '25분', status: '처리완료', severity: 'high', type: '대형쓰레기', handler: '환경 관리 직원', location: '등산로 14', detectionBasis: 'AI 자동 탐지: 대형 쓰레기 투기 감지' },
-    { id: 32, accidentCode: 'TRASH-032', cctvId: 'CCTV-033', time: '2025-11-25 07:30', responseTime: '2025-11-25 07:55', duration: '25분', status: '처리완료', severity: 'medium', type: '플라스틱', handler: '환경 관리 직원', location: '전망대 8', detectionBasis: 'AI 자동 탐지: 플라스틱 쓰레기 투기 감지' },
-    { id: 33, accidentCode: 'TRASH-033', cctvId: 'CCTV-034', time: '2025-11-25 07:15', responseTime: '2025-11-25 07:40', duration: '25분', status: '처리완료', severity: 'low', type: '음식물', handler: '환경 관리 직원', location: '휴게소 8', detectionBasis: 'AI 자동 탐지: 음식물 쓰레기 투기 감지' },
-  ]; // 더미 데이터는 API에서 로드하므로 무시
-
   // 검색 코드가 있으면 필터링, 없으면 전체 표시
   // viewMode에 따라 필터링
   const trashByStatus = viewMode === 'active' ? activeTrashIncidents : completedTrashIncidents;

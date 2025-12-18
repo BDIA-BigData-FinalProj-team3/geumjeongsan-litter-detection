@@ -642,32 +642,15 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     }
   };
 
-  const logData = [
-    { id: 'CCTV-001', location: '등산로 1', status: '정상', lastDetection: '2025-11-21 14:23', connection: '연결됨' },
-    { id: 'CCTV-003', location: '등산로 3', status: '점검필요', lastDetection: '2025-11-21 14:15', connection: '연결됨' },
-    { id: 'CCTV-002', location: '등산로 2', status: '정상', lastDetection: '2025-11-21 14:05', connection: '연결됨' },
-    { id: 'CCTV-005', location: '등산로 입구 1', status: '정상', lastDetection: '2025-11-21 13:45', connection: '연결됨' },
-    { id: 'CCTV-001', location: '등산로 1', status: '정상', lastDetection: '2025-11-21 13:30', connection: '연결됨' },
-    { id: 'CCTV-004', location: '등산로 4', status: '정상', lastDetection: '2025-11-21 13:15', connection: '연결됨' },
-    { id: 'CCTV-006', location: '등산로 입구 2', status: '정상', lastDetection: '2025-11-21 12:50', connection: '연결됨' },
-    { id: 'CCTV-003', location: '등산로 3', status: '점검필요', lastDetection: '2025-11-21 12:30', connection: '연결됨' },
-    { id: 'CCTV-002', location: '등산로 2', status: '정상', lastDetection: '2025-11-21 12:10', connection: '연결됨' },
-    { id: 'CCTV-005', location: '등산로 입구 1', status: '정상', lastDetection: '2025-11-21 11:45', connection: '연결됨' },
-    { id: 'CCTV-001', location: '등산로 1', status: '정상', lastDetection: '2025-11-21 11:20', connection: '연결됨' },
-    { id: 'CCTV-004', location: '등산로 4', status: '정상', lastDetection: '2025-11-21 10:55', connection: '연결됨' },
-    { id: 'CCTV-003', location: '등산로 3', status: '점검필요', lastDetection: '2025-11-21 10:30', connection: '연결됨' },
-    { id: 'CCTV-006', location: '등산로 입구 2', status: '정상', lastDetection: '2025-11-21 10:10', connection: '연결됨' },
-    { id: 'CCTV-002', location: '등산로 2', status: '정상', lastDetection: '2025-11-21 09:45', connection: '연결됨' },
-    { id: 'CCTV-005', location: '등산로 입구 1', status: '정상', lastDetection: '2025-11-21 09:20', connection: '연결됨' },
-    { id: 'CCTV-001', location: '등산로 1', status: '정상', lastDetection: '2025-11-21 08:50', connection: '연결됨' },
-    { id: 'CCTV-004', location: '등산로 4', status: '정상', lastDetection: '2025-11-21 08:25', connection: '연결됨' },
-    { id: 'CCTV-003', location: '등산로 3', status: '점검필요', lastDetection: '2025-11-21 08:00', connection: '연결됨' },
-    { id: 'CCTV-006', location: '등산로 입구 2', status: '정상', lastDetection: '2025-11-21 07:35', connection: '연결됨' },
-    { id: 'CCTV-002', location: '등산로 2', status: '정상', lastDetection: '2025-11-21 07:10', connection: '연결됨' },
-    { id: 'CCTV-005', location: '등산로 입구 1', status: '정상', lastDetection: '2025-11-21 06:45', connection: '연결됨' },
-    { id: 'CCTV-001', location: '등산로 1', status: '정상', lastDetection: '2025-11-21 06:20', connection: '연결됨' },
-    { id: 'CCTV-004', location: '등산로 4', status: '정상', lastDetection: '2025-11-21 05:55', connection: '연결됨' },
-  ];
+  // ⚠️ CCTV 로그 데이터 - 추후 백엔드 API 개발 예정
+  // TODO: /api/cctv/{id}/logs API 개발 필요
+  const logData: Array<{
+    id: string;
+    location: string;
+    status: string;
+    lastDetection: string;
+    connection: string;
+  }> = [];
 
   // Filter log data based on selected CCTV
   const filteredLogData = selectedCCTV ? logData.filter(log => log.id === selectedCCTV.id) : logData;
@@ -719,7 +702,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
 
   // Handle TRASH frame analysis (Gemini main). 기존 Qwen은 보조/대체로 유지 가능.
   const handleAnalyzeFrameWithQwen = async () => {
-    if (!selectedCCTV || selectedCCTV.id !== 'CCTV-003' || !videoRef.current) {
+    if (!selectedCCTV || !videoRef.current) {
       return;
     }
 
@@ -1198,8 +1181,10 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                       </button>
                     )}
 
-                    {/* CCTV-003: 쓰레기 분석 버튼 */}
-                    {selectedCCTV.id === 'CCTV-003' && dummyCCTVIds.includes(selectedCCTV.id) && (
+                    {/* CCTV-003 ~ CCTV-010: 쓰레기 분석 버튼 (CCTV-001 응급, CCTV-002 화재 제외) */}
+                    {dummyCCTVIds.includes(selectedCCTV.id) && 
+                     selectedCCTV.id !== 'CCTV-001' && 
+                     selectedCCTV.id !== 'CCTV-002' && (
                       <button
                         onClick={handleAnalyzeFrameWithQwen}
                         disabled={isAnalyzingQwen}

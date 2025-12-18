@@ -7,11 +7,8 @@ import EmergencyDashboard from './pages/EmergencyDashboard';
 import FireDashboard from './pages/FireDashboard';
 import RockfallDashboard from './pages/RockfallDashboard';
 import TrashDashboard from './pages/TrashDashboard';
-import EmergencyRecords from './pages/EmergencyRecords';
 import CCTVManagement from './pages/CCTVManagement';
 import MonthlyReport from './pages/MonthlyReport';
-import TrendAnalysis from './pages/TrendAnalysis';
-import TrashTypeAnalysis from './pages/TrashTypeAnalysis';
 import Settings from './pages/Settings';
 import MainLayout from './components/MainLayout';
 import TestPage from './pages/TestPage';
@@ -28,10 +25,7 @@ const routeMap: Record<string, string> = {
   'rockfall-dashboard': '/rockfall',
   'trash-dashboard': '/trash',
   'cctv-management': '/cctv',
-  'emergency-records': '/emergency-records',
   'report': '/monthly-report',
-  'trend-analysis': '/trend',
-  'trash-type-analysis': '/trash-types',
   'settings': '/settings',
   'login': '/login',
 };
@@ -109,15 +103,6 @@ const TrashDashboardRoute = () => {
   return <TrashDashboard onNavigate={handleNavigate} />;
 };
 
-const EmergencyRecordsRoute = () => {
-  const navigate = useNavigate();
-  const handleNavigate = (screen: string) => {
-    const route = routeMap[screen] || screen;
-    navigate(route);
-  };
-  return <EmergencyRecords onNavigate={handleNavigate} />;
-};
-
 const CCTVManagementRoute = () => {
   const navigate = useNavigate();
   const handleNavigate = (screen: string) => {
@@ -134,24 +119,6 @@ const MonthlyReportRoute = () => {
     navigate(route);
   };
   return <MonthlyReport onNavigate={handleNavigate} />;
-};
-
-const TrendAnalysisRoute = () => {
-  const navigate = useNavigate();
-  const handleNavigate = (screen: string) => {
-    const route = routeMap[screen] || screen;
-    navigate(route);
-  };
-  return <TrendAnalysis onNavigate={handleNavigate} />;
-};
-
-const TrashTypeAnalysisRoute = () => {
-  const navigate = useNavigate();
-  const handleNavigate = (screen: string) => {
-    const route = routeMap[screen] || screen;
-    navigate(route);
-  };
-  return <TrashTypeAnalysis onNavigate={handleNavigate} />;
 };
 
 const SettingsRoute = () => {
@@ -223,24 +190,12 @@ export const router = createBrowserRouter([
         element: <TrashDashboardRoute />,
       },
       {
-        path: 'emergency-records',
-        element: <EmergencyRecordsRoute />,
-      },
-      {
         path: 'cctv',
         element: <CCTVManagementRoute />,
       },
       {
         path: 'monthly-report',
         element: <MonthlyReportRoute />,
-      },
-      {
-        path: 'trend',
-        element: <TrendAnalysisRoute />,
-      },
-      {
-        path: 'trash-types',
-        element: <TrashTypeAnalysisRoute />,
       },
       {
         path: 'settings',

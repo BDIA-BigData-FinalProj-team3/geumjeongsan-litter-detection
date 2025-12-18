@@ -43,10 +43,7 @@ const routeMap: Record<string, string> = {
   'rockfall-dashboard': '/rockfall',
   'trash-dashboard': '/trash',
   'cctv-management': '/cctv',
-  'emergency-records': '/emergency-records',
   'report': '/monthly-report',
-  'trend-analysis': '/trend',
-  'trash-type-analysis': '/trash-types',
   'settings': '/settings',
   'login': '/login',
 };
@@ -63,10 +60,7 @@ const reverseRouteMap: Record<string, string> = {
   '/rockfall': 'rockfall-dashboard',
   '/trash': 'trash-dashboard',
   '/cctv': 'cctv-management',
-  '/emergency-records': 'emergency-records',
   '/monthly-report': 'report',
-  '/trend': 'trend-analysis',
-  '/trash-types': 'trash-type-analysis',
   '/settings': 'settings',
   '/login': 'login',
 };

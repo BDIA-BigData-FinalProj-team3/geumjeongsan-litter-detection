@@ -17,10 +17,7 @@ function MainLayoutContent() {
       '/rockfall': 'rockfall-dashboard',
       '/trash': 'trash-dashboard',
       '/cctv': 'cctv-management',
-      '/emergency-records': 'emergency-records',
       '/monthly-report': 'report',
-      '/trend': 'trend-analysis',
-      '/trash-types': 'trash-type-analysis',
     };
     // Remove leading slash and get the path
     const path = location.pathname;
