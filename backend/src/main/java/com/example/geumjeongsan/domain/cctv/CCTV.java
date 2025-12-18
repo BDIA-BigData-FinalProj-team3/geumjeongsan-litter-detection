@@ -22,10 +22,12 @@ public class CCTV {
     @Column(name = "cctv_code", unique = true, nullable = false, length = 50)
     private String cctvCode;
 
-    @Column(name = "name", nullable = false, columnDefinition = "text")
+    // DB 컬럼: cctv_address (name 대신)
+    @Column(name = "cctv_address", columnDefinition = "text")
     private String name;
 
-    @Column(name = "location_desc", columnDefinition = "text")
+    // DB 컬럼: cctv_address_description (location_desc 대신)
+    @Column(name = "cctv_address_description", columnDefinition = "text")
     private String locationDesc;
 
     @Column(name = "geom", columnDefinition = "geometry(Point,4326)")
@@ -37,16 +39,22 @@ public class CCTV {
     @Column(name = "model_name", length = 50)
     private String modelName;
 
-    @Column(name = "resolution", length = 20)
+    // DB에 없는 컬럼 - @Transient (DB 조회 시 무시됨)
+    @Transient
     private String resolution;
 
     @Column(name = "is_active", nullable = false)
     private Boolean isActive = true;
 
-    @Column(name = "power_status", length = 10)
+    // DB에 없는 컬럼 - @Transient
+    @Transient
     private String powerStatus;
 
     @Column(name = "created_at")
     private OffsetDateTime createdAt;
+
+    // DB 컬럼: segment_id 추가
+    @Column(name = "segment_id")
+    private Integer segmentId;
 }
 
