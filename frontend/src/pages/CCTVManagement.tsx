@@ -5,7 +5,7 @@ import IncidentDetailModal from '../components/IncidentDetailModal';
 import { X, ArrowLeft, Search, ChevronDown, ArrowUpDown, Maximize, Camera, Flame, Trash2, AlertCircle, Download, Play, HeartPulse } from 'lucide-react';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { cctvList, getCCTVLocation, getOffCCTVCodes, getCCTVByCode } from '../services/common';
-import { getCCTVList, analyzeFallenVideo, getUnifiedIncidentDetail, analyzeTrashFrameWithGemini, type FallenAnalysisResponse } from '../services/api';
+import { getCCTVList, analyzeFallenVideo, analyzeEmergencyVideo, getUnifiedIncidentDetail, analyzeTrashFrameWithGemini, type FallenAnalysisResponse } from '../services/api';
 import API_BASE_URL, { INGEST_HLS_URL } from '../config/api';
 import Hls from 'hls.js';
 import cctv001DemoVideo from '../assets/cctv-001_20251208T140000Z.mp4';
@@ -819,7 +819,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     }
   };
 
-  // Handle video play button click
+  // Handle video play button click (응급 Gemini 분석)
   const handlePlayVideo = async () => {
     if (!selectedCCTV || selectedCCTV.id !== 'CCTV-001') {
       return; // Only for CCTV-001
@@ -836,35 +836,49 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       }
     }, 0);
 
-    // Trigger analysis
+    // Trigger EMERGENCY analysis (Gemini with YOLO reference)
     setIsAnalyzing(true);
     try {
-      const result = await analyzeFallenVideo(selectedCCTV.id);
+      const result = await analyzeEmergencyVideo(selectedCCTV.id, {
+        s3Key: 'cctv/cctv-001/videos/cctv-001_20251208T140000Z.mp4',
+        cameraId: 'cctv-001',
+        maxFrames: 4,
+        saveToDb: true
+      });
+      
       setAnalysisResult(result);
       
       // 분석 결과를 이벤트로 변환
-      if (result.result && result.result.fallen_events > 0) {
+      const analysis = result?.analysis;
+      if (analysis) {
+        const emergencyLevel = analysis.emergency_level || '정상';
+        const description = analysis.description || '응급 상황 분석 완료';
+        const confidence = analysis.confidence != null ? `${Math.round(analysis.confidence * 100)}%` : '85%';
+        const severityLevel = analysis.incident?.severity_level || 'MEDIUM';
+        const severity = severityLevel === 'HIGH' ? '상' : severityLevel === 'MEDIUM' ? '중' : '하';
+        
         const newEvent: Event = {
-          id: `fallen-${Date.now()}`,
+          id: `emergency-${Date.now()}`,
           time: new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false }),
           type: 'emergency',
-          confidence: '95%',
+          confidence,
           location: selectedCCTV.location,
-          severity: '상',
-          reportProbability: '높음',
-          summary: `${selectedCCTV.location}에서 낙상 이벤트가 탐지되었습니다.`,
-          clipUrl: result.result.clip_url,
-          frameUrls: result.result.frame_urls || []
+          severity,
+          reportProbability: emergencyLevel === '긴급' ? '낮음' : emergencyLevel === '주의' ? '보통' : '높음',
+          summary: description,
+          clipUrl: result.clipUrl,
+          frameUrls: result.frameUrls || [],
+          incidentId: typeof result.incidentId === 'number' ? result.incidentId : undefined,
         };
         setAnalysisEvents(prev => [...prev, newEvent]);
-      }
-      
-      // Check if Gemini call is needed
-      if (result.geminiMessage) {
-        setShowGeminiPopup(true);
+        
+        if (emergencyLevel === '긴급' || emergencyLevel === '주의') {
+          alert(`응급 분석 완료: ${emergencyLevel} 상황 감지 - ${description}`);
+        }
       }
     } catch (error) {
-      console.error('Failed to analyze video:', error);
+      console.error('Failed to analyze emergency video:', error);
+      alert('응급 분석 실패: ' + (error instanceof Error ? error.message : String(error)));
     } finally {
       setIsAnalyzing(false);
     }
