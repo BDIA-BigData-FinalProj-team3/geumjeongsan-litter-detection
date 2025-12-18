@@ -33,7 +33,8 @@ jobs:
           cd frontend
           npm run build
         env:
-          VITE_BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          # VITE_BACKEND_URL을 비워서 same-origin API 호출 (CORS 회피)
+          VITE_BACKEND_URL: ""
           VITE_INGEST_HLS_URL: ${{ secrets.INGEST_HLS_URL }}
 
       # 5. AWS 인증 설정
