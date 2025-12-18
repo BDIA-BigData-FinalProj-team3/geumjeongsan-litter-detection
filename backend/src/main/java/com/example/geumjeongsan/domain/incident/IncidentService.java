@@ -23,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
+import java.util.HashMap;
 import java.util.Comparator;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -782,7 +783,13 @@ public class IncidentService {
     //
     public List<CCTVResponse> getAllCCTV() {
         List<MapCCTV> viewList = mapCCTVRepository.findAll();
-        
+
+        // ✅ CCTV 관리 화면의 "사건/최근 탐지시간/유형"은 '미처리(status != RESOLVED)' 기준이어야 함.
+        // DB View(view_cctv_management)가 전체 사건 기준으로 집계되어 있어도, 여기서 한 번 더 "미처리"로 덮어쓴다.
+        // - incident.status 기반 (PENDING/IN_PROGRESS/EXTINGUISHING 등 모두 포함)
+        // - incident_response.completed_at 등과 무관하게 프론트 표시 정책을 status로 통일
+        final Map<Long, ActiveIncidentSummary> activeSummaryByCctvId = loadActiveIncidentSummaryByCctvId();
+
         return viewList.stream().map(view -> {
             // geom에서 경도/위도 추출
             Double longitude = null;
@@ -791,6 +798,11 @@ public class IncidentService {
                 longitude = view.getGeomDto().x;
                 latitude = view.getGeomDto().y;
             }
+
+            ActiveIncidentSummary s = activeSummaryByCctvId.get(view.getCctvId());
+            Long activeCount = s != null ? s.incidentCount : 0L;
+            OffsetDateTime lastAt = s != null ? s.lastIncidentAt : null;
+            String lastType = s != null ? s.lastIncidentType : null;
             
             return CCTVResponse.builder()
                     .id(view.getCctvId())
@@ -807,9 +819,9 @@ public class IncidentService {
                     .lastHeartbeat(toKstIso(view.getLastHeartbeat()))
                     .longitude(longitude)
                     .latitude(latitude)
-                    .incidentCount(view.getIncidentCount())
-                    .lastIncidentTime(toKstIso(view.getLastIncidentAt()))
-                    .lastIncidentType(view.getLastIncidentType())
+                    .incidentCount(activeCount)
+                    .lastIncidentTime(toKstIso(lastAt))
+                    .lastIncidentType(lastType)
                     .build();
         }).collect(Collectors.toList());
     }
@@ -837,6 +849,12 @@ public class IncidentService {
             latitude = view.getGeomDto().y;
         }
         
+        // 미처리 사건 요약 (단건)
+        ActiveIncidentSummary s = loadActiveIncidentSummaryByCctvId().get(view.getCctvId());
+        Long activeCount = s != null ? s.incidentCount : 0L;
+        OffsetDateTime lastAt = s != null ? s.lastIncidentAt : null;
+        String lastType = s != null ? s.lastIncidentType : null;
+
         return CCTVResponse.builder()
                 .id(view.getCctvId())
                 .cctvCode(view.getCctvCode())
@@ -852,10 +870,65 @@ public class IncidentService {
                 .lastHeartbeat(toKstIso(view.getLastHeartbeat()))
                 .longitude(longitude)
                 .latitude(latitude)
-                .incidentCount(view.getIncidentCount())
-                .lastIncidentTime(toKstIso(view.getLastIncidentAt()))
-                .lastIncidentType(view.getLastIncidentType())
+                .incidentCount(activeCount)
+                .lastIncidentTime(toKstIso(lastAt))
+                .lastIncidentType(lastType)
                 .build();
+    }
+
+    private static class ActiveIncidentSummary {
+        final Long incidentCount;
+        final OffsetDateTime lastIncidentAt;
+        final String lastIncidentType;
+
+        private ActiveIncidentSummary(Long incidentCount, OffsetDateTime lastIncidentAt, String lastIncidentType) {
+            this.incidentCount = incidentCount;
+            this.lastIncidentAt = lastIncidentAt;
+            this.lastIncidentType = lastIncidentType;
+        }
+    }
+
+    /**
+     * CCTV별 "미처리(status != RESOLVED)" 사건 요약을 한 번에 로드한다.
+     * - incidentCount: 미처리 사건 수
+     * - lastIncidentAt/Type: 미처리 사건 중 가장 최근 1건
+     */
+    private Map<Long, ActiveIncidentSummary> loadActiveIncidentSummaryByCctvId() {
+        try {
+            final String sql =
+                    "WITH counts AS ( " +
+                    "  SELECT i.cctv_id, COUNT(*)::bigint AS incident_count " +
+                    "  FROM incident i " +
+                    "  WHERE i.cctv_id IS NOT NULL AND i.status IS DISTINCT FROM 'RESOLVED' " +
+                    "  GROUP BY i.cctv_id " +
+                    "), lasts AS ( " +
+                    "  SELECT DISTINCT ON (i.cctv_id) i.cctv_id, i.detected_at AS last_incident_at, i.incident_type AS last_incident_type " +
+                    "  FROM incident i " +
+                    "  WHERE i.cctv_id IS NOT NULL AND i.status IS DISTINCT FROM 'RESOLVED' " +
+                    "  ORDER BY i.cctv_id, i.detected_at DESC " +
+                    ") " +
+                    "SELECT c.cctv_id, c.incident_count, l.last_incident_at, l.last_incident_type " +
+                    "FROM counts c " +
+                    "LEFT JOIN lasts l ON l.cctv_id = c.cctv_id";
+
+            Query q = entityManager.createNativeQuery(sql);
+            @SuppressWarnings("unchecked")
+            List<Object[]> rows = q.getResultList();
+            Map<Long, ActiveIncidentSummary> map = new HashMap<>();
+            for (Object[] r : rows) {
+                if (r == null || r.length < 4) continue;
+                Long cctvId = r[0] instanceof Number ? ((Number) r[0]).longValue() : null;
+                if (cctvId == null) continue;
+                Long cnt = r[1] instanceof Number ? ((Number) r[1]).longValue() : 0L;
+                OffsetDateTime lastAt = (r[2] instanceof OffsetDateTime) ? (OffsetDateTime) r[2] : null;
+                String lastType = r[3] != null ? String.valueOf(r[3]) : null;
+                map.put(cctvId, new ActiveIncidentSummary(cnt, lastAt, lastType));
+            }
+            return map;
+        } catch (Exception e) {
+            // 실패 시: "미처리 사건 없음"으로 처리 (UI가 과잉 경고하지 않게)
+            return Map.of();
+        }
     }
 
     // 지도 데이터 조회 (CCTV, 사건, 헬기 착륙지, 낙석 센서)

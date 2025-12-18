@@ -374,10 +374,11 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
 
   // Generate CCTV thumbnails - 100% DB 기반 (VIEW 데이터 사용)
   const cctvThumbnails = backendCCTVs.map(cctv => {
-    // VIEW에서 온 데이터 사용 + 영상 있는 CCTV도 detecting 처리
+    // ✅ 정렬은 "영상 있는 CCTV 고정 우선" (데모/운영 요구사항)
+    // ✅ 빨강 표시/유형/탐지시간/점(알림)은 "DB 미처리 사건"이 있을 때만
     const hasVideo = dummyCCTVIds.includes(cctv.cctvCode);
     const hasIncident = (cctv.incidentCount || 0) > 0 && cctv.lastIncidentTime;
-    const detecting = hasIncident || hasVideo;
+    const detecting = !!hasIncident; // 사건일 때만 빨강/탐지 상태
     
     // 실제 DB 사건이 있는 경우에만 latestEvent 생성 (영상만 있는 경우 제외)
     const latestEvent = hasIncident ? {
@@ -395,27 +396,22 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       id: cctv.cctvCode,
       dbId: cctv.id,
       time: cctv.lastIncidentTime || '-',
-      detecting: !!detecting,
+      detecting,
+      hasVideo,
       power: powerStatus,
       latestEvent,
       detectionTime: cctv.lastIncidentTime,
       hasIncident: !!hasIncident
     };
   }).sort((a, b) => {
-    // 1) 이벤트 있는 CCTV 먼저
-    if (a.detecting !== b.detecting) {
-      return a.detecting ? -1 : 1;
-    }
+    // 1) "영상 있는 CCTV"가 무조건 앞
+    if (a.hasVideo !== b.hasVideo) return a.hasVideo ? -1 : 1;
 
-    // 2) 둘 다 이벤트 상태 같으면, "영상 연결된 CCTV" 먼저 (더미 비디오 있는 애들)
-    const aHasVideo = dummyCCTVIds.includes(a.id);
-    const bHasVideo = dummyCCTVIds.includes(b.id);
-    if (aHasVideo !== bHasVideo) {
-      return aHasVideo ? -1 : 1;
-    }
+    // 2) 같은 그룹(둘 다 영상 있거나 둘 다 없음) 안에서는 "DB 미처리 사건"이 있으면 앞
+    if (a.hasIncident !== b.hasIncident) return a.hasIncident ? -1 : 1;
 
-    // 3) 둘 다 이벤트가 있으면 최근 탐지 시간 순
-    if (a.detecting && b.detecting) {
+    // 3) 둘 다 사건이 있으면 최근 탐지시간(최신) 순
+    if (a.hasIncident && b.hasIncident) {
       return (b.detectionTime || '').localeCompare(a.detectionTime || '');
     }
 
@@ -1127,20 +1123,18 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                           {(() => {
                             const cctvData = backendCCTVs.find(b => b.cctvCode === selectedCCTV.id);
                             let bgColor: string;
-                            if (dummyCCTVIds.includes(selectedCCTV.id)) {
-                              bgColor = '#ef4444'; // red-500
-                            } else {
-                              // 사건(미해결) 우선 표시: VIEW의 incidentCount/lastIncidentTime 기준
-                              const hasIncident = !!(cctvData && (cctvData.incidentCount || 0) > 0 && cctvData.lastIncidentTime);
+                            // ✅ 더미(영상) 여부와 무관하게: "미해결 사건"이 있을 때만 빨강
+                            // 사건(미해결) 우선 표시: VIEW의 incidentCount/lastIncidentTime 기준
+                            const hasIncident = !!(cctvData && (cctvData.incidentCount || 0) > 0 && cctvData.lastIncidentTime);
 
-                              // powerStatus를 안전하게 체크 (대소문자 무시)
-                              const powerStatus = cctvData?.powerStatus 
-                                ? String(cctvData.powerStatus).toLowerCase().trim() 
-                                : 'off';
-                              bgColor = hasIncident
-                                ? '#ef4444' // red-500
-                                : (powerStatus === 'on' ? '#22c55e' : '#9ca3af'); // green-500 or gray-400
-                            }
+                            // powerStatus를 안전하게 체크 (대소문자 무시)
+                            const powerStatus = cctvData?.powerStatus
+                              ? String(cctvData.powerStatus).toLowerCase().trim()
+                              : 'off';
+
+                            bgColor = hasIncident
+                              ? '#ef4444' // red-500
+                              : (powerStatus === 'on' ? '#22c55e' : '#9ca3af'); // green-500 or gray-400
                             
                             return (
                               <div 
@@ -1381,18 +1375,13 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                           )}
                           {/* 상태 점: 기본 전원(on=초록/off=회색), 사건이 있으면 빨강 우선 */}
                           {(() => {
-                            const isVideo = dummyCCTVIds.includes(cctv.id);
                             const hasIncident = !!(cctv as any).hasIncident;
                             let bgColor: string;
-                            if (isVideo) {
-                              bgColor = '#ef4444'; // red-500
-                            } else {
-                              // powerStatus를 안전하게 체크 (대소문자 무시)
-                              const powerStatus = String(cctv.power || 'off').toLowerCase().trim();
-                              bgColor = hasIncident
-                                ? '#ef4444' // red-500
-                                : (powerStatus === 'on' ? '#4ade80' : '#9ca3af'); // green-400 or gray-400
-                            }
+                            // ✅ 영상(더미) 여부와 무관하게: "미해결 사건"이 있을 때만 빨강
+                            const powerStatus = String(cctv.power || 'off').toLowerCase().trim();
+                            bgColor = hasIncident
+                              ? '#ef4444' // red-500
+                              : (powerStatus === 'on' ? '#4ade80' : '#9ca3af'); // green-400 or gray-400
                             
                             return (
                               <div 

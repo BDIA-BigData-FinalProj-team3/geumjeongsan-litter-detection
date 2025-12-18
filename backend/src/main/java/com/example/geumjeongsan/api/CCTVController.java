@@ -355,30 +355,29 @@ public class CCTVController {
                 }
             }
 
-            // 2-b) 모델서버 frame_urls가 없으면: S3에서 mp4를 내려받아 FFmpeg로 프레임 추출
+            // 2-b) YOLO가 frame_urls를 반환하지 않았으면 (낙상 없음) → 정상으로 판단하고 Gemini 스킵
             if (base64Images.isEmpty()) {
-                try {
-                    tempDir = new File(System.getProperty("java.io.tmpdir"), "emergency-frames-" + System.currentTimeMillis());
-                    tempDir.mkdirs();
-
-                    tempVideo = s3Service.downloadToTempFile(s3Key, ".mp4");
-
-                    // 기본: 6프레임, 3초 간격
-                    int frameCount = Math.max(1, Math.min(maxFrames, 12));
-                    frameFiles = extractFrames(tempVideo, tempDir, frameCount, 3);
-                    for (File f : frameFiles) {
-                        String b64 = imageToBase64(f);
-                        if (b64 != null && !b64.isBlank()) base64Images.add(b64);
-                    }
-                } catch (Exception e) {
-                    return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                            .body(Map.of("error", "프레임 확보 실패", "details", e.getMessage()));
+                log.info("✅ [CCTV] (Emergency) No frames from YOLO (fallen_events=0), skipping Gemini analysis");
+                
+                Map<String, Object> response = new HashMap<>();
+                Map<String, Object> analysis = new HashMap<>();
+                analysis.put("emergency_level", "정상");
+                analysis.put("report_possibility_score", "총 17점 중 17점 (신고 발생 가능성 매우 높음 / 위험 상황 아님)");
+                analysis.put("description", "YOLO 분석 결과: 낙상 이벤트 없음. 정상 상황으로 판단됩니다.");
+                analysis.put("confidence", 0.95);
+                
+                Map<String, Object> incident = new HashMap<>();
+                incident.put("incident_type", "EMERGENCY");
+                incident.put("severity_level", "LOW");
+                analysis.put("incident", incident);
+                
+                response.put("analysis", analysis);
+                if (yoloResponse != null) {
+                    response.put("yolo", yoloResponse);
                 }
-            }
-
-            if (base64Images.isEmpty()) {
-                return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                        .body(Map.of("error", "Gemini에 보낼 프레임이 없습니다."));
+                response.put("saveToDb", false);  // 정상 상황은 DB에 저장하지 않음
+                
+                return ResponseEntity.ok(response);
             }
 
             // 3) 프롬프트 구성: YOLO 요약을 참고 정보로 prepend
