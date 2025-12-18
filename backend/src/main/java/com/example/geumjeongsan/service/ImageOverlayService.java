@@ -36,15 +36,37 @@ public class ImageOverlayService {
                 Map<String, Object> bbox = (Map<String, Object>) det.get("bbox");
                 if (bbox == null) continue;
 
-                double x = clamp01(toDouble(bbox.get("x"), 0.0));
-                double y = clamp01(toDouble(bbox.get("y"), 0.0));
-                double w = clamp01(toDouble(bbox.get("w"), 0.0));
-                double h = clamp01(toDouble(bbox.get("h"), 0.0));
+                // 좌표 추출 (픽셀/정규화 자동 감지)
+                double x = toDouble(bbox.get("x"), 0.0);
+                double y = toDouble(bbox.get("y"), 0.0);
+                double w = toDouble(bbox.get("w"), 0.0);
+                double h = toDouble(bbox.get("h"), 0.0);
 
+                // 픽셀 좌표인지 정규화 좌표인지 자동 판단
+                boolean isPixelCoord = (x > 1.0 || y > 1.0 || w > 1.0 || h > 1.0);
+                
+                if (isPixelCoord) {
+                    // 픽셀 → 정규화 변환
+                    x = clampDouble(x / W, 0.0, 1.0);
+                    y = clampDouble(y / H, 0.0, 1.0);
+                    w = clampDouble(w / W, 0.0, 1.0);
+                    h = clampDouble(h / H, 0.0, 1.0);
+                    System.out.println("📐 [Overlay] Converted pixel coords to normalized: x=" + x + ", y=" + y + ", w=" + w + ", h=" + h);
+                } else {
+                    // 이미 정규화된 좌표, 0~1 범위로 제한
+                    x = clamp01(x);
+                    y = clamp01(y);
+                    w = clamp01(w);
+                    h = clamp01(h);
+                }
+
+                // 정규화 좌표 → 픽셀 변환
                 int px = (int) Math.round(x * W);
                 int py = (int) Math.round(y * H);
                 int pw = (int) Math.round(w * W);
                 int ph = (int) Math.round(h * H);
+                
+                System.out.println("🎨 [Overlay] Drawing bbox: px=" + px + ", py=" + py + ", pw=" + pw + ", ph=" + ph + " (Image: " + W + "x" + H + ", label=" + label + ")");
 
                 // 최소/경계 보정
                 px = clamp(px, 0, W - 1);
@@ -85,6 +107,10 @@ public class ImageOverlayService {
 
     private double clamp01(double v) {
         return Math.max(0.0, Math.min(1.0, v));
+    }
+
+    private double clampDouble(double v, double min, double max) {
+        return Math.max(min, Math.min(max, v));
     }
 
     private int clamp(int v, int min, int max) {

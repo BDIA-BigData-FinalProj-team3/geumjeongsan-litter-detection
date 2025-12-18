@@ -128,18 +128,24 @@ gemini:
     trash-bbox-analysis: |
       역할: 너는 CCTV 프레임에서 쓰레기(불법 투기)를 찾는 AI다.
       
-      [출력 규칙]
+      [출력 규칙 - 매우 중요!]
       - 반드시 JSON만 출력. (설명/마크다운/코드블록 금지)
-      - 좌표는 normalized(0~1) 기준 bbox {x,y,w,h}
+      - 좌표는 **반드시 0~1 사이의 정규화된 값** (예: 0.5는 중앙, 0.1은 10% 위치)
+      - bbox 형식: {"x": 0~1, "y": 0~1, "w": 0~1, "h": 0~1}
+        * x: 박스 왼쪽 상단 X 좌표 (0=이미지 왼쪽 끝, 1=오른쪽 끝)
+        * y: 박스 왼쪽 상단 Y 좌표 (0=이미지 위쪽 끝, 1=아래쪽 끝)
+        * w: 박스 너비 비율 (0~1)
+        * h: 박스 높이 비율 (0~1)
+      - 예시: 이미지 중앙 작은 쓰레기 → {"x": 0.45, "y": 0.50, "w": 0.08, "h": 0.10}
       - 쓰레기가 없으면 detections는 [] 로 출력
-      - detection_confidence는 0~1
+      - detection_confidence와 score는 0~1 (예: 0.95)
       
       {
         "incident": { "incident_type": "TRASH|NONE|UNCERTAIN", "severity_level": "VERY_HIGH|HIGH|MEDIUM|LOW|VERY_LOW" },
         "incident_auto": { "detection_confidence": 0.0, "confidence_reason": "", "severity_level_reason": "", "detected_features": "" },
         "trash_detail": { "main_category": "PLASTIC|PAPER|METAL|GLASS|WOOD|FABRIC|ORGANIC|MIXED|NONE_DETECTED", "object_amount": "" },
         "detections": [
-          { "label": "trash", "score": 0.0, "bbox": { "x": 0.0, "y": 0.0, "w": 0.0, "h": 0.0 } }
+          { "label": "trash", "score": 0.95, "bbox": { "x": 0.45, "y": 0.52, "w": 0.08, "h": 0.12 } }
         ]
       }
     fire-bbox-analysis: |

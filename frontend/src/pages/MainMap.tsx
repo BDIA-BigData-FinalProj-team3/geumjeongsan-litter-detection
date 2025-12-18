@@ -3202,10 +3202,11 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             className="fixed bg-white shadow-2xl border-2 border-gray-300 overflow-y-auto"
             style={{ 
               borderRadius: isMobile ? '16px 16px 0 0' : '0px',
-              left: isMobile ? '0' : `${popupPositions.cctv.x}px`, 
-              top: isMobile ? 'auto' : `${popupPositions.cctv.y}px`,
+              left: isMobile ? '0' : '50%',
+              top: isMobile ? 'auto' : '50%',
               bottom: isMobile ? '0' : 'auto',
               right: isMobile ? '0' : 'auto',
+              transform: isMobile ? 'none' : 'translate(-50%, -50%)',
               width: isMobile ? '100vw' : '400px',
               maxWidth: isMobile ? '100vw' : '400px',
               maxHeight: isMobile ? '85vh' : '90vh',
@@ -3217,12 +3218,10 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               style={{ 
                 borderRadius: isMobile ? '16px 16px 0 0' : '0px',
                 padding: isMobile ? '16px 20px' : '12px 16px',
-                cursor: isMobile ? 'default' : 'move'
+                cursor: 'default'
               }}
-              onMouseDown={isMobile ? undefined : (e) => startDrag('cctv', e)}
             >
               <div className="flex items-center gap-2">
-                {!isMobile && <Move className="w-4 h-4 text-white" />}
                 <h3 className="text-white font-semibold" style={{ fontSize: isMobile ? '16px' : '14px' }}>CCTV 상세 정보</h3>
               </div>
             <button onClick={() => setSelectedCCTV(null)} className="text-white hover:text-gray-200">
@@ -3298,18 +3297,42 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               <p className="text-xs text-gray-500 mb-3">최근 발생 3건</p>
               {cctvMediaList.length > 0 ? (
                 <div className="space-y-3">
-                  {cctvMediaList.slice(0, 3).map((media, index) => {
-                    // TODO: 실제 사건 정보는 API에서 가져와야 함
-                    // media에 incident_id나 incident_code가 있다면 사용, 없으면 표시하지 않음
-                    const mockIncidentType = index === 0 ? 'fire' : index === 1 ? 'emergency' : 'trash';
-                    const mockIncidentStatus = index === 0 ? '대기중' : index === 1 ? '진행중' : '대기중';
+                  {[...cctvMediaList]
+                    .sort((a, b) => {
+                      // 사건 타입 순서: FIRE(화재) -> EMERGENCY(응급) -> TRASH(쓰레기)
+                      const typeOrder: Record<string, number> = {
+                        'FIRE': 1,
+                        'EMERGENCY': 2,
+                        'TRASH': 3
+                      };
+                      const aOrder = typeOrder[a.incidentType?.toUpperCase() || ''] || 999;
+                      const bOrder = typeOrder[b.incidentType?.toUpperCase() || ''] || 999;
+                      return aOrder - bOrder;
+                    })
+                    .slice(0, 3)
+                    .map((media, index) => {
+                    // 실제 사건 타입 사용
+                    const incidentTypeUpper = media.incidentType?.toUpperCase();
+                    const incidentType = 
+                      incidentTypeUpper === 'FIRE' ? 'fire' :
+                      incidentTypeUpper === 'EMERGENCY' ? 'emergency' :
+                      incidentTypeUpper === 'TRASH' ? 'trash' :
+                      'trash'; // 기본값
+                    
+                    // 실제 사건 상태 사용
+                    const statusUpper = media.status?.toUpperCase();
+                    const incidentStatus = 
+                      statusUpper === 'PENDING' ? '대기중' :
+                      statusUpper === 'IN_PROGRESS' ? '진행중' :
+                      statusUpper === 'COMPLETED' ? '처리완료' :
+                      '대기중'; // 기본값
                     
                     const typeConfig = {
                       fire: { label: '화재', color: 'bg-red-100 text-red-700' },
                       emergency: { label: '응급', color: 'bg-purple-100 text-purple-700' },
                       trash: { label: '쓰레기', color: 'bg-green-100 text-green-700' }
                     };
-                    const config = typeConfig[mockIncidentType as keyof typeof typeConfig];
+                    const config = typeConfig[incidentType as keyof typeof typeConfig];
                     
                     return (
                       <div 
@@ -3335,7 +3358,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                               <p>{media.timestamp}</p>
                             </div>
                             <div className="text-xs text-gray-600">
-                              <p>상태: {mockIncidentStatus}</p>
+                              <p>상태: {incidentStatus}</p>
                             </div>
                             {media.duration && (
                               <p className="text-xs text-gray-500">
@@ -3358,7 +3381,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                                 location: selectedCCTV?.cctv.location || '위치 정보 없음',
                                 time: media.timestamp,
                                 confidence: '85%',
-                                type: mockIncidentType as 'fire' | 'emergency' | 'trash'
+                                type: incidentType as 'fire' | 'emergency' | 'trash'
                               });
                             }}
                           >

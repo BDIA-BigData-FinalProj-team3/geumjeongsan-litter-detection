@@ -313,6 +313,10 @@ export interface CCTVMedia {
   duration?: number; // seconds (for videos)
   fileSize?: string;
   thumbnailUrl?: string;
+  incidentId?: number; // 관련 사건 ID
+  incidentCode?: string; // 사건 코드 (예: FIRE-001)
+  incidentType?: string; // 사건 타입 (FIRE, EMERGENCY, TRASH)
+  status?: string; // 사건 상태 (PENDING, IN_PROGRESS, COMPLETED)
 }
 
 export const getCCTVMedia = async (id: number, fileType: 'video' | 'image' | 'all' = 'all'): Promise<CCTVMedia[]> => {
@@ -342,6 +346,10 @@ export const getCCTVMedia = async (id: number, fileType: 'video' | 'image' | 'al
         url: String(m.url ?? ''),
         timestamp: String(m.capturedAt ?? ''),
         type,
+        incidentId: m.incidentId,
+        incidentCode: m.incidentCode,
+        incidentType: m.incidentType,
+        status: m.status,
       };
     }).filter(m => !!m.id && !!m.url);
 
