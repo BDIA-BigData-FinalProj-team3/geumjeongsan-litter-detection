@@ -2407,46 +2407,41 @@ export const analyzeEmergencyVideo = async (
 
 /**
  * 쓰레기 프레임(1장) Gemini 분석 + (옵션) DB 저장
- * POST /api/cctv/{cctvCode}/frame/analyze-trash-gemini-from-s3
+ * POST /api/cctv/test/analyze-image
+ * 
+ * CloudFront에서 /frame/upload가 차단되므로, 직접 이미지 파일을 전송하는 방식으로 변경
  */
 export const analyzeTrashFrameWithGemini = async (
   cctvCode: string,
   file: Blob,
   params?: { saveToDb?: boolean }
 ): Promise<any> => {
-  // 1. 먼저 이미지를 S3에 업로드
-  const uploadForm = new FormData();
-  uploadForm.append('image', file, 'frame.jpg');
+  // CloudFront 우회: /frame/upload 대신 /test/analyze-image 엔드포인트 직접 사용
+  const form = new FormData();
+  form.append('file', file, 'frame.jpg');
+  form.append('cctvCode', cctvCode);
   
-  const uploadUrl = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/frame/upload`;
-  const uploadRes = await fetch(uploadUrl, { method: 'POST', body: uploadForm });
+  // saveToDb는 백엔드에서 기본값 true로 처리되므로 생략 가능
+  // 필요시 백엔드 엔드포인트에 saveToDb 파라미터 추가 필요
   
-  if (!uploadRes.ok) {
-    const text = await uploadRes.text().catch(() => '');
-    throw new Error(text || `이미지 업로드 실패 (${uploadRes.status})`);
-  }
-  
-  const uploadResult = await uploadRes.json();
-  const s3Key = uploadResult.s3Key;
-  
-  if (!s3Key) {
-    throw new Error('S3 업로드 후 s3Key를 받지 못했습니다.');
-  }
-  
-  // 2. S3 key로 Gemini 분석
-  const q = new URLSearchParams();
-  q.set('s3Key', s3Key);
-  if (typeof params?.saveToDb === 'boolean') q.set('saveToDb', String(params.saveToDb));
-
-  const url = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/frame/analyze-trash-gemini-from-s3?${q.toString()}`;
-  const res = await fetch(url, { method: 'POST' });
+  const url = `${BACKEND_URL}/api/cctv/test/analyze-image`;
+  const res = await fetch(url, { method: 'POST', body: form });
   
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(text || `쓰레기(Gemini) 분석 실패 (${res.status})`);
   }
   
-  return await res.json();
+  const result = await res.json();
+  
+  // 백엔드 응답 형식 변환 (test/analyze-image는 parsedJson을 반환)
+  return {
+    analysis: result.parsedJson || result,
+    overlayUrl: result.overlayUrl,
+    incidentId: result.incidentId,
+    incidentCode: result.incidentCode,
+    savedToDb: result.savedToDb
+  };
 };
 
 /**
