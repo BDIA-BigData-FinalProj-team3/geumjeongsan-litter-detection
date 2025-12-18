@@ -1366,63 +1366,80 @@ public class CCTVController {
     }
 
     /**
-     * 쓰레기 분석 (S3 최신 프레임 자동 조회)
-     * POST /api/cctv/{cctvCode}/frame/analyze-trash-gemini
+     * 버튼 클릭 시점 프레임(Base64)로 쓰레기 Gemini 분석 + S3/DB 저장
+     * POST /api/cctv/{cctvCode}/frame/analyze-trash-gemini-base64
      * 
-     * CloudFront 호환: JSON 요청만 받아서 S3에서 최신 프레임을 자동으로 가져옴
+     * CloudFront 우회: multipart/form-data 대신 JSON으로 base64 이미지 전송
+     * - 프론트에서 비디오 재생 중 버튼 클릭 시점의 프레임을 캡처하여 전송
+     * - 백엔드에서 원본 프레임을 S3에 저장 (증거 보관)
      * 
      * @param cctvCode CCTV 코드
-     * @param requestBody timestamp, saveToDb
-     * @return 분석 결과
+     * @param requestBody { imageBase64: string, saveToDb?: boolean }
+     * @return 분석 결과 (analysis, frameUrl, overlayUrl, incidentId 등)
      */
-    @PostMapping("/{cctvCode}/frame/analyze-trash-gemini")
-    public ResponseEntity<?> analyzeTrashGeminiFromLatest(
+    @PostMapping("/{cctvCode}/frame/analyze-trash-gemini-base64")
+    public ResponseEntity<?> analyzeTrashGeminiFromBase64(
             @PathVariable String cctvCode,
-            @RequestBody(required = false) Map<String, Object> requestBody
+            @RequestBody Map<String, Object> requestBody
     ) {
         try {
-            log.info("🖼️ [CCTV] Analyzing trash from latest S3 frame with Gemini: {}", cctvCode);
+            log.info("🖼️ [CCTV] Analyzing trash from base64 frame with Gemini: {}", cctvCode);
             
-            boolean saveToDb = requestBody != null && requestBody.containsKey("saveToDb")
+            // 1. 요청 검증
+            if (requestBody == null || !requestBody.containsKey("imageBase64")) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "imageBase64 is required"));
+            }
+            
+            String imageBase64 = (String) requestBody.get("imageBase64");
+            if (imageBase64 == null || imageBase64.isBlank()) {
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "imageBase64 cannot be empty"));
+            }
+            
+            boolean saveToDb = requestBody.containsKey("saveToDb")
                     ? Boolean.TRUE.equals(requestBody.get("saveToDb"))
                     : true;
             
-            // 1. S3에서 최신 프레임 조회
-            String cameraId = cctvCode.toLowerCase();
-            String prefix = String.format("cctv/%s/frames/", cameraId);
-            
-            // S3에서 최신 프레임 key 찾기
-            List<String> keys = s3Service.listObjects(prefix);
-            if (keys.isEmpty()) {
-                return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                        .body(Map.of("error", "S3에 프레임이 없습니다: " + prefix));
+            // 2. Base64 디코딩
+            byte[] imageBytes;
+            try {
+                imageBytes = Base64.getDecoder().decode(imageBase64);
+            } catch (IllegalArgumentException e) {
+                log.error("❌ [CCTV] Invalid base64 string", e);
+                return ResponseEntity.badRequest()
+                        .body(Map.of("error", "Invalid base64 string: " + e.getMessage()));
             }
             
-            // 최신 프레임 (마지막 key)
-            keys.sort(String::compareTo);
-            String latestKey = keys.get(keys.size() - 1);
-            log.info("📸 [CCTV] Latest frame found: {}", latestKey);
+            // 3. 원본 프레임 S3 저장 (증거 보관)
+            String cameraId = cctvCode.toLowerCase();
+            String frameKey = s3Service.uploadFrame(imageBytes, cameraId);
+            String frameUrl = s3Service.toHttpUrl(frameKey);
+            log.info("✅ [CCTV] Original frame saved to S3: {}", frameKey);
             
-            // 2. S3에서 이미지 다운로드
-            byte[] imageBytes = s3Service.downloadBytes(latestKey);
-            String base64 = Base64.getEncoder().encodeToString(imageBytes);
+            // 4. Gemini용 base64 (이미지 bytes를 다시 base64)
+            String geminiBase64 = Base64.getEncoder().encodeToString(imageBytes);
             
-            // 3. Gemini 프롬프트 설정
+            // 5. 프롬프트 선택
             String prompt = (trashBboxAnalysisPrompt != null && !trashBboxAnalysisPrompt.isBlank())
                     ? trashBboxAnalysisPrompt
                     : trashAnalysisPrompt;
             
-            // 4. Gemini 분석
+            // 6. Gemini 분석
             log.info("🤖 [CCTV] Calling Gemini for trash analysis");
-            String geminiText = geminiService.analyzeImage(prompt, base64);
+            String geminiText = geminiService.analyzeImage(prompt, geminiBase64);
             Map<String, Object> parsedJson = extractJsonFromGeminiResponse(geminiText);
             
             if (parsedJson == null) {
                 log.warn("⚠️ [CCTV] Failed to parse Gemini JSON response");
-                return ResponseEntity.ok(Map.of("warning", "Gemini JSON 파싱 실패", "raw", geminiText));
+                return ResponseEntity.ok(Map.of(
+                        "warning", "Gemini JSON 파싱 실패",
+                        "raw", geminiText,
+                        "frameUrl", frameUrl
+                ));
             }
             
-            // 5. detections 추출 (overlay용)
+            // 7. detections 추출 (overlay용)
             List<Map<String, Object>> detections = new ArrayList<>();
             if (parsedJson.get("detections") instanceof List<?> list) {
                 try {
@@ -1432,21 +1449,21 @@ public class CCTVController {
                 } catch (Exception ignore) {}
             }
             
-            // 6. overlay 생성 + S3 업로드
+            // 8. overlay 생성 + S3 업로드
             String overlayUrl = null;
             try {
                 byte[] overlayBytes = imageOverlayService.drawOverlayJpeg(imageBytes, detections);
-                String s3Key = s3Service.uploadOverlayFrame(overlayBytes, cameraId);
-                overlayUrl = s3Service.toHttpUrl(s3Key);
+                String overlayKey = s3Service.uploadOverlayFrame(overlayBytes, cameraId);
+                overlayUrl = s3Service.toHttpUrl(overlayKey);
                 log.info("✅ [CCTV] Overlay image uploaded: {}", overlayUrl);
             } catch (Exception e) {
                 log.warn("⚠️ [CCTV] Failed to create/upload overlay: {}", e.getMessage());
             }
             
-            // 7. DB 저장 (saveToDb = true)
-            boolean savedToDb = false;
+            // 9. DB 저장 (옵션)
             Long incidentId = null;
             String incidentCode = null;
+            boolean savedToDb = false;
             
             if (saveToDb && parsedJson != null) {
                 @SuppressWarnings("unchecked")
@@ -1460,18 +1477,18 @@ public class CCTVController {
                         var createResponse = trashService.createTrashFromGemini(
                                 parsedJson,
                                 resolvedCctvId,
-                                "CCTV 자동 탐지(최신 프레임)"
+                                "CCTV 버튼 캡처 프레임"
                         );
                         savedToDb = true;
                         incidentId = createResponse.getIncidentId();
                         incidentCode = createResponse.getIncidentCode();
                         log.info("✅ [CCTV] Incident saved to DB: {} (ID: {})", incidentCode, incidentId);
                         
-                        // 8. media_file에 overlay 이미지 저장
+                        // 10. media_file에 overlay 이미지 저장
                         if (overlayUrl != null && incidentId != null) {
                             try {
                                 mediaFileService.saveFrame(incidentId, resolvedCctvId, overlayUrl, 
-                                        java.time.OffsetDateTime.now());
+                                        OffsetDateTime.now());
                                 log.info("✅ [CCTV] Overlay image saved to media_file: {}", overlayUrl);
                             } catch (Exception e) {
                                 log.warn("⚠️ [CCTV] Failed to save overlay to media_file: {}", e.getMessage());
@@ -1483,13 +1500,13 @@ public class CCTVController {
                 }
             }
             
-            // 9. 응답
+            // 11. 응답
             Map<String, Object> response = new HashMap<>();
-            response.put("success", true);
             response.put("analysis", parsedJson);
+            response.put("frameKey", frameKey);
+            response.put("frameUrl", frameUrl);
             response.put("overlayUrl", overlayUrl);
             response.put("savedToDb", savedToDb);
-            response.put("latestFrameKey", latestKey);
             if (incidentCode != null) {
                 response.put("incidentCode", incidentCode);
             }
@@ -1500,7 +1517,7 @@ public class CCTVController {
             return ResponseEntity.ok(response);
             
         } catch (Exception e) {
-            log.error("❌ [CCTV] Failed to analyze trash from latest S3 frame", e);
+            log.error("❌ [CCTV] Failed to analyze trash from base64 frame", e);
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", e.getMessage()));
         }

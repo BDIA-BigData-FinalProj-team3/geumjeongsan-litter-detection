@@ -2407,25 +2407,38 @@ export const analyzeEmergencyVideo = async (
 
 /**
  * 쓰레기 프레임(1장) Gemini 분석 + (옵션) DB 저장
- * POST /api/cctv/{cctvCode}/frame/analyze-trash-gemini
+ * POST /api/cctv/{cctvCode}/frame/analyze-trash-gemini-base64
  * 
- * CloudFront가 multipart/form-data를 차단하므로, 
- * S3에서 최신 프레임을 자동으로 가져오는 엔드포인트 사용
+ * CloudFront가 multipart/form-data를 차단하므로,
+ * Blob을 Base64로 변환하여 JSON으로 전송
+ * - 프론트에서 비디오 재생 중 버튼 클릭 시점의 프레임을 캡처하여 전송
+ * - 백엔드에서 원본 프레임을 S3에 저장 (증거 보관)
  */
 export const analyzeTrashFrameWithGemini = async (
   cctvCode: string,
   file: Blob,
   params?: { saveToDb?: boolean }
 ): Promise<any> => {
-  // CloudFront 우회: S3에서 최신 프레임을 자동 조회하는 방식
-  // file 파라미터는 무시하고, 백엔드가 S3에서 최신 프레임을 가져옴
-  
-  const url = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/frame/analyze-trash-gemini`;
+  // 1. Blob -> Base64 변환 (dataURL prefix 제거)
+  const base64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      // data:image/jpeg;base64, 제거하고 순수 base64만 추출
+      const base64Data = result.includes(',') ? result.split(',')[1] : result;
+      resolve(base64Data);
+    };
+    reader.onerror = () => reject(reader.error || new Error('FileReader failed'));
+    reader.readAsDataURL(file);
+  });
+
+  // 2. JSON 요청 (CloudFront 호환)
+  const url = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/frame/analyze-trash-gemini-base64`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      timestamp: new Date().toISOString(),
+      imageBase64: base64,
       saveToDb: params?.saveToDb ?? true
     })
   });
@@ -2439,7 +2452,8 @@ export const analyzeTrashFrameWithGemini = async (
   
   // 백엔드 응답 형식 변환
   return {
-    analysis: result.parsedJson || result.analysis || result,
+    analysis: result.analysis || result,
+    frameUrl: result.frameUrl,
     overlayUrl: result.overlayUrl,
     incidentId: result.incidentId,
     incidentCode: result.incidentCode,
