@@ -1223,6 +1223,35 @@ public class CCTVController {
     }
 
     /**
+     * 이미지를 S3에 업로드하고 s3Key 반환
+     * POST /api/cctv/{cctvCode}/frame/upload
+     * 
+     * @param cctvCode CCTV 코드
+     * @param imageFile 업로드된 이미지 파일
+     * @return S3 key
+     */
+    @PostMapping("/{cctvCode}/frame/upload")
+    public ResponseEntity<?> uploadFrameToS3(
+            @PathVariable String cctvCode,
+            @RequestParam("image") MultipartFile imageFile) {
+        try {
+            log.info("📤 [CCTV] Uploading frame to S3: {}", cctvCode);
+            
+            String cameraId = cctvCode.toLowerCase();
+            byte[] imageBytes = imageFile.getBytes();
+            String s3Key = s3Service.uploadFrame(imageBytes, cameraId);
+            
+            log.info("✅ [CCTV] Frame uploaded to S3: {}", s3Key);
+            
+            return ResponseEntity.ok(Map.of("s3Key", s3Key));
+        } catch (Exception e) {
+            log.error("❌ [CCTV] Failed to upload frame to S3", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
      * S3 이미지로 쓰레기 Gemini 분석
      * POST /api/cctv/{cctvCode}/frame/analyze-trash-gemini-from-s3
      * 

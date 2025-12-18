@@ -2407,25 +2407,45 @@ export const analyzeEmergencyVideo = async (
 
 /**
  * 쓰레기 프레임(1장) Gemini 분석 + (옵션) DB 저장
- * POST /api/cctv/{cctvCode}/frame/analyze-trash-gemini
+ * POST /api/cctv/{cctvCode}/frame/analyze-trash-gemini-from-s3
  */
 export const analyzeTrashFrameWithGemini = async (
   cctvCode: string,
   file: Blob,
   params?: { saveToDb?: boolean }
 ): Promise<any> => {
+  // 1. 먼저 이미지를 S3에 업로드
+  const uploadForm = new FormData();
+  uploadForm.append('image', file, 'frame.jpg');
+  
+  const uploadUrl = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/frame/upload`;
+  const uploadRes = await fetch(uploadUrl, { method: 'POST', body: uploadForm });
+  
+  if (!uploadRes.ok) {
+    const text = await uploadRes.text().catch(() => '');
+    throw new Error(text || `이미지 업로드 실패 (${uploadRes.status})`);
+  }
+  
+  const uploadResult = await uploadRes.json();
+  const s3Key = uploadResult.s3Key;
+  
+  if (!s3Key) {
+    throw new Error('S3 업로드 후 s3Key를 받지 못했습니다.');
+  }
+  
+  // 2. S3 key로 Gemini 분석
   const q = new URLSearchParams();
+  q.set('s3Key', s3Key);
   if (typeof params?.saveToDb === 'boolean') q.set('saveToDb', String(params.saveToDb));
 
-  const form = new FormData();
-  form.append('image', file, 'frame.jpg');
-
-  const url = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/frame/analyze-trash-gemini${q.toString() ? `?${q.toString()}` : ''}`;
-  const res = await fetch(url, { method: 'POST', body: form });
+  const url = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/frame/analyze-trash-gemini-from-s3?${q.toString()}`;
+  const res = await fetch(url, { method: 'POST' });
+  
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(text || `쓰레기(Gemini) 분석 실패 (${res.status})`);
   }
+  
   return await res.json();
 };
 
