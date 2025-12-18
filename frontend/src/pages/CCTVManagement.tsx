@@ -801,7 +801,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
         } finally {
           setIsAnalyzingQwen(false);
         }
-      }, 'image/jpeg', 0.9);
+      }, 'image/jpeg', 0.5);
       
     } catch (error) {
       console.error('프레임 캡처 실패:', error);
