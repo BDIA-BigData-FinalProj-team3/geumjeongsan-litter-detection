@@ -1364,5 +1364,146 @@ public class CCTVController {
                     .body(Map.of("error", e.getMessage()));
         }
     }
+
+    /**
+     * 쓰레기 분석 (S3 최신 프레임 자동 조회)
+     * POST /api/cctv/{cctvCode}/frame/analyze-trash-gemini
+     * 
+     * CloudFront 호환: JSON 요청만 받아서 S3에서 최신 프레임을 자동으로 가져옴
+     * 
+     * @param cctvCode CCTV 코드
+     * @param requestBody timestamp, saveToDb
+     * @return 분석 결과
+     */
+    @PostMapping("/{cctvCode}/frame/analyze-trash-gemini")
+    public ResponseEntity<?> analyzeTrashGeminiFromLatest(
+            @PathVariable String cctvCode,
+            @RequestBody(required = false) Map<String, Object> requestBody
+    ) {
+        try {
+            log.info("🖼️ [CCTV] Analyzing trash from latest S3 frame with Gemini: {}", cctvCode);
+            
+            boolean saveToDb = requestBody != null && requestBody.containsKey("saveToDb")
+                    ? Boolean.TRUE.equals(requestBody.get("saveToDb"))
+                    : true;
+            
+            // 1. S3에서 최신 프레임 조회
+            String cameraId = cctvCode.toLowerCase();
+            String prefix = String.format("cctv/%s/frames/", cameraId);
+            
+            // S3에서 최신 프레임 key 찾기
+            List<String> keys = s3Service.listObjects(prefix);
+            if (keys.isEmpty()) {
+                return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                        .body(Map.of("error", "S3에 프레임이 없습니다: " + prefix));
+            }
+            
+            // 최신 프레임 (마지막 key)
+            keys.sort(String::compareTo);
+            String latestKey = keys.get(keys.size() - 1);
+            log.info("📸 [CCTV] Latest frame found: {}", latestKey);
+            
+            // 2. S3에서 이미지 다운로드
+            byte[] imageBytes = s3Service.downloadBytes(latestKey);
+            String base64 = Base64.getEncoder().encodeToString(imageBytes);
+            
+            // 3. Gemini 프롬프트 설정
+            String prompt = (trashBboxAnalysisPrompt != null && !trashBboxAnalysisPrompt.isBlank())
+                    ? trashBboxAnalysisPrompt
+                    : trashAnalysisPrompt;
+            
+            // 4. Gemini 분석
+            log.info("🤖 [CCTV] Calling Gemini for trash analysis");
+            String geminiText = geminiService.analyzeImage(prompt, base64);
+            Map<String, Object> parsedJson = extractJsonFromGeminiResponse(geminiText);
+            
+            if (parsedJson == null) {
+                log.warn("⚠️ [CCTV] Failed to parse Gemini JSON response");
+                return ResponseEntity.ok(Map.of("warning", "Gemini JSON 파싱 실패", "raw", geminiText));
+            }
+            
+            // 5. detections 추출 (overlay용)
+            List<Map<String, Object>> detections = new ArrayList<>();
+            if (parsedJson.get("detections") instanceof List<?> list) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> dets = (List<Map<String, Object>>) list;
+                    detections = dets != null ? dets : new ArrayList<>();
+                } catch (Exception ignore) {}
+            }
+            
+            // 6. overlay 생성 + S3 업로드
+            String overlayUrl = null;
+            try {
+                byte[] overlayBytes = imageOverlayService.drawOverlayJpeg(imageBytes, detections);
+                String s3Key = s3Service.uploadOverlayFrame(overlayBytes, cameraId);
+                overlayUrl = s3Service.toHttpUrl(s3Key);
+                log.info("✅ [CCTV] Overlay image uploaded: {}", overlayUrl);
+            } catch (Exception e) {
+                log.warn("⚠️ [CCTV] Failed to create/upload overlay: {}", e.getMessage());
+            }
+            
+            // 7. DB 저장 (saveToDb = true)
+            boolean savedToDb = false;
+            Long incidentId = null;
+            String incidentCode = null;
+            
+            if (saveToDb && parsedJson != null) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> incidentMap = (Map<String, Object>) parsedJson.get("incident");
+                String incidentType = incidentMap != null ? (String) incidentMap.get("incident_type") : null;
+                
+                if ("TRASH".equals(incidentType)) {
+                    try {
+                        log.info("💾 [CCTV] Saving TRASH incident to database");
+                        Long resolvedCctvId = resolveCctvId(null, cctvCode);
+                        var createResponse = trashService.createTrashFromGemini(
+                                parsedJson,
+                                resolvedCctvId,
+                                "CCTV 자동 탐지(최신 프레임)"
+                        );
+                        savedToDb = true;
+                        incidentId = createResponse.getIncidentId();
+                        incidentCode = createResponse.getIncidentCode();
+                        log.info("✅ [CCTV] Incident saved to DB: {} (ID: {})", incidentCode, incidentId);
+                        
+                        // 8. media_file에 overlay 이미지 저장
+                        if (overlayUrl != null && incidentId != null) {
+                            try {
+                                mediaFileService.saveFrame(incidentId, resolvedCctvId, overlayUrl, 
+                                        java.time.OffsetDateTime.now());
+                                log.info("✅ [CCTV] Overlay image saved to media_file: {}", overlayUrl);
+                            } catch (Exception e) {
+                                log.warn("⚠️ [CCTV] Failed to save overlay to media_file: {}", e.getMessage());
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.error("❌ [CCTV] Failed to save incident to DB", e);
+                    }
+                }
+            }
+            
+            // 9. 응답
+            Map<String, Object> response = new HashMap<>();
+            response.put("success", true);
+            response.put("analysis", parsedJson);
+            response.put("overlayUrl", overlayUrl);
+            response.put("savedToDb", savedToDb);
+            response.put("latestFrameKey", latestKey);
+            if (incidentCode != null) {
+                response.put("incidentCode", incidentCode);
+            }
+            if (incidentId != null) {
+                response.put("incidentId", incidentId);
+            }
+            
+            return ResponseEntity.ok(response);
+            
+        } catch (Exception e) {
+            log.error("❌ [CCTV] Failed to analyze trash from latest S3 frame", e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", e.getMessage()));
+        }
+    }
 }
 

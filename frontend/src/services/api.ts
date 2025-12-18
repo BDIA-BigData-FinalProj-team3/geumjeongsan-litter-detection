@@ -2407,25 +2407,28 @@ export const analyzeEmergencyVideo = async (
 
 /**
  * 쓰레기 프레임(1장) Gemini 분석 + (옵션) DB 저장
- * POST /api/cctv/test/analyze-image
+ * POST /api/cctv/{cctvCode}/frame/analyze-trash-gemini
  * 
- * CloudFront에서 /frame/upload가 차단되므로, 직접 이미지 파일을 전송하는 방식으로 변경
+ * CloudFront가 multipart/form-data를 차단하므로, 
+ * S3에서 최신 프레임을 자동으로 가져오는 엔드포인트 사용
  */
 export const analyzeTrashFrameWithGemini = async (
   cctvCode: string,
   file: Blob,
   params?: { saveToDb?: boolean }
 ): Promise<any> => {
-  // CloudFront 우회: /frame/upload 대신 /test/analyze-image 엔드포인트 직접 사용
-  const form = new FormData();
-  form.append('file', file, 'frame.jpg');
-  form.append('cctvCode', cctvCode);
+  // CloudFront 우회: S3에서 최신 프레임을 자동 조회하는 방식
+  // file 파라미터는 무시하고, 백엔드가 S3에서 최신 프레임을 가져옴
   
-  // saveToDb는 백엔드에서 기본값 true로 처리되므로 생략 가능
-  // 필요시 백엔드 엔드포인트에 saveToDb 파라미터 추가 필요
-  
-  const url = `${BACKEND_URL}/api/cctv/test/analyze-image`;
-  const res = await fetch(url, { method: 'POST', body: form });
+  const url = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/frame/analyze-trash-gemini`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      timestamp: new Date().toISOString(),
+      saveToDb: params?.saveToDb ?? true
+    })
+  });
   
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -2434,9 +2437,9 @@ export const analyzeTrashFrameWithGemini = async (
   
   const result = await res.json();
   
-  // 백엔드 응답 형식 변환 (test/analyze-image는 parsedJson을 반환)
+  // 백엔드 응답 형식 변환
   return {
-    analysis: result.parsedJson || result,
+    analysis: result.parsedJson || result.analysis || result,
     overlayUrl: result.overlayUrl,
     incidentId: result.incidentId,
     incidentCode: result.incidentCode,

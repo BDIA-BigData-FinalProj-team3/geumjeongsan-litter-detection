@@ -11,6 +11,12 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
+import software.amazon.awssdk.services.s3.model.S3Object;
+
+import java.util.List;
+import java.util.stream.Collectors;
 
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -197,6 +203,34 @@ public class S3Service {
         } catch (Exception e) {
             log.error("❌ [S3Service] Failed to downloadToTempFile: {}", s3Key, e);
             throw new RuntimeException("S3 임시파일 다운로드 실패: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * S3 객체 목록 조회
+     *
+     * @param prefix S3 키 prefix (예: "cctv/cctv-003/frames/")
+     * @return S3 키 목록
+     */
+    public List<String> listObjects(String prefix) {
+        try {
+            ListObjectsV2Request listRequest = ListObjectsV2Request.builder()
+                    .bucket(bucketName)
+                    .prefix(prefix)
+                    .build();
+            
+            ListObjectsV2Response listResponse = s3Client.listObjectsV2(listRequest);
+            
+            List<String> keys = listResponse.contents().stream()
+                    .map(S3Object::key)
+                    .collect(Collectors.toList());
+            
+            log.info("✅ [S3Service] Listed {} objects with prefix: {}", keys.size(), prefix);
+            return keys;
+            
+        } catch (Exception e) {
+            log.error("❌ [S3Service] Failed to list objects with prefix: {}", prefix, e);
+            throw new RuntimeException("S3 객체 목록 조회 실패: " + e.getMessage(), e);
         }
     }
 }
