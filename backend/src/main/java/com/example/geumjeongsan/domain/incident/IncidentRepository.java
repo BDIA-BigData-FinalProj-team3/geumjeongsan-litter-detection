@@ -5,6 +5,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 public interface IncidentRepository extends JpaRepository<Incident, Long> {
@@ -21,6 +22,17 @@ public interface IncidentRepository extends JpaRepository<Incident, Long> {
     // 같은 날짜, 같은 타입의 사건 개수 조회 (사건번호 일련번호 생성용)
     @Query("SELECT COUNT(i) FROM Incident i WHERE i.incidentType = :incidentType AND DATE(i.detectedAt) = :date")
     long countByIncidentTypeAndDetectedAtDate(@Param("incidentType") String incidentType, @Param("date") LocalDate date);
+
+    // ✅ 기간 내 발생 건수 (대시보드용 - full scan 방지)
+    @Query("SELECT COUNT(i) FROM Incident i WHERE i.incidentType = :incidentType AND i.detectedAt >= :from AND i.detectedAt < :to")
+    long countByIncidentTypeAndDetectedAtBetween(
+            @Param("incidentType") String incidentType,
+            @Param("from") OffsetDateTime from,
+            @Param("to") OffsetDateTime to
+    );
+
+    // ✅ 상태별 count (list size 방지)
+    long countByIncidentTypeAndStatus(String incidentType, String status);
     
     // 특정 패턴으로 시작하는 가장 마지막 incident_code 조회 (예: 'F-251215-%')
     Incident findTopByIncidentCodeStartingWithOrderByIncidentCodeDesc(String prefix);

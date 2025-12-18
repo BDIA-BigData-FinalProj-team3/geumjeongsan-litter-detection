@@ -61,15 +61,12 @@ public class RockfallService {
         OffsetDateTime todayEnd = today.plusDays(1).atStartOfDay().atOffset(java.time.ZoneOffset.of("+09:00"));
 
         // 당일 발생 건수
-        long todayCount = incidentRepository.findAll().stream()
-                .filter(i -> "ROCKFALL".equals(i.getIncidentType()) &&
-                        i.getDetectedAt() != null &&
-                        i.getDetectedAt().isAfter(todayStart) &&
-                        i.getDetectedAt().isBefore(todayEnd))
-                .count();
+        // ✅ DB에서 COUNT로 바로 집계 (전체 incident 테이블 full-scan/stream 제거)
+        long todayCount = incidentRepository.countByIncidentTypeAndDetectedAtBetween("ROCKFALL", todayStart, todayEnd);
 
         // 처리 대기중 건수 (PENDING)
-        long pendingCount = incidentRepository.findByIncidentTypeAndStatus("ROCKFALL", "PENDING").size();
+        // ✅ list size 대신 count 쿼리 사용
+        long pendingCount = incidentRepository.countByIncidentTypeAndStatus("ROCKFALL", "PENDING");
 
         // 평균 대응시간
         List<Incident> resolvedRockfalls = incidentRepository.findByIncidentTypeAndStatus("ROCKFALL", "RESOLVED");

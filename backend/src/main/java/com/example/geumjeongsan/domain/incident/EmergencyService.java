@@ -8,6 +8,7 @@ import com.example.geumjeongsan.api.dto.EmergencyRequest;
 import com.example.geumjeongsan.api.dto.EmergencyResponse;
 import com.example.geumjeongsan.api.dto.EmergencyStatsDto;
 import com.example.geumjeongsan.api.dto.IncidentCreateResponse;
+import com.example.geumjeongsan.service.RealtimeSseService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import org.springframework.beans.factory.annotation.Value;
@@ -17,6 +18,8 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import com.example.geumjeongsan.domain.cctv.CCTV;
 import com.example.geumjeongsan.domain.cctv.CCTVRepository;
 
@@ -39,6 +42,7 @@ public class EmergencyService {
     private final IncidentManualRepository incidentManualRepository;
     private final IncidentAutoRepository incidentAutoRepository;
     private final CCTVRepository cctvRepository;
+    private final RealtimeSseService realtimeSseService;
     private final EntityManager entityManager;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
@@ -53,6 +57,7 @@ public class EmergencyService {
                            IncidentManualRepository incidentManualRepository,
                            IncidentAutoRepository incidentAutoRepository,
                            CCTVRepository cctvRepository,
+                           RealtimeSseService realtimeSseService,
                            EntityManager entityManager) {
         this.incidentRepository = incidentRepository;
         this.emergencyDetailRepository = emergencyDetailRepository;
@@ -61,7 +66,28 @@ public class EmergencyService {
         this.incidentManualRepository = incidentManualRepository;
         this.incidentAutoRepository = incidentAutoRepository;
         this.cctvRepository = cctvRepository;
+        this.realtimeSseService = realtimeSseService;
         this.entityManager = entityManager;
+    }
+
+    private void publishAfterCommit(String eventName, Map<String, Object> payload) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    realtimeSseService.publish(eventName, payload);
+                }
+            });
+        } else {
+            realtimeSseService.publish(eventName, payload);
+        }
+    }
+
+    private String resolveCctvCode(Long cctvId) {
+        if (cctvId == null) return "수동등록";
+        return cctvRepository.findById(cctvId)
+                .map(CCTV::getCctvCode)
+                .orElse("수동등록");
     }
 
     private static String joinFeatures(Object v) {
@@ -232,18 +258,20 @@ public class EmergencyService {
         action.setCreatedAt(now);
         incidentActionRepository.save(action);
 
-        return IncidentCreateResponse.success(incident.getId(), incident.getIncidentCode());
-    }
+        // 5) SSE 실시간 알림 발행
+        publishAfterCommit("incident.created", Map.of(
+                "incidentId", incident.getId(),
+                "incidentCode", incident.getIncidentCode(),
+                "incidentType", incident.getIncidentType(),
+                "status", incident.getStatus(),
+                "detectedAt", incident.getDetectedAt() != null ? incident.getDetectedAt().toString() : null,
+                "cctvId", cctvId != null ? cctvId : 0,
+                "cctvCode", resolveCctvCode(cctvId),
+                "locationDesc", locationDesc != null ? locationDesc : "",
+                "severityLevel", incident.getSeverityLevel() != null ? incident.getSeverityLevel() : "MEDIUM"
+        ));
 
-    private String resolveCctvCode(Long cctvId) {
-        if (cctvId == null) return "수동등록";
-        try {
-            return cctvRepository.findById(cctvId)
-                    .map(CCTV::getCctvCode)
-                    .orElse(String.format("CCTV-%03d", cctvId));
-        } catch (Exception e) {
-            return String.format("CCTV-%03d", cctvId);
-        }
+        return IncidentCreateResponse.success(incident.getId(), incident.getIncidentCode());
     }
     
     /**

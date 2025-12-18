@@ -2429,6 +2429,39 @@ export const analyzeTrashFrameWithGemini = async (
   return await res.json();
 };
 
+/**
+ * 화재 비디오 분석 (Gemini) + (옵션) DB 저장
+ * POST /api/fire-detection/analyze-video
+ */
+export const analyzeFireVideo = async (
+  videoFile: Blob,
+  params?: {
+    cctvCode?: string;
+    cctvId?: number;
+    locationDesc?: string;
+    stopOnDetect?: boolean;
+    emitProgress?: boolean;
+  }
+): Promise<any> => {
+  const q = new URLSearchParams();
+  if (params?.cctvCode) q.set('cctvCode', params.cctvCode);
+  if (typeof params?.cctvId === 'number') q.set('cctvId', String(params.cctvId));
+  if (params?.locationDesc) q.set('locationDesc', params.locationDesc);
+  if (typeof params?.stopOnDetect === 'boolean') q.set('stopOnDetect', String(params.stopOnDetect));
+  if (typeof params?.emitProgress === 'boolean') q.set('emitProgress', String(params.emitProgress));
+
+  const form = new FormData();
+  form.append('file', videoFile, 'video.mp4');
+
+  const url = `${BACKEND_URL}/api/fire-detection/analyze-video${q.toString() ? `?${q.toString()}` : ''}`;
+  const res = await fetch(url, { method: 'POST', body: form });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(text || `화재 분석 실패 (${res.status})`);
+  }
+  return await res.json();
+};
+
 // ==================== Notification API ====================
 
 // 외부 연락처 API

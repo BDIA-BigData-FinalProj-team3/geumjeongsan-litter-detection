@@ -319,6 +319,12 @@ public class CCTVController {
                 );
                 if (modelResp.getStatusCode().is2xxSuccessful()) {
                     yoloResponse = modelResp.getBody();
+                    if (yoloResponse != null && yoloResponse.getResult() != null) {
+                        var r = yoloResponse.getResult();
+                        log.info("✅ [CCTV] (Emergency) YOLO result: fallen_events={}, total_frames={}, frame_urls={}", 
+                                r.getFallen_events(), r.getTotal_frames(), 
+                                r.getFrame_urls() != null ? r.getFrame_urls().size() : 0);
+                    }
                 }
             } catch (Exception e) {
                 log.warn("⚠️ [CCTV] (Emergency) Model server call failed, fallback to direct S3+FFmpeg: {}", e.getMessage());
@@ -417,44 +423,63 @@ public class CCTVController {
                 response.put("yolo", yoloResponse);
             }
 
+            // YOLO clipUrl, frameUrls는 DB 저장 여부와 상관없이 항상 응답에 포함
+            String clipUrl = (yoloResponse != null && yoloResponse.getResult() != null)
+                    ? yoloResponse.getResult().getClip_url()
+                    : null;
+            if (clipUrl != null && !clipUrl.isBlank()) {
+                response.put("clipUrl", clipUrl);
+            }
+            if (!usedFrameUrls.isEmpty()) {
+                response.put("frameUrls", usedFrameUrls);
+            }
+
             if (saveToDb) {
-                Long resolvedCctvId = resolveCctvId(null, cctvCode);
-                String resolvedLocationDesc = resolveCctvLocationDesc(resolvedCctvId, cctvCode);
-                OffsetDateTime detectedAtKst = OffsetDateTime.now(ZoneOffset.ofHours(9));
-
-                IncidentCreateResponse created = emergencyService.createEmergencyFromGemini(
-                        parsed,
-                        resolvedCctvId,
-                        resolvedLocationDesc,
-                        detectedAtKst
-                );
-                response.put("incidentId", created.getIncidentId());
-                response.put("incidentCode", created.getIncidentCode());
-
-                // media 저장 (가능하면)
                 try {
-                    Long incidentId = created.getIncidentId();
-                    if (incidentId != null) {
-                        // clip_url(모델서버) 우선
-                        String clipUrl = (yoloResponse != null && yoloResponse.getResult() != null)
-                                ? yoloResponse.getResult().getClip_url()
-                                : null;
-                        if (clipUrl != null && !clipUrl.isBlank()) {
-                            mediaFileService.saveVideo(incidentId, resolvedCctvId, clipUrl, detectedAtKst);
-                            response.put("clipUrl", clipUrl);
-                        }
+                    log.info("💾 [CCTV] (Emergency) Saving incident to database (cctvCode: {})", cctvCode);
+                    Long resolvedCctvId = resolveCctvId(null, cctvCode);
+                    String resolvedLocationDesc = resolveCctvLocationDesc(resolvedCctvId, cctvCode);
+                    OffsetDateTime detectedAtKst = OffsetDateTime.now(ZoneOffset.ofHours(9));
 
-                        if (!usedFrameUrls.isEmpty()) {
-                            // DB에는 "프레임 여러개"로 저장 (최대 maxFrames)
-                            for (String u : usedFrameUrls) {
-                                if (u == null || u.isBlank()) continue;
-                                mediaFileService.saveFrame(incidentId, resolvedCctvId, u, detectedAtKst);
+                    log.info("💾 [CCTV] (Emergency) Resolved: cctvId={}, location={}", resolvedCctvId, resolvedLocationDesc);
+
+                    IncidentCreateResponse created = emergencyService.createEmergencyFromGemini(
+                            parsed,
+                            resolvedCctvId,
+                            resolvedLocationDesc,
+                            detectedAtKst
+                    );
+                    response.put("incidentId", created.getIncidentId());
+                    response.put("incidentCode", created.getIncidentCode());
+
+                    log.info("✅ [CCTV] (Emergency) Incident saved to DB: {} (ID: {})", created.getIncidentCode(), created.getIncidentId());
+
+                    // media 저장 (가능하면)
+                    try {
+                        Long incidentId = created.getIncidentId();
+                        if (incidentId != null) {
+                            // clip_url을 DB에 저장
+                            if (clipUrl != null && !clipUrl.isBlank()) {
+                                mediaFileService.saveVideo(incidentId, resolvedCctvId, clipUrl, detectedAtKst);
+                                log.info("✅ [CCTV] (Emergency) Clip saved to media_file: {}", clipUrl);
                             }
-                            response.put("frameUrls", usedFrameUrls);
+
+                            // frame_urls를 DB에 저장
+                            if (!usedFrameUrls.isEmpty()) {
+                                for (String u : usedFrameUrls) {
+                                    if (u == null || u.isBlank()) continue;
+                                    mediaFileService.saveFrame(incidentId, resolvedCctvId, u, detectedAtKst);
+                                }
+                                log.info("✅ [CCTV] (Emergency) {} frames saved to media_file", usedFrameUrls.size());
+                            }
                         }
+                    } catch (Exception e) {
+                        log.warn("⚠️ [CCTV] (Emergency) Failed to save media files: {}", e.getMessage());
+                        response.put("mediaSaveWarning", e.getMessage());
                     }
                 } catch (Exception e) {
-                    response.put("mediaSaveWarning", e.getMessage());
+                    log.error("❌ [CCTV] (Emergency) Failed to save incident to DB", e);
+                    response.put("dbSaveError", e.getMessage());
                 }
             }
 

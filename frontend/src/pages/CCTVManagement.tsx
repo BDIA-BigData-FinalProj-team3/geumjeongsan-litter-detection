@@ -5,7 +5,7 @@ import IncidentDetailModal from '../components/IncidentDetailModal';
 import { X, ArrowLeft, Search, ChevronDown, ArrowUpDown, Maximize, Camera, Flame, Trash2, AlertCircle, Download, Play, HeartPulse } from 'lucide-react';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { cctvList, getCCTVLocation, getOffCCTVCodes, getCCTVByCode } from '../services/common';
-import { getCCTVList, analyzeFallenVideo, analyzeEmergencyVideo, getUnifiedIncidentDetail, analyzeTrashFrameWithGemini, type FallenAnalysisResponse } from '../services/api';
+import { getCCTVList, analyzeFallenVideo, analyzeEmergencyVideo, analyzeFireVideo, getUnifiedIncidentDetail, analyzeTrashFrameWithGemini, type FallenAnalysisResponse } from '../services/api';
 import API_BASE_URL, { INGEST_HLS_URL } from '../config/api';
 import Hls from 'hls.js';
 import cctv001DemoVideo from '../assets/cctv-001_20251208T140000Z.mp4';
@@ -56,6 +56,15 @@ interface Event {
   clipUrl?: string; // 분석 결과 클립 URL
   frameUrls?: string[]; // 분석 결과 프레임 URL 배열
   qwenResponse?: any; // Qwen 분석 상세 정보 (상세 페이지에서 사용)
+  yoloResult?: { // YOLO 모델 서버 결과
+    fallen_events?: number;
+    total_frames?: number;
+    fps?: number;
+    clip_url?: string;
+    frame_urls?: string[];
+  };
+  emergencyLevel?: string; // Gemini 응급 분석 결과: "긴급" | "주의" | "정상"
+  analysisSource?: 'DB' | 'REALTIME'; // DB 저장된 것 vs 실시간 분석
 }
 
 export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CCTVManagementProps) {
@@ -103,6 +112,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   const [analysisEvents, setAnalysisEvents] = useState<Event[]>([]); // 분석 결과로 생성된 이벤트
   const [cctvIncidents, setCctvIncidents] = useState<any[]>([]); // DB에서 가져온 실제 사건 목록
   const [isAnalyzingQwen, setIsAnalyzingQwen] = useState(false);
+  const [isAnalyzingFire, setIsAnalyzingFire] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
   
@@ -190,41 +200,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
           }
         }, 0);
 
-        // CCTV-001만 분석 시작
-        if (selectedCCTV.id === 'CCTV-001') {
-          // Trigger analysis
-          setIsAnalyzing(true);
-          try {
-            const result = await analyzeFallenVideo(selectedCCTV.id);
-            setAnalysisResult(result);
-            
-            // 분석 결과를 이벤트로 변환
-            if (result.result && result.result.fallen_events > 0) {
-              const newEvent: Event = {
-                id: `fallen-${Date.now()}`,
-                time: new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false }),
-                type: 'emergency',
-                confidence: '95%',
-                location: selectedCCTV.location,
-                severity: '상',
-                reportProbability: '높음',
-                summary: `${selectedCCTV.location}에서 낙상 이벤트가 탐지되었습니다.`,
-                clipUrl: result.result.clip_url,
-                frameUrls: result.result.frame_urls || []
-              };
-              setAnalysisEvents(prev => [...prev, newEvent]);
-            }
-            
-            // Check if Gemini call is needed
-            if (result.geminiMessage) {
-              setShowGeminiPopup(true);
-            }
-          } catch (error) {
-            console.error('Failed to analyze video:', error);
-          } finally {
-            setIsAnalyzing(false);
-          }
-        }
+        // 자동 분석 제거 - 버튼 클릭으로만 분석
       }, 200);
       return () => clearTimeout(timer);
     }
@@ -448,7 +424,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   });
 
   // DB에서 가져온 이벤트 + 분석 결과 이벤트 합치기
-  const dbEvents = cctvIncidents.map((incident: any) => ({
+  const dbEvents: Event[] = cctvIncidents.map((incident: any) => ({
     // ✅ backend CCTVIncidentDetailResponse.IncidentDetail: id 필드가 incident PK
     id: incident.incidentCode || `incident-${incident.id}`,
     incidentId: incident.id,
@@ -461,10 +437,18 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     summary: incident.locationDesc || '',
     clipUrl: null,
     frameUrls: [],
-    qwenResponse: null
+    qwenResponse: null,
+    analysisSource: 'DB' as const
   }));
-  // ✅ 화면 표시용 이벤트는 "DB에 저장된 사건"만 사용 (analysisEvents/더미/추정값 숨김)
-  const events = dbEvents;
+  
+  // ✅ 화면 표시용 이벤트: DB 사건 + 실시간 분석 결과 합치기
+  // - DB 사건이 저장되면 자동으로 dbEvents에 포함되므로 중복 제거
+  // - analysisEvents 중 incidentId가 있는 것은 이미 DB에 있다고 판단 (제외)
+  const realtimeOnlyEvents = analysisEvents.filter(e => !e.incidentId);
+  const events: Event[] = [...dbEvents, ...realtimeOnlyEvents].sort((a, b) => {
+    // 시간 역순 정렬 (최신이 위)
+    return new Date(b.time).getTime() - new Date(a.time).getTime();
+  });
 
   // ✅ [핵심] "최근 이벤트면 자동 팝업"을 DB 이벤트 기준으로 동작시키기
   useEffect(() => {
@@ -768,6 +752,10 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
         
         try {
           const result = await analyzeTrashFrameWithGemini(selectedCCTV.id, blob, { saveToDb: true });
+          console.log('🔍 [Trash] Full API Response:', result);
+          console.log('🔍 [Trash] result.analysis:', result?.analysis);
+          console.log('🔍 [Trash] result.incidentId:', result?.incidentId);
+          
           const analysis = result?.analysis;
           const incidentType = analysis?.incident?.incident_type;
 
@@ -795,11 +783,18 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
               summary,
               clipUrl: overlayUrl,
               frameUrls: overlayUrl ? [overlayUrl] : [],
-              // incidentId가 반환되면 상세 로딩에 사용
               incidentId: typeof result?.incidentId === 'number' ? result.incidentId : undefined,
-            } as any;
+              analysisSource: 'REALTIME'
+            };
 
             setAnalysisEvents(prev => [...prev, newEvent]);
+            
+            // DB 저장 성공 시 SSE로 자동 새로고침됨
+            if (result?.incidentId) {
+              alert(`✅ 쓰레기 탐지 완료 (DB 저장 완료)\n${summary}\n\n💡 SSE로 자동 새로고침됩니다.`);
+            } else {
+              alert(`✅ 쓰레기 탐지 완료\n${summary}`);
+            }
           } else {
             alert('쓰레기가 탐지되지 않았습니다.');
           }
@@ -816,6 +811,88 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       console.error('프레임 캡처 실패:', error);
       setIsAnalyzingQwen(false);
       alert('프레임 캡처에 실패했습니다: ' + (error instanceof Error ? error.message : String(error)));
+    }
+  };
+
+  // Handle fire video analysis (CCTV-002: 화재 분석)
+  const handleAnalyzeFireVideo = async () => {
+    if (!selectedCCTV || selectedCCTV.id !== 'CCTV-002') {
+      return;
+    }
+
+    setIsAnalyzingFire(true);
+    try {
+      // CCTV-002 비디오 파일을 Blob으로 가져오기
+      const videoSrc = cctvVideoMap['CCTV-002'];
+      if (!videoSrc) {
+        throw new Error('CCTV-002 비디오를 찾을 수 없습니다.');
+      }
+
+      const videoResponse = await fetch(videoSrc);
+      const videoBlob = await videoResponse.blob();
+
+      console.log('🔍 [Fire] Uploading video for analysis...');
+      const result = await analyzeFireVideo(videoBlob, {
+        cctvCode: 'CCTV-002',
+        locationDesc: selectedCCTV.location,
+        stopOnDetect: false,
+        emitProgress: false
+      });
+
+      console.log('🔍 [Fire] Full API Response:', result);
+
+      // 화재 탐지 결과 확인
+      if (result && result.length > 0) {
+        // 첫 번째 탐지 결과 사용
+        const detection = result[0];
+        const analysis = detection.gemini_analysis;
+
+        if (analysis) {
+          const confidencePct = analysis.confidence_score != null
+            ? `${Math.round(Number(analysis.confidence_score) * 100)}%`
+            : '85%';
+
+          const severityLevel = (analysis.risk_level || 'MEDIUM').toString().toUpperCase();
+          const severity = severityLevel.includes('HIGH') || severityLevel.includes('상') ? '상' 
+                        : severityLevel.includes('MEDIUM') || severityLevel.includes('중') ? '중' : '하';
+
+          const summary = analysis.summary || `${selectedCCTV.location}에서 화재가 탐지되었습니다.`;
+
+          const newEvent: Event = {
+            id: `fire-${Date.now()}`,
+            time: new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false }),
+            type: 'fire',
+            confidence: confidencePct,
+            location: selectedCCTV.location,
+            severity,
+            reportProbability: '높음',
+            summary,
+            clipUrl: detection.clip_url || null,
+            frameUrls: detection.frames || [],
+            incidentId: typeof detection.incident_id === 'number' ? detection.incident_id : undefined,
+            analysisSource: 'REALTIME'
+          };
+
+          setAnalysisEvents(prev => [...prev, newEvent]);
+
+          // DB 저장 성공 시 SSE로 자동 새로고침됨
+          if (detection.incident_id) {
+            alert(`✅ 화재 탐지 완료 (DB 저장 완료)\n${summary}\n\n💡 SSE로 자동 새로고침됩니다.`);
+          } else {
+            alert(`✅ 화재 탐지 완료\n${summary}`);
+          }
+        } else {
+          alert('화재가 탐지되지 않았습니다.');
+        }
+      } else {
+        alert('화재가 탐지되지 않았습니다.');
+      }
+
+    } catch (error) {
+      console.error('화재 분석 실패:', error);
+      alert('화재 분석에 실패했습니다: ' + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      setIsAnalyzingFire(false);
     }
   };
 
@@ -846,7 +923,20 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
         saveToDb: true
       });
       
+      console.log('🔍 [Emergency] Full API Response:', result);
+      console.log('🔍 [Emergency] result.analysis:', result?.analysis);
+      console.log('🔍 [Emergency] result.yolo:', result?.yolo);
+      console.log('🔍 [Emergency] result.incidentId:', result?.incidentId);
+      console.log('🔍 [Emergency] result.incidentCode:', result?.incidentCode);
+      console.log('🔍 [Emergency] result.clipUrl:', result?.clipUrl);
+      console.log('🔍 [Emergency] result.frameUrls:', result?.frameUrls);
+      console.log('🔍 [Emergency] result.dbSaveError:', result?.dbSaveError);
+      
       setAnalysisResult(result);
+      
+      // YOLO 결과 먼저 확인
+      const yoloResult = result?.yolo?.result;
+      const fallenEvents = yoloResult?.fallen_events || 0;
       
       // 분석 결과를 이벤트로 변환
       const analysis = result?.analysis;
@@ -857,6 +947,9 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
         const severityLevel = analysis.incident?.severity_level || 'MEDIUM';
         const severity = severityLevel === 'HIGH' ? '상' : severityLevel === 'MEDIUM' ? '중' : '하';
         
+        // YOLO fallen_events를 요약에 추가
+        const summaryWithYolo = `${description} (YOLO 낙상 탐지: ${fallenEvents}건)`;
+        
         const newEvent: Event = {
           id: `emergency-${Date.now()}`,
           time: new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false }),
@@ -865,16 +958,32 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
           location: selectedCCTV.location,
           severity,
           reportProbability: emergencyLevel === '긴급' ? '낮음' : emergencyLevel === '주의' ? '보통' : '높음',
-          summary: description,
+          summary: summaryWithYolo,
           clipUrl: result.clipUrl,
           frameUrls: result.frameUrls || [],
           incidentId: typeof result.incidentId === 'number' ? result.incidentId : undefined,
+          yoloResult: yoloResult ? {
+            fallen_events: yoloResult.fallen_events,
+            total_frames: yoloResult.total_frames,
+            fps: yoloResult.fps,
+            clip_url: yoloResult.clip_url,
+            frame_urls: yoloResult.frame_urls
+          } : undefined,
+          emergencyLevel: emergencyLevel,
+          analysisSource: 'REALTIME'
         };
         setAnalysisEvents(prev => [...prev, newEvent]);
         
-        if (emergencyLevel === '긴급' || emergencyLevel === '주의') {
-          alert(`응급 분석 완료: ${emergencyLevel} 상황 감지 - ${description}`);
+        // DB 저장 실패 경고
+        if (result.dbSaveError) {
+          alert(`⚠️ 분석 완료, 하지만 DB 저장 실패:\n${result.dbSaveError}\n\n${emergencyLevel} 상황 - ${description}`);
+        } else if (emergencyLevel === '긴급' || emergencyLevel === '주의') {
+          alert(`응급 분석 완료 (DB 저장 ✅):\n${emergencyLevel} 상황 감지\n${description}\nYOLO 낙상: ${fallenEvents}건\n\n💡 SSE로 자동 새로고침됩니다.`);
+          // SSE로 자동 새로고침되므로 수동 새로고침 제거!
         }
+      } else {
+        // Gemini 분석 실패 시 YOLO 결과라도 표시
+        alert(`⚠️ Gemini 분석 실패\n\nYOLO 탐지 결과:\n- 낙상 이벤트: ${fallenEvents}건\n- 프레임: ${result?.frameUrls?.length || 0}개`);
       }
     } catch (error) {
       console.error('Failed to analyze emergency video:', error);
@@ -1073,16 +1182,38 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                             {selectedCCTV.location}
                           </p>
                         </div>
-                        {/* CCTV-003에 Qwen 분석 버튼 추가 */}
-                        {selectedCCTV.id === 'CCTV-003' && dummyCCTVIds.includes(selectedCCTV.id) && (
-                          <button
-                            onClick={handleAnalyzeFrameWithQwen}
-                            disabled={isAnalyzingQwen}
-                            className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 hover:shadow-lg hover:scale-105 disabled:bg-gray-400 disabled:cursor-not-allowed transition-all duration-300 ease-out"
-                          >
-                            {isAnalyzingQwen ? '분석 중...' : 'Qwen 분석'}
-                          </button>
-                        )}
+                    {/* CCTV-001: 응급 분석 버튼 */}
+                    {selectedCCTV.id === 'CCTV-001' && dummyCCTVIds.includes(selectedCCTV.id) && (
+                      <button
+                        onClick={handlePlayVideo}
+                        disabled={isAnalyzing}
+                        className="px-4 py-2 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {isAnalyzing ? '분석 중...' : '▶ AI 응급 분석 실행(저장 포함)'}
+                      </button>
+                    )}
+
+                    {/* CCTV-002: 화재 분석 버튼 */}
+                    {selectedCCTV.id === 'CCTV-002' && dummyCCTVIds.includes(selectedCCTV.id) && (
+                      <button
+                        onClick={handleAnalyzeFireVideo}
+                        disabled={isAnalyzingFire}
+                        className="px-4 py-2 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {isAnalyzingFire ? '분석 중...' : '▶ AI 화재 분석 실행(저장 포함)'}
+                      </button>
+                    )}
+
+                    {/* CCTV-003: 쓰레기 분석 버튼 */}
+                    {selectedCCTV.id === 'CCTV-003' && dummyCCTVIds.includes(selectedCCTV.id) && (
+                      <button
+                        onClick={handleAnalyzeFrameWithQwen}
+                        disabled={isAnalyzingQwen}
+                        className="px-4 py-2 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {isAnalyzingQwen ? '분석 중...' : '▶ AI 쓰레기 분석 실행(저장 포함)'}
+                      </button>
+                    )}
                       </div>
                     </div>
                   </div>
