@@ -739,7 +739,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       
       ctx.drawImage(video, 0, 0);
       
-      // Canvas를 Blob으로 변환
+      // Canvas를 Blob으로 변환 (JPEG 품질 70%로 압축 - CloudFront body 크기 제한 대응)
       canvas.toBlob(async (blob) => {
         if (!blob) {
           setIsAnalyzingQwen(false);
