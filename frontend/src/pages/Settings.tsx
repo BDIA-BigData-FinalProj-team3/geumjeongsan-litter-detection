@@ -257,13 +257,36 @@ export default function Settings({ onNavigate }: SettingsProps) {
     return ['전체', ...Array.from(deptSet)];
   }, [allEmployees]);
 
+  // ✅ 현재 선택된(한글) 사건유형 -> DB 코드 배열로 변환
+  const selectedTypesToDb = useMemo(() => {
+    const incidentTypeMap: Record<string, string> = {
+      '전체': 'ALL',
+      '응급': 'EMERGENCY',
+      '화재': 'FIRE',
+      '쓰레기': 'TRASH',
+      '낙석': 'ROCKFALL',
+    };
+    const mapped = selectedIncidentTypes
+      .map(t => incidentTypeMap[t])
+      .filter((t): t is string => Boolean(t));
+    // '전체'가 선택되면 ALL만 의미 있게 사용(중복 방지)
+    return mapped.includes('ALL') ? ['ALL'] : mapped;
+  }, [selectedIncidentTypes]);
+
+  const isSubscribedToAnySelectedType = (currentTypes?: string[]): boolean => {
+    if (!selectedTypesToDb.length) return false;
+    if (currentTypes?.includes('ALL')) return true;
+    // 선택 타입 중 하나라도 이미 구독이면(추가 버튼 방지 목적) 제외 대상으로 본다
+    return selectedTypesToDb.some(t => currentTypes?.includes(t));
+  };
+
   // 필터링된 직원 목록 (왼쪽 표용)
   const filteredEmployees = useMemo(() => {
     return allEmployees.filter(emp => {
-      // 이미 선택된 직원은 제외
-      if (selectedEmployees.some(sel => sel.id === emp.id)) {
-        return false;
-      }
+      // ✅ "현재 선택된 사건 유형" 기준으로 이미 구독된 직원만 제외
+      // (다른 유형만 구독된 경우는 타입 전환 시 다시 왼쪽에 떠야 함)
+      const existing = selectedEmployees.find(sel => sel.id === emp.id);
+      if (existing && isSubscribedToAnySelectedType(existing.incidentTypes)) return false;
       
       // 이름 검색 필터
       if (nameSearch && !emp.name.toLowerCase().includes(nameSearch.toLowerCase())) {
@@ -305,6 +328,8 @@ export default function Settings({ onNavigate }: SettingsProps) {
         // 선택된 사건 유형 중 하나라도 구독했는지 확인
         const hasSelectedType = selectedIncidentTypes.some(type => {
           const dbType = incidentTypeMap[type];
+          // ✅ '전체(ALL)' 구독자는 모든 사건 유형에서 매칭되도록 처리
+          if (dbType !== 'ALL' && emp.incidentTypes?.includes('ALL')) return true;
           return emp.incidentTypes?.includes(dbType);
         });
         
@@ -353,9 +378,18 @@ export default function Settings({ onNavigate }: SettingsProps) {
     setLoading(true);
     try {
       console.log(`🔔 [Settings] Adding ${newEmployees.length} employees to ${selectedIncidentTypes.join(', ')}`);
-      for (const emp of newEmployees) {
-        for (const type of selectedIncidentTypes) {
+      // ✅ '전체'를 선택하면 ALL만 저장(다른 타입과 중복 구독 방지)
+      const effectiveSelectedTypes = selectedIncidentTypes.includes('전체') ? ['전체'] : selectedIncidentTypes;
+      for (const emp of employeesToAdd) {
+        const existing = selectedEmployees.find(sel => sel.id === emp.id);
+        const existingTypes = existing?.incidentTypes || [];
+        // ALL 구독자는 더 추가할 필요 없음
+        if (existingTypes.includes('ALL') && !effectiveSelectedTypes.includes('전체')) continue;
+        for (const type of effectiveSelectedTypes) {
           const dbType = incidentTypeMap[type];
+          if (!dbType) continue;
+          // 이미 구독된 타입은 스킵(중복 호출 방지)
+          if (existingTypes.includes(dbType)) continue;
           console.log(`📝 [Settings] Subscribing staff ${emp.id} to ${dbType}`);
           await subscribeStaff(emp.id, dbType);
         }
@@ -489,9 +523,9 @@ export default function Settings({ onNavigate }: SettingsProps) {
   // 필터링된 외부 연락처 목록 (왼쪽 표용)
   const filteredContacts = useMemo(() => {
     return allContacts.filter(contact => {
-      if (selectedContacts.some(sel => sel.id === contact.id)) {
-        return false;
-      }
+      // ✅ "현재 선택된 사건 유형" 기준으로 이미 구독된 연락처만 제외
+      const existing = selectedContacts.find(sel => sel.id === contact.id);
+      if (existing && isSubscribedToAnySelectedType(existing.incidentTypes)) return false;
       if (contactNameSearch && !contact.name.toLowerCase().includes(contactNameSearch.toLowerCase())) {
         return false;
       }
@@ -525,6 +559,8 @@ export default function Settings({ onNavigate }: SettingsProps) {
         // 선택된 사건 유형 중 하나라도 구독했는지 확인
         const hasSelectedType = selectedIncidentTypes.some(type => {
           const dbType = incidentTypeMap[type];
+          // ✅ '전체(ALL)' 구독자는 모든 사건 유형에서 매칭되도록 처리
+          if (dbType !== 'ALL' && contact.incidentTypes?.includes('ALL')) return true;
           return contact.incidentTypes?.includes(dbType);
         });
         
@@ -562,9 +598,18 @@ export default function Settings({ onNavigate }: SettingsProps) {
     setLoading(true);
     try {
       console.log(`🔔 [Settings] Adding ${newContacts.length} contacts to ${selectedIncidentTypes.join(', ')}`);
-      for (const contact of newContacts) {
-        for (const type of selectedIncidentTypes) {
+      // ✅ '전체'를 선택하면 ALL만 저장(다른 타입과 중복 구독 방지)
+      const effectiveSelectedTypes = selectedIncidentTypes.includes('전체') ? ['전체'] : selectedIncidentTypes;
+      for (const contact of contactsToAdd) {
+        const existing = selectedContacts.find(sel => sel.id === contact.id);
+        const existingTypes = existing?.incidentTypes || [];
+        // ALL 구독자는 더 추가할 필요 없음
+        if (existingTypes.includes('ALL') && !effectiveSelectedTypes.includes('전체')) continue;
+        for (const type of effectiveSelectedTypes) {
           const dbType = incidentTypeMap[type];
+          if (!dbType) continue;
+          // 이미 구독된 타입은 스킵(중복 호출 방지)
+          if (existingTypes.includes(dbType)) continue;
           console.log(`📝 [Settings] Subscribing contact ${contact.id} to ${dbType}`);
           await subscribeContact(contact.id, dbType);
         }

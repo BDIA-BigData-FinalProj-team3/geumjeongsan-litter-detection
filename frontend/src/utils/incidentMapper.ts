@@ -1,4 +1,4 @@
-export type IncidentTypeEnum = 'FIRE' | 'TRASH' | 'EMERGENCY' | 'ROCKFALL';
+export type IncidentTypeEnum = 'FIRE' | 'TRASH' | 'EMERGENCY' | 'ROCKFALL' | 'UNKNOWN';
 export type IncidentStatusEnum = 'RESOLVED' | 'IN_PROGRESS' | 'PENDING' | 'UNKNOWN';
 export type SeverityEnum = 'HIGH' | 'MEDIUM' | 'LOW';
 export type SourceTypeEnum = 'AUTO' | 'MANUAL' | 'MIXED';
@@ -12,6 +12,7 @@ const typeToKo: Record<IncidentTypeEnum, string> = {
   TRASH: '쓰레기',
   EMERGENCY: '응급',
   ROCKFALL: '낙석',
+  UNKNOWN: '기타',
 };
 
 const statusToKo: Record<IncidentStatusEnum, string> = {
@@ -47,12 +48,12 @@ export const labelSourceType = (v?: SourceTypeEnum | string) =>
 
 export const normalizeIncidentType = (v?: string): IncidentTypeEnum => {
   const s = (v ?? '').toUpperCase().trim();
+  if (!s) return 'UNKNOWN';
   if (s === 'FIRE' || s === '화재') return 'FIRE';
   if (s === 'TRASH' || s === '쓰레기') return 'TRASH';
   if (s === 'EMERGENCY' || s === '응급') return 'EMERGENCY';
   if (s === 'ROCKFALL' || s === '낙석') return 'ROCKFALL';
-  // fallback
-  return 'FIRE';
+  return 'UNKNOWN';
 };
 
 export const normalizeIncidentStatus = (v?: string): IncidentStatusEnum => {

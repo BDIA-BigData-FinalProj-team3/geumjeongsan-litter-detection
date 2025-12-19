@@ -34,6 +34,10 @@ export const RealtimeNotificationProvider: React.FC<{ children: React.ReactNode 
   const [refreshKey, setRefreshKey] = useState(0);
   const eventSourceRef = useRef<EventSource | null>(null);
 
+  // ✅ 수신자 캐시(유형별): SSE 폭주 시에도 과도한 API 호출 방지
+  const recipientsCacheRef = useRef<Map<string, { text: string; fetchedAt: number }>>(new Map());
+  const RECIPIENTS_TTL_MS = 5 * 60 * 1000; // 5분
+
   // 너무 잦은 refetch 방지: refreshKey를 쿨다운으로 배치 처리
   const refreshCooldownMs = 50; // 50ms (거의 즉시, 체감 불가)
   const lastRefreshAtRef = useRef(0);
@@ -90,12 +94,68 @@ export const RealtimeNotificationProvider: React.FC<{ children: React.ReactNode 
     }
   };
 
-  const toastIncident = (n: { type: RealtimeNotification['type']; title: string; message: string }) => {
-    const t = n.type;
-    if (t === 'fire') toast.error(n.title, { description: n.message });
-    else if (t === 'emergency') toast.warning(n.title, { description: n.message });
-    else if (t === 'trash') toast.message(n.title, { description: n.message });
-    else toast(n.title, { description: n.message });
+  const fetchRecipientsText = async (incidentTypeCode: string): Promise<string> => {
+    const key = String(incidentTypeCode || '').toUpperCase().trim();
+    if (!key) return '';
+
+    const cached = recipientsCacheRef.current.get(key);
+    if (cached && Date.now() - cached.fetchedAt < RECIPIENTS_TTL_MS) return cached.text;
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/notifications/recipients/incident/${encodeURIComponent(key)}`);
+      if (!res.ok) throw new Error(`Failed to fetch recipients (${res.status})`);
+      const list = await res.json();
+
+      const arr = Array.isArray(list) ? list : [];
+      const enabled = arr.filter((r: any) => r?.isEnabled !== false);
+      const labels = enabled
+        .map((r: any) => {
+          const org = String(r?.organization || '').trim();
+          const dept = String(r?.department || '').trim();
+          const name = String(r?.name || '').trim();
+          const pos = String(r?.position || '').trim();
+          const parts = [org, dept, name, pos].filter(Boolean);
+          return parts.join(' ');
+        })
+        .filter(Boolean);
+
+      const max = 3;
+      const head = labels.slice(0, max);
+      const rest = labels.length - head.length;
+      const text =
+        labels.length === 0
+          ? ''
+          : `${head.join(', ')}${rest > 0 ? ` 외 ${rest}명` : ''}`;
+
+      recipientsCacheRef.current.set(key, { text, fetchedAt: Date.now() });
+      return text;
+    } catch (e) {
+      // 수신자 조회 실패는 토스트 표시를 막지 않음
+      console.warn('⚠️ [Notification] Failed to load recipients for toast:', incidentTypeCode, e);
+      recipientsCacheRef.current.set(key, { text: '', fetchedAt: Date.now() });
+      return '';
+    }
+  };
+
+  const toastIncident = (n: {
+    type: RealtimeNotification['type'];
+    title: string;
+    message: string;
+    recipientsText?: string;
+  }) => {
+    // ✅ 타입별 색상 필요 없다고 해서 단일 스타일로 통일
+    toast(n.title, {
+      description: (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div>{n.message}</div>
+          {n.recipientsText ? (
+            <div style={{ fontSize: 12, opacity: 0.85 }}>
+              알람 발송 완료: {n.recipientsText}
+            </div>
+          ) : null}
+        </div>
+      ),
+    });
   };
 
   // ✅ SSE로 실시간 사건 이벤트 구독
@@ -107,39 +167,42 @@ export const RealtimeNotificationProvider: React.FC<{ children: React.ReactNode 
     const onIncident = (e: MessageEvent) => {
       // 이벤트 폭주 시에도 화면 재조회는 쿨다운으로 묶어서 1번만
       scheduleRefresh();
-      try {
-        const payload = JSON.parse(e.data);
-        const type = String(payload?.incidentType ?? '');
-        const mappedType: RealtimeNotification['type'] =
-          type === 'FIRE' ? 'fire' :
-          type === 'EMERGENCY' ? 'emergency' :
-          type === 'TRASH' ? 'trash' : 'system';
+      void (async () => {
+        try {
+          const payload = JSON.parse(e.data);
+          const incidentTypeCode = String(payload?.incidentType ?? '').toUpperCase().trim();
+          const mappedType: RealtimeNotification['type'] =
+            incidentTypeCode === 'FIRE' ? 'fire' :
+            incidentTypeCode === 'EMERGENCY' ? 'emergency' :
+            incidentTypeCode === 'TRASH' ? 'trash' : 'system';
 
-        const title =
-          mappedType === 'trash' ? '쓰레기 사건 발생' :
-          mappedType === 'fire' ? '화재 발생' :
-          mappedType === 'emergency' ? '응급 상황 발생' : '사건 변경';
+          const title =
+            mappedType === 'trash' ? '쓰레기 사건 발생' :
+            mappedType === 'fire' ? '화재 발생' :
+            mappedType === 'emergency' ? '응급 상황 발생' : '사건 변경';
 
-        const message = `${payload?.incidentCode ?? '사건'} (${payload?.status ?? ''})`;
+          const message = `${payload?.incidentCode ?? '사건'} (${payload?.status ?? ''})`;
+          const recipientsText = await fetchRecipientsText(incidentTypeCode);
 
-        // 체감: 토스트 + 비프
-        toastIncident({ type: mappedType, title, message });
-        playBeep(mappedType);
+          // 체감: 토스트 + 비프
+          toastIncident({ type: mappedType, title, message, recipientsText });
+          playBeep(mappedType);
 
-        addNotification({
-          type: mappedType,
-          title,
-          message,
-          incidentId: typeof payload?.incidentId === 'number' ? payload.incidentId : undefined,
-          // ✅ 화면 표시는 항상 cctvCode 우선. (없으면 임시로 DB-ID를 표시)
-          cctvId:
-            (typeof payload?.cctvCode === 'string' && payload.cctvCode.trim() ? payload.cctvCode.trim() :
-            (payload?.cctvId != null ? `CCTV(DB-${String(payload.cctvId)})` : undefined)),
-          location: payload?.locationDesc ?? undefined,
-        });
-      } catch {
-        // ignore parse error
-      }
+          addNotification({
+            type: mappedType,
+            title,
+            message,
+            incidentId: typeof payload?.incidentId === 'number' ? payload.incidentId : undefined,
+            // ✅ 화면 표시는 항상 cctvCode 우선. (없으면 임시로 DB-ID를 표시)
+            cctvId:
+              (typeof payload?.cctvCode === 'string' && payload.cctvCode.trim() ? payload.cctvCode.trim() :
+              (payload?.cctvId != null ? `CCTV(DB-${String(payload.cctvId)})` : undefined)),
+            location: payload?.locationDesc ?? undefined,
+          });
+        } catch {
+          // ignore parse error
+        }
+      })();
     };
 
     es.addEventListener('incident.created', onIncident);

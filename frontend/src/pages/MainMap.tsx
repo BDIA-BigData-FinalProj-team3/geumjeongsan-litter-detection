@@ -36,6 +36,7 @@ import { MapContainer, TileLayer, Marker, Popup as LeafletPopup, Polyline, Polyg
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import ReactDOMServer from 'react-dom/server';
+import { normalizeIncidentType } from '../utils/incidentMapper';
 
 interface MainMapProps {
   onNavigate: (screen: string) => void;
@@ -1170,9 +1171,10 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     
     // Determine incidents from lastIncidentType
     const incidents: { fire?: number; emergency?: number; trash?: number } = {};
-    if (backendCCTV.lastIncidentType === 'fire') incidents.fire = backendCCTV.incidentCount || 1;
-    if (backendCCTV.lastIncidentType === 'emergency') incidents.emergency = backendCCTV.incidentCount || 1;
-    if (backendCCTV.lastIncidentType === 'trash') incidents.trash = backendCCTV.incidentCount || 1;
+    const normalizedLastType = normalizeIncidentType(backendCCTV.lastIncidentType);
+    if (normalizedLastType === 'FIRE') incidents.fire = backendCCTV.incidentCount || 1;
+    if (normalizedLastType === 'EMERGENCY') incidents.emergency = backendCCTV.incidentCount || 1;
+    if (normalizedLastType === 'TRASH') incidents.trash = backendCCTV.incidentCount || 1;
     
     return {
       id: backendCCTV.cctvCode,

@@ -95,7 +95,15 @@ public class NotificationService {
     }
     
     public List<NotificationRecipient> getRecipientsByIncidentType(String incidentType) {
-        return recipientRepository.findByIncidentType(incidentType);
+        if (incidentType == null || incidentType.isBlank()) {
+            return recipientRepository.findAll();
+        }
+        String normalized = incidentType.trim().toUpperCase();
+        // ✅ 특정 타입 조회 시에도 ALL 구독자는 포함 (프론트/백엔드 모두 일관성 확보)
+        if ("ALL".equals(normalized)) {
+            return recipientRepository.findAll();
+        }
+        return recipientRepository.findByIncidentTypeIn(List.of(normalized, "ALL"));
     }
     
     public List<NotificationRecipient> getRecipientsByType(String recipientType) {

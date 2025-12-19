@@ -799,14 +799,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
 
           setAnalysisEvents(prev => [...prev, newEvent]);
 
-          if (incidentId) {
-            const totalFrames = result?.totalFramesAnalyzed || overlayUrls.length || 0;
-            const detectionCount = 1;
-            alert(`✅ S3 영상 쓰레기 분석 완료 (DB 저장 완료)\n\n📊 분석 정보:\n- 총 ${totalFrames}프레임 분석\n- 쓰레기 ${detectionCount}개 감지\n\n💡 SSE로 자동 새로고침됩니다.`);
-          } else {
-            const totalFrames = result?.totalFramesAnalyzed || overlayUrls.length || 0;
-            alert(`쓰레기가 탐지되지 않았습니다.\n(총 ${totalFrames}프레임 분석)`);
-          }
+          // ✅ 결과는 events/SSE로 반영되므로 팝업(alert) 없이 조용히 처리
           return;
         } catch (e) {
           console.warn('⚠️ [Trash] S3 비디오 분석 실패 → 기존 프레임 캡처 방식으로 fallback', e);
@@ -815,10 +808,62 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       }
 
       // ⬇️ 원래 하던 방식: 현재 프레임 캡처(이미지 1장) 기반 분석
-      if (!videoRef.current) return;
+      if (!videoRef.current) {
+        // 카드(리스트)에서 버튼만 누르는 경우: 상세 패널/비디오가 렌더링되지 않아 캡처 불가
+        setIsAnalyzingQwen(false);
+        // ✅ 팝업 없이 종료 (필요 시 UI 토스트로 대체 가능)
+        return;
+      }
       const video = videoRef.current;
       
-      // 현재 프레임을 canvas로 캡처
+      // ✅ "무조건 8초" 지점 프레임을 캡처해서 분석에 사용
+      const CAPTURE_AT_SEC = 8;
+      const waitOnce = (el: HTMLVideoElement, eventName: keyof HTMLMediaElementEventMap) =>
+        new Promise<void>((resolve) => {
+          const handler = () => {
+            el.removeEventListener(eventName, handler as any);
+            resolve();
+          };
+          el.addEventListener(eventName, handler as any, { once: true } as any);
+        });
+
+      try {
+        // 메타데이터가 없으면 duration/seek 불가 → 로드 대기
+        if (!Number.isFinite(video.duration) || video.duration <= 0) {
+          if (video.readyState < 1) {
+            await waitOnce(video, 'loadedmetadata');
+          }
+        }
+
+        const prevTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
+        const wasPaused = video.paused;
+
+        const dur = Number.isFinite(video.duration) ? video.duration : 0;
+        const targetTime = dur > 0 ? Math.min(CAPTURE_AT_SEC, Math.max(0, dur - 0.1)) : CAPTURE_AT_SEC;
+
+        // 8초로 이동 후 seek 완료 대기
+        video.currentTime = targetTime;
+        await waitOnce(video, 'seeked');
+
+        // 캡처 시점이 프레임으로 렌더링될 시간을 아주 짧게 확보
+        await new Promise<void>((r) => setTimeout(() => r(), 0));
+
+        // 캡처 직후 원래 상태 복구(가능하면)
+        try {
+          video.currentTime = prevTime;
+          await waitOnce(video, 'seeked');
+          if (!wasPaused) {
+            video.play().catch(() => {});
+          }
+        } catch {
+          // 복구 실패는 무시
+        }
+      } catch (e) {
+        // seek 실패 시에도 "현재 프레임"으로 fallback 캡처 진행
+        console.warn('⚠️ [Trash] Failed to seek to 8s, fallback to current frame capture:', e);
+      }
+
+      // 캡처 프레임을 canvas로 캡처
       const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
@@ -876,19 +921,14 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
 
             setAnalysisEvents(prev => [...prev, newEvent]);
             
-            // DB 저장 성공 시 SSE로 자동 새로고침됨
-            if (result?.incidentId) {
-              alert(`✅ 쓰레기 분석 완료 (DB 저장 완료)\n\n📊 분석 정보:\n- 총 1프레임 분석\n- 쓰레기 1개 감지\n\n💡 SSE로 자동 새로고침됩니다.`);
-            } else {
-              alert(`쓰레기가 탐지되지 않았습니다.\n(총 1프레임 분석)`);
-            }
+            // ✅ 결과는 events/SSE로 반영되므로 팝업(alert) 없이 조용히 처리
           } else {
-            alert('쓰레기가 탐지되지 않았습니다.\n(총 1프레임 분석)');
+            // ✅ 팝업 없이 조용히 처리
           }
           
         } catch (error) {
           console.error('Gemini(TRASH) 분석 실패:', error);
-          alert('Gemini 쓰레기 분석에 실패했습니다: ' + (error instanceof Error ? error.message : String(error)));
+          // ✅ 팝업 없이 조용히 처리
         } finally {
           setIsAnalyzingQwen(false);
         }
@@ -897,7 +937,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     } catch (error) {
       console.error('쓰레기 분석 실패:', error);
       setIsAnalyzingQwen(false);
-      alert('프레임 캡처에 실패했습니다: ' + (error instanceof Error ? error.message : String(error)));
+      // ✅ 팝업 없이 조용히 처리
     }
   };
 
@@ -946,18 +986,14 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
         
         setAnalysisEvents(prev => [...prev, newEvent]);
         
-        if (result.savedToDb) {
-          alert(`✅ S3 영상 화재 분석 완료 (DB 저장 완료)\n\n📊 분석 정보:\n- 총 ${result.totalFramesAnalyzed}프레임 분석\n- 화재/연기 ${result.detectionCount}개 감지\n\n💡 SSE로 자동 새로고침됩니다.`);
-        } else {
-          alert(`✅ S3 영상 화재 분석 완료\n\n📊 분석 정보:\n- 총 ${result.totalFramesAnalyzed}프레임 분석\n- 화재/연기 ${result.detectionCount}개 감지`);
-        }
+        // ✅ 결과는 events/SSE로 반영되므로 팝업(alert) 없이 조용히 처리
       } else {
-        alert(`화재/연기가 탐지되지 않았습니다.\n(총 ${result.totalFramesAnalyzed || 0}프레임 분석)`);
+        // ✅ 팝업 없이 조용히 처리
       }
       
     } catch (error) {
       console.error('S3 영상 화재 분석 실패:', error);
-      alert('S3 영상 화재 분석에 실패했습니다: ' + (error instanceof Error ? error.message : String(error)));
+      // ✅ 팝업 없이 조용히 처리
     } finally {
       setIsAnalyzingFire(false);
     }
@@ -1046,24 +1082,24 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
         
         // DB 저장 실패 경고
         if (result.dbSaveError) {
-          alert(`⚠️ 분석 완료, 하지만 DB 저장 실패:\n${result.dbSaveError}\n\n${emergencyLevel} 상황 - ${description}`);
+          // ✅ 팝업 없이 조용히 처리
         } else if (emergencyLevel === '긴급' || emergencyLevel === '주의') {
           const totalFrames = result?.frameUrls?.length || 0;
           const detectionCount = fallenEvents > 0 ? fallenEvents : 1;
-          alert(`✅ S3 영상 응급 분석 완료 (DB 저장 완료)\n\n📊 분석 정보:\n- 총 ${totalFrames}프레임 분석\n- 응급 상황 ${detectionCount}개 감지\n\n💡 SSE로 자동 새로고침됩니다.`);
+          // ✅ 결과는 events/SSE로 반영되므로 팝업(alert) 없이 조용히 처리
           // SSE로 자동 새로고침되므로 수동 새로고침 제거!
         } else {
           const totalFrames = result?.frameUrls?.length || 0;
-          alert(`응급 상황이 탐지되지 않았습니다.\n(총 ${totalFrames}프레임 분석)`);
+          // ✅ 팝업 없이 조용히 처리
         }
       } else {
         // Gemini 분석 실패 시 YOLO 결과라도 표시
         const totalFrames = result?.frameUrls?.length || 0;
-        alert(`응급 상황이 탐지되지 않았습니다.\n(총 ${totalFrames}프레임 분석)`);
+        // ✅ 팝업 없이 조용히 처리
       }
     } catch (error) {
       console.error('Failed to analyze emergency video:', error);
-      alert('응급 분석 실패: ' + (error instanceof Error ? error.message : String(error)));
+      // ✅ 팝업 없이 조용히 처리
     } finally {
       setIsAnalyzing(false);
     }
@@ -1280,22 +1316,24 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                     {/* CCTV-001: 응급 분석 버튼 */}
                     {selectedCCTV.id === 'CCTV-001' && dummyCCTVIds.includes(selectedCCTV.id) && (
                       <button
-                        onClick={handlePlayVideo}
+                        onClick={() => handlePlayVideo(selectedCCTV.id, selectedCCTV.location)}
                         disabled={isAnalyzing}
-                        className="px-4 py-2 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                        type="button"
+                        className="px-2 py-1 text-xs bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors whitespace-nowrap leading-tight"
                       >
-                        {isAnalyzing ? '분석 중...' : '▶ AI 응급 분석 실행(저장 포함)'}
+                        {isAnalyzing ? '탐지 중...' : '응급 환자 탐지 실행'}
                       </button>
                     )}
 
                     {/* CCTV-002: 화재 분석 버튼 */}
                     {selectedCCTV.id === 'CCTV-002' && dummyCCTVIds.includes(selectedCCTV.id) && (
                       <button
-                        onClick={handleAnalyzeFireVideo}
+                        onClick={() => handleAnalyzeFireVideo(selectedCCTV.id, selectedCCTV.location)}
                         disabled={isAnalyzingFire}
-                        className="px-4 py-2 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                        type="button"
+                        className="px-2 py-1 text-xs bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors whitespace-nowrap leading-tight"
                       >
-                        {isAnalyzingFire ? '분석 중...' : '▶ AI 화재 분석 실행(저장 포함)'}
+                        {isAnalyzingFire ? '탐지 중...' : '화재 조기 탐지 실행'}
                       </button>
                     )}
 
@@ -1304,11 +1342,12 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                      selectedCCTV.id !== 'CCTV-001' && 
                      selectedCCTV.id !== 'CCTV-002' && (
                       <button
-                        onClick={handleAnalyzeFrameWithQwen}
+                        onClick={() => handleAnalyzeFrameWithQwen(selectedCCTV.id, selectedCCTV.location)}
                         disabled={isAnalyzingQwen}
-                        className="px-4 py-2 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors"
+                        type="button"
+                        className="px-2 py-1 text-xs bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors whitespace-nowrap leading-tight"
                       >
-                        {isAnalyzingQwen ? '분석 중...' : '▶ AI 쓰레기 분석 실행(저장 포함)'}
+                        {isAnalyzingQwen ? '탐지 중...' : '쓰레기 탐지 실행'}
                       </button>
                     )}
                       </div>
@@ -1334,7 +1373,6 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                               key={event.id}
                               onClick={() => {
                                 if (!event.incidentId) {
-                                  alert('DB에 저장된 사건만 상세정보를 볼 수 있습니다.');
                                   return;
                                 }
                                 setSelectedEvent(event);
@@ -1549,93 +1587,53 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                               </div>
                             </div>
                           )}
-                          
-                          {/* ✅ 분석 버튼 오버레이 (각 CCTV 타입별) */}
-                          {dummyCCTVIds.includes(cctv.id) && (
-                            <div 
-                              className="absolute top-2 left-2 z-30"
-                              onClick={(e) => {
-                                e.stopPropagation(); // 썸네일 클릭 이벤트 전파 방지
-                              }}
-                            >
-                              {cctv.id === 'CCTV-001' && (
-                                <button
-                                  onClick={async () => {
-                                    // 임시로 CCTV를 선택한 상태로 만들고 분석 실행
-                                    const tempCCTV = {
-                                      id: cctv.id,
-                                      dbId: (cctv as any).dbId,
-                                      location: backendCCTVs.find(b => b.cctvCode === cctv.id)?.locationDesc || cctv.id
-                                    };
-                                    setSelectedCCTV(tempCCTV as any);
-                                    // CCTV ID와 location을 직접 전달하여 즉시 실행
-                                    handlePlayVideo(cctv.id, tempCCTV.location);
-                                  }}
-                                  disabled={isAnalyzing}
-                                  className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-semibold shadow-lg hover:shadow-xl transition-all duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-1.5"
-                                  style={{ borderRadius: '4px' }}
-                                >
-                                  <HeartPulse className="w-3.5 h-3.5" />
-                                  {isAnalyzing ? '분석 중...' : '응급 분석'}
-                                </button>
-                              )}
-                              {cctv.id === 'CCTV-002' && (
-                                <button
-                                  onClick={async () => {
-                                    const tempCCTV = {
-                                      id: cctv.id,
-                                      dbId: (cctv as any).dbId,
-                                      location: backendCCTVs.find(b => b.cctvCode === cctv.id)?.locationDesc || cctv.id
-                                    };
-                                    setSelectedCCTV(tempCCTV as any);
-                                    // CCTV ID와 location을 직접 전달하여 즉시 실행
-                                    handleAnalyzeFireVideo(cctv.id, tempCCTV.location);
-                                  }}
-                                  disabled={isAnalyzingFire}
-                                  className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold shadow-lg hover:shadow-xl transition-all duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-1.5"
-                                  style={{ borderRadius: '4px' }}
-                                >
-                                  <Flame className="w-3.5 h-3.5" />
-                                  {isAnalyzingFire ? '분석 중...' : '화재 분석'}
-                                </button>
-                              )}
-                              {(cctv.id !== 'CCTV-001' && cctv.id !== 'CCTV-002') && (
-                                <button
-                                  onClick={async () => {
-                                    const tempCCTV = {
-                                      id: cctv.id,
-                                      dbId: (cctv as any).dbId,
-                                      location: backendCCTVs.find(b => b.cctvCode === cctv.id)?.locationDesc || cctv.id
-                                    };
-                                    setSelectedCCTV(tempCCTV as any);
-                                    // CCTV ID와 location을 직접 전달하여 즉시 실행
-                                    handleAnalyzeFrameWithQwen(cctv.id, tempCCTV.location);
-                                  }}
-                                  disabled={isAnalyzingQwen}
-                                  className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-semibold shadow-lg hover:shadow-xl transition-all duration-200 disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center gap-1.5"
-                                  style={{ borderRadius: '4px' }}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                  {isAnalyzingQwen ? '분석 중...' : '쓰레기 분석'}
-                                </button>
-                              )}
-                            </div>
-                          )}
                         </div>
                         {/* 하단 설명바 - 메뉴바 상태에 따라 내용만 다르게, 전체 카드 높이는 크게 안 건드림 */}
                         {sidebarOpen ? (
                           // 기존 레이아웃 (메뉴바 펼침)
                           <div className="px-3 py-1 transition-colors duration-300 group-hover:bg-gray-50">
-                            <div className="flex items-center gap-2">
-                              <p className="text-base text-gray-900 font-medium transition-colors duration-300 group-hover:text-blue-600">{cctv.id}</p>
-                              {(() => {
-                                const cctvData = backendCCTVs.find(b => b.cctvCode === cctv.id);
-                                return cctvData?.locationDesc ? (
-                                  <p className="text-base text-gray-900 font-medium">
-                                    {cctvData.locationDesc}
-                                  </p>
-                                ) : null;
-                              })()}
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2">
+                                <p className="text-base text-gray-900 font-medium transition-colors duration-300 group-hover:text-blue-600">{cctv.id}</p>
+                                {(() => {
+                                  const cctvData = backendCCTVs.find(b => b.cctvCode === cctv.id);
+                                  return cctvData?.locationDesc ? (
+                                    <p className="text-base text-gray-900 font-medium">
+                                      {cctvData.locationDesc}
+                                    </p>
+                                  ) : null;
+                                })()}
+                              </div>
+                              {/* ✅ 분석 버튼 (CCTV-001, 002, 003만) */}
+                              {(cctv.id === 'CCTV-001' || cctv.id === 'CCTV-002' || cctv.id === 'CCTV-003') && (
+                                <button
+                                  type="button"
+                                  onPointerDown={(e) => e.stopPropagation()}
+                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    const location =
+                                      backendCCTVs.find(b => b.cctvCode === cctv.id)?.locationDesc || cctv.id;
+                                    if (cctv.id === 'CCTV-001') {
+                                      await handlePlayVideo(cctv.id, location);
+                                    } else if (cctv.id === 'CCTV-002') {
+                                      await handleAnalyzeFireVideo(cctv.id, location);
+                                    } else if (cctv.id === 'CCTV-003') {
+                                      await handleAnalyzeFrameWithQwen(cctv.id, location);
+                                    }
+                                  }}
+                                  disabled={
+                                    (cctv.id === 'CCTV-001' && isAnalyzing) ||
+                                    (cctv.id === 'CCTV-002' && isAnalyzingFire) ||
+                                    (cctv.id === 'CCTV-003' && isAnalyzingQwen)
+                                  }
+                                  className="px-2 py-1 text-xs bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors whitespace-nowrap leading-tight"
+                                >
+                                  {cctv.id === 'CCTV-001' && (isAnalyzing ? '탐지 중...' : '응급 환자 탐지 실행')}
+                                  {cctv.id === 'CCTV-002' && (isAnalyzingFire ? '탐지 중...' : '화재 조기 탐지 실행')}
+                                  {cctv.id === 'CCTV-003' && (isAnalyzingQwen ? '탐지 중...' : '쓰레기 탐지 실행')}
+                                </button>
+                              )}
                             </div>
                           </div>
                         ) : (
@@ -1678,47 +1676,79 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                                   );
                                 })()}
                               </div>
-                              {/* 오른쪽: 헬스 상태 + 최근 헬스체크시간 (둘 다 작은 글씨) */}
+                              {/* 오른쪽: 헬스 상태 + 최근 헬스체크시간 + 분석 버튼 */}
                               <div className="flex flex-col items-end gap-1 ml-3">
-                                {(() => {
-                                  const d = backendCCTVs.find(b => b.cctvCode === cctv.id);
-                                  const raw = d?.healthStatus || 'NORMAL';
-                                  const text =
-                                    raw === 'NORMAL' ? '정상' :
-                                    raw === 'NEED_CHECK' ? '점검필요' :
-                                    '오프라인';
-                                  return (
-                                    <p className="text-sm text-gray-700">
-                                      {text}
-                                    </p>
-                                  );
-                                })()}
-                                {(() => {
-                                  const d = backendCCTVs.find(b => b.cctvCode === cctv.id);
-                                  const hb = d?.lastHeartbeat;
-                                  if (!hb) return null;
-                                  try {
-                                    const formatted = new Date(hb).toLocaleString('ko-KR', {
-                                      year: 'numeric',
-                                      month: '2-digit',
-                                      day: '2-digit',
-                                      hour: '2-digit',
-                                      minute: '2-digit',
-                                      hour12: false,
-                                    }).replace(/\./g, '.').replace(/,/g, '');
+                                <div className="flex flex-col items-end gap-1">
+                                  {(() => {
+                                    const d = backendCCTVs.find(b => b.cctvCode === cctv.id);
+                                    const raw = d?.healthStatus || 'NORMAL';
+                                    const text =
+                                      raw === 'NORMAL' ? '정상' :
+                                      raw === 'NEED_CHECK' ? '점검필요' :
+                                      '오프라인';
                                     return (
-                                      <p className="text-sm text-gray-600">
-                                        {formatted}
+                                      <p className="text-sm text-gray-700">
+                                        {text}
                                       </p>
                                     );
-                                  } catch {
-                                    return (
-                                      <p className="text-sm text-gray-600">
-                                        {hb}
-                                      </p>
-                                    );
-                                  }
-                                })()}
+                                  })()}
+                                  {(() => {
+                                    const d = backendCCTVs.find(b => b.cctvCode === cctv.id);
+                                    const hb = d?.lastHeartbeat;
+                                    if (!hb) return null;
+                                    try {
+                                      const formatted = new Date(hb).toLocaleString('ko-KR', {
+                                        year: 'numeric',
+                                        month: '2-digit',
+                                        day: '2-digit',
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        hour12: false,
+                                      }).replace(/\./g, '.').replace(/,/g, '');
+                                      return (
+                                        <p className="text-sm text-gray-600">
+                                          {formatted}
+                                        </p>
+                                      );
+                                    } catch {
+                                      return (
+                                        <p className="text-sm text-gray-600">
+                                          {hb}
+                                        </p>
+                                      );
+                                    }
+                                  })()}
+                                </div>
+                                {/* ✅ 분석 버튼 (CCTV-001, 002, 003만) */}
+                                {(cctv.id === 'CCTV-001' || cctv.id === 'CCTV-002' || cctv.id === 'CCTV-003') && (
+                                  <button
+                                    type="button"
+                                    onPointerDown={(e) => e.stopPropagation()}
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    onClick={async (e) => {
+                                      e.stopPropagation();
+                                      const location =
+                                        backendCCTVs.find(b => b.cctvCode === cctv.id)?.locationDesc || cctv.id;
+                                      if (cctv.id === 'CCTV-001') {
+                                        await handlePlayVideo(cctv.id, location);
+                                      } else if (cctv.id === 'CCTV-002') {
+                                        await handleAnalyzeFireVideo(cctv.id, location);
+                                      } else if (cctv.id === 'CCTV-003') {
+                                        await handleAnalyzeFrameWithQwen(cctv.id, location);
+                                      }
+                                    }}
+                                    disabled={
+                                      (cctv.id === 'CCTV-001' && isAnalyzing) ||
+                                      (cctv.id === 'CCTV-002' && isAnalyzingFire) ||
+                                      (cctv.id === 'CCTV-003' && isAnalyzingQwen)
+                                    }
+                                    className="px-2 py-1 text-xs bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors whitespace-nowrap leading-tight"
+                                  >
+                                    {cctv.id === 'CCTV-001' && (isAnalyzing ? '탐지 중...' : '응급 환자 탐지 실행')}
+                                    {cctv.id === 'CCTV-002' && (isAnalyzingFire ? '탐지 중...' : '화재 조기 탐지 실행')}
+                                    {cctv.id === 'CCTV-003' && (isAnalyzingQwen ? '탐지 중...' : '쓰레기 탐지 실행')}
+                                  </button>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -1838,7 +1868,6 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                                   key={event.id}
                                   onClick={() => {
                                     if (!event.incidentId) {
-                                      alert('DB에 저장된 사건만 상세정보를 볼 수 있습니다.');
                                       return;
                                     }
                                     setSelectedEvent(event);
@@ -2173,7 +2202,6 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                         key={event.id}
                         onClick={() => {
                           if (!event.incidentId) {
-                            alert('DB에 저장된 사건만 상세정보를 볼 수 있습니다.');
                             return;
                           }
                           setSelectedEvent(event);
