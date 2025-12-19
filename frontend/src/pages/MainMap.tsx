@@ -19,9 +19,8 @@ import CCTVOffMarkerIcon from '../components/CCTVOffMarkerIcon';
 import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
-import { getFireNotifications, getEmergencyNotifications, getTrashNotifications, getHotspots, getCCTVVideoClips, getCCTVMedia, getCCTVList, getActiveIncidents, getIncidentMarkers, getCCTVStatus, getMainMapWeather, getCCTVIncidents, getTrails, getRiskMapHeatmap, getUnifiedIncidentDetail, getRockfallRiskData, type RiskMapHeatmapItem, type RockfallRiskItem } from '../services/api';
+import { getFireNotifications, getEmergencyNotifications, getTrashNotifications, getHotspots, getCCTVMedia, getCCTVList, getActiveIncidents, getIncidentMarkers, getCCTVStatus, getMainMapWeather, getCCTVIncidents, getTrails, getRiskMapHeatmap, getUnifiedIncidentDetail, getRockfallRiskData, type RiskMapHeatmapItem, type RockfallRiskItem } from '../services/api';
 import { getRockfallRiskColor, getRockfallRiskColorWithOpacity, getRockfallRiskLevel } from '../utils/rockfallColors';
-import type { VideoClip } from '../services/mock';
 import type { CCTVMedia } from '../services/api';
 import type { CCTVMarker as BackendCCTVMarker } from '../services/common';
 import HotspotFireIcon from '../components/HotspotFireIcon';
@@ -660,6 +659,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   const [highlightedCCTV, setHighlightedCCTV] = useState<string | null>(null);
   const [videoDetailPopup, setVideoDetailPopup] = useState<{
     cctvId: string;
+    cctvNumericId?: number;
     incidentId?: string;
     incidentCode?: string;
     location: string;
@@ -709,25 +709,75 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     // 5. 필터 초기화 (필요시)
     // setActiveFilters(new Set(['fire', 'emergency', 'trash']));
   };
-  
-  const [videoClips, setVideoClips] = useState<VideoClip[]>([]);
-  const [selectedVideoClip, setSelectedVideoClip] = useState<VideoClip | null>(null);
-  
+
+  // ✅ 영상 상세보기 모달용 (실제 video src)
+  const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
+  const [selectedVideoMedia, setSelectedVideoMedia] = useState<CCTVMedia | null>(null);
+  const [selectedImageMedia, setSelectedImageMedia] = useState<CCTVMedia | null>(null);
+  const [isVideoLoading, setIsVideoLoading] = useState(false);
+
   const [cctvMediaList, setCctvMediaList] = useState<CCTVMedia[]>([]);
   const [weather, setWeather] = useState<any>(null);
 
-  // videoDetailPopup이 열릴 때 영상 클립 로드
+  // videoDetailPopup이 열릴 때 실제 영상 URL 로드 (공통: 화재/응급/쓰레기)
   useEffect(() => {
-    const loadVideoClips = async () => {
-      if (videoDetailPopup) {
-        const clips = await getCCTVVideoClips(videoDetailPopup.cctvId);
-        setVideoClips(clips);
-      } else {
-        setVideoClips([]);
+    let cancelled = false;
+
+    const loadVideoUrl = async () => {
+      setSelectedVideoUrl(null);
+      setSelectedVideoMedia(null);
+      setSelectedImageMedia(null);
+
+      if (!videoDetailPopup) {
+        setIsVideoLoading(false);
+        return;
+      }
+
+      setIsVideoLoading(true);
+      try {
+        const cctvNumericId = videoDetailPopup.cctvNumericId;
+
+        if (!cctvNumericId) {
+          if (!cancelled) setSelectedVideoUrl(null);
+          return;
+        }
+
+        // 영상/이미지 메타데이터까지 쓰기 위해 all로 가져와서 각각 선택
+        const mediaAll = await getCCTVMedia(cctvNumericId, 'all');
+        const wantType =
+          videoDetailPopup.type === 'fire' ? 'FIRE' :
+          videoDetailPopup.type === 'emergency' ? 'EMERGENCY' :
+          'TRASH';
+
+        const byType = mediaAll.filter(m => String(m.incidentType || '').toUpperCase() === wantType);
+        const incidentIdNum = videoDetailPopup.incidentId ? Number.parseInt(String(videoDetailPopup.incidentId), 10) : NaN;
+        const byIncident = Number.isFinite(incidentIdNum) ? byType.filter(m => m.incidentId === incidentIdNum) : [];
+
+        const videoCandidates = (byIncident.length ? byIncident : byType).filter(m => m.type === 'video');
+        const imageCandidates = (byIncident.length ? byIncident : byType).filter(m => m.type === 'image');
+
+        const videoPick = videoCandidates[0] ?? mediaAll.find(m => m.type === 'video') ?? null;
+        const imagePick = imageCandidates[0] ?? mediaAll.find(m => m.type === 'image') ?? null;
+
+        if (!cancelled) {
+          setSelectedVideoMedia(videoPick);
+          setSelectedImageMedia(imagePick);
+          setSelectedVideoUrl(videoPick?.url ?? null);
+        }
+      } catch (error) {
+        console.error('❌ [MainMap] Failed to load CCTV video media for videoDetailPopup:', error);
+        if (!cancelled) {
+          setSelectedVideoMedia(null);
+          setSelectedImageMedia(null);
+          setSelectedVideoUrl(null);
+        }
+      } finally {
+        if (!cancelled) setIsVideoLoading(false);
       }
     };
-    
-    loadVideoClips();
+
+    loadVideoUrl();
+    return () => { cancelled = true; };
   }, [videoDetailPopup]);
 
   // IncidentDetailDto.type(한글) → IncidentDetailModal prop type
@@ -3447,6 +3497,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                               // 영상 상세보기 팝업 열기
                               setVideoDetailPopup({
                                 cctvId: selectedCCTV?.cctv.cctvCode || selectedCCTV?.cctv.id || 'CCTV-001',
+                                cctvNumericId: selectedCCTV?.cctv.cctvId,
                                 incidentId: media.incidentId?.toString(),
                                 incidentCode: media.incidentCode,
                                 location: selectedCCTV?.cctv.location || '위치 정보 없음',
@@ -3659,6 +3710,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                           console.log('자세히보기 clicked:', incident.type);
                           setVideoDetailPopup({
                             cctvId: selectedDetection.marker.id,
+                            cctvNumericId: selectedDetection.marker.cctvId,
                             incidentId: incident.id.toString(),
                             incidentCode: incident.incidentCode,
                             location: incident.locationDesc || selectedDetection.marker.location,
@@ -3747,8 +3799,10 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             {(selectedNotification.type === 'fire' || selectedNotification.type === 'emergency') && (
               <button
                 onClick={() => {
+                  const match = cctvMarkers.find(m => m.id === selectedNotification.cctvId || m.cctvCode === selectedNotification.cctvId);
                   setVideoDetailPopup({
                     cctvId: selectedNotification.cctvId,
+                    cctvNumericId: match?.cctvId,
                     location: selectedNotification.location,
                     time: selectedNotification.time,
                     confidence: selectedNotification.confidence,
@@ -3861,7 +3915,22 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                 {videoDetailPopup.type === 'trash' ? '녹화 영상' : '감지 영상'}
               </p>
               <div className="bg-gray-900 flex items-center justify-center relative" style={{ borderRadius: '0px', aspectRatio: '16 / 9', width: '100%' }}>
-                <div className="absolute inset-0 flex items-center justify-center">
+                {isVideoLoading ? (
+                  <div className="text-center">
+                    <Video className="w-12 h-12 text-gray-400 mx-auto mb-2 animate-pulse" />
+                    <p className="text-gray-300 text-sm">영상 로딩중...</p>
+                    <p className="text-gray-500 text-xs mt-1">{videoDetailPopup.cctvId} - {videoDetailPopup.time}</p>
+                  </div>
+                ) : selectedVideoUrl ? (
+                  <video
+                    key={selectedVideoUrl}
+                    src={selectedVideoUrl}
+                    controls
+                    autoPlay
+                    playsInline
+                    className="w-full h-full object-contain"
+                  />
+                ) : (
                   <div className="text-center">
                     {videoDetailPopup.type === 'fire' ? (
                       <>
@@ -3879,9 +3948,11 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                         <p className="text-white text-sm">쓰레기 투기 녹화 영상</p>
                       </>
                     )}
-                    <p className="text-gray-400 text-xs mt-1">{videoDetailPopup.cctvId} - {videoDetailPopup.time}</p>
+                    <p className="text-gray-400 text-xs mt-1">
+                      {videoDetailPopup.cctvId} - {videoDetailPopup.time}
+                    </p>
                   </div>
-                </div>
+                )}
               </div>
               
               {/* 영상/이미지 정보 */}
@@ -3889,12 +3960,18 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                 <div className="flex items-center gap-2 text-sm">
                   <Camera className="w-4 h-4 text-gray-500" />
                   <span className="text-gray-600">이미지:</span>
-                  <span className="text-gray-900 font-medium">2.4MB</span>
+                  <span className="text-gray-900 font-medium">{selectedImageMedia?.fileSize || '-'}</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm">
                   <Video className="w-4 h-4 text-gray-500" />
                   <span className="text-gray-600">영상:</span>
-                  <span className="text-gray-900 font-medium">15초 | 8.5MB</span>
+                  <span className="text-gray-900 font-medium">
+                    {typeof selectedVideoMedia?.duration === 'number'
+                      ? `${Math.floor(selectedVideoMedia.duration / 60) > 0 ? `${Math.floor(selectedVideoMedia.duration / 60)}분 ` : ''}${selectedVideoMedia.duration % 60}초`
+                      : '-'}
+                    {' | '}
+                    {selectedVideoMedia?.fileSize || '-'}
+                  </span>
                 </div>
               </div>
             </div>

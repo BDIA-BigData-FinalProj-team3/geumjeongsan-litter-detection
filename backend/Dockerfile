@@ -12,7 +12,7 @@ WORKDIR /app
 
 # Install Python 3 and pip (for fire_detector.py)
 RUN apt-get update && \
-    apt-get install -y python3 python3-pip python3-venv && \
+    apt-get install -y python3 python3-pip python3-venv libgl1-mesa-glx libglib2.0-0 && \
     ln -s /usr/bin/python3 /usr/bin/python && \
     rm -rf /var/lib/apt/lists/*
 
