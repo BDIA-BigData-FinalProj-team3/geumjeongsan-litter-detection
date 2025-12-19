@@ -65,6 +65,7 @@ interface Event {
   };
   emergencyLevel?: string; // Gemini 응급 분석 결과: "긴급" | "주의" | "정상"
   analysisSource?: 'DB' | 'REALTIME'; // DB 저장된 것 vs 실시간 분석
+  status?: string; // 사건 상태: 'PENDING' | 'IN_PROGRESS' | 'RESOLVED'
 }
 
 export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CCTVManagementProps) {
@@ -453,7 +454,8 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     clipUrl: null,
     frameUrls: [],
     qwenResponse: null,
-    analysisSource: 'DB' as const
+    analysisSource: 'DB' as const,
+    status: incident.status // ✅ 사건 상태 필드 추가
   }));
   
   // ✅ 화면 표시용 이벤트: DB 사건 + 실시간 분석 결과 합치기
@@ -491,11 +493,15 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       summary: incident.locationDesc || '',
       clipUrl: null,
       frameUrls: [],
-      qwenResponse: null
+      qwenResponse: null,
+      status: incident.status // ✅ 사건 상태 필드 추가
     }));
 
-    // 아직 확인(ack) 안 한 이벤트 중 가장 최신 이벤트 1개를 자동 팝업
-    const unacked = dbEventsForPopup.find(e => !acknowledgedEvents.has(e.id));
+    // 아직 확인(ack) 안 했고 + "처리 완료되지 않은" 이벤트만 자동 팝업
+    const unacked = dbEventsForPopup.find(e => 
+      !acknowledgedEvents.has(e.id) && 
+      e.status !== 'RESOLVED' // ✅ 처리 완료된 사건은 팝업하지 않음
+    );
     if (unacked) {
       setSelectedEvent(unacked as any);
     }

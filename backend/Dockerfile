@@ -10,8 +10,20 @@ RUN gradle clean bootJar --no-daemon
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 
+# Install Python 3 and pip (for fire_detector.py)
+RUN apt-get update && \
+    apt-get install -y python3 python3-pip python3-venv && \
+    rm -rf /var/lib/apt/lists/*
+
 # Copy built jar from build stage
 COPY --from=builder /app/build/libs/*.jar app.jar
+
+# Copy ai directory (fire_detector.py and dependencies)
+COPY --from=builder /app/ai /app/ai
+
+# Install Python dependencies
+RUN pip3 install --no-cache-dir -r /app/ai/requirements.txt --break-system-packages || \
+    pip3 install --no-cache-dir -r /app/ai/requirements.txt
 
 EXPOSE 8080
 

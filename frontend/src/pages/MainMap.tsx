@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Menu, User, LogOut, ChevronDown, ChevronUp, Flame, Trash2, Camera, Wrench, X, Plus, Minus, Download, Bell, AlertCircle, Move, MessageSquare, Eye, Radar, Video, Activity, Home, Grid3x3, Video as VideoIcon, Heart, FileText, Edit2, Save, Clock, Wind, MapPin, Map as MapIcon, HeartPulse } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
@@ -325,6 +325,9 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   
   // 반응형: 화면 크기 감지 (먼저 선언)
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
+
+  // Leaflet map 인스턴스 참조 (트랜지션 종료 시 리사이즈 처리용)
+  const mapRef = useRef<L.Map | null>(null);
 
   // Sidebar width (반응형): 모바일은 75vw, PC는 고정 폭
   const DESKTOP_SIDEBAR_W = 317.56;
@@ -2231,7 +2234,23 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         </div>
       )}
 
-      <div className="flex-1 relative bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300" style={{ marginLeft: sidebarOpen ? (isMobile ? '0px' : '256px') : '0px', transition: 'margin-left 0.3s' }}>
+      <div
+        className="flex-1 relative bg-gradient-to-br from-slate-100 via-slate-200 to-slate-300"
+        style={{
+          marginLeft: sidebarOpen ? (isMobile ? '0px' : '256px') : '0px',
+          transition: 'margin-left 0.3s',
+          willChange: 'margin-left',
+        }}
+        onTransitionEnd={(e) => {
+          // margin-left 트랜지션이 끝났을 때만 1회 실행
+          if (e.propertyName !== 'margin-left') return;
+
+          // 다음 프레임에 실행해서 paint 타이밍 맞춤(끊김 감소)
+          requestAnimationFrame(() => {
+            mapRef.current?.invalidateSize({ animate: false, pan: false });
+          });
+        }}
+      >
         {/* 데이터 로딩/에러 상태 (전문가 UX: 명확한 상태 표시) */}
         {mapDataLoading && (
           <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/40 backdrop-blur-sm">
@@ -2268,8 +2287,10 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             renderer={L.svg()} // ✅ Canvas(clearRect) 오류 방지: SVG 렌더러로 고정
             maxBounds={mapMaxBounds}
             maxBoundsViscosity={0.1}
+            whenCreated={(map) => {
+              mapRef.current = map;
+            }}
           >
-
             {/* 1. 일반 지도 레이어 (항상 렌더링, 위성 모드일 땐 투명도 0) */}
             <TileLayer
               url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}.png"
