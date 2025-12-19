@@ -380,6 +380,8 @@ export const getFireNotifications = async (): Promise<NotificationItem[]> => {
     
     // 백엔드 데이터를 NotificationItem 형식으로 변환
     return data
+      // ✅ MainMap에는 "AI 자동 탐지"만 노출 (수동 등록 제외)
+      .filter((item: any) => typeof item.detectionBasis === 'string' && item.detectionBasis.includes('AI'))
       .filter((item: any) => item.type === '화재') // 화재 타입만 필터링
       .map((item: any) => ({
         id: item.id.toString(),
@@ -416,6 +418,8 @@ export const getEmergencyNotifications = async (): Promise<NotificationItem[]> =
     
     // 백엔드 데이터를 NotificationItem 형식으로 변환
     return data
+      // ✅ MainMap에는 "AI 자동 탐지"만 노출 (수동 등록 제외)
+      .filter((item: any) => typeof item.detectionBasis === 'string' && item.detectionBasis.includes('AI'))
       .filter((item: any) => item.type === '응급') // 응급 타입만 필터링
       .map((item: any) => ({
         id: item.id.toString(),
@@ -452,6 +456,8 @@ export const getTrashNotifications = async (): Promise<NotificationItem[]> => {
     
     // 백엔드 데이터를 NotificationItem 형식으로 변환
     return data
+      // ✅ MainMap에는 "AI 자동 탐지"만 노출 (수동 등록 제외)
+      .filter((item: any) => typeof item.detectionBasis === 'string' && item.detectionBasis.includes('AI'))
       .filter((item: any) => item.type === '쓰레기') // 쓰레기 타입만 필터링
       .map((item: any) => ({
         id: item.id.toString(),

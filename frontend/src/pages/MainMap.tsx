@@ -55,6 +55,15 @@ interface MapCCTVMarker {
   locationDescription?: string; // 상세 위치 설명
   power: 'on' | 'off';
   healthStatus: 'NORMAL' | 'NEED_CHECK' | 'OFFLINE'; // 헬스 상태
+  // ✅ 실시간 CCTV 상태 API(getCCTVStatus)에서 오는 확장 필드
+  displayStatus?: 'OFF' | 'NEED_CHECK' | 'ON' | string;
+  lastHeartbeat?: string;
+  lastIncidentId?: number | string;
+  lastIncidentType?: string; // FIRE / EMERGENCY / TRASH
+  lastIncidentAt?: string;
+  // ✅ 미처리(활성) 사건 여부 - /api/map/active-incidents 기반
+  hasActiveIncident?: boolean;
+  activeIncidentCount?: number;
   incidents: {
     fire?: number;
     emergency?: number;
@@ -1275,7 +1284,10 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         // 실시간 CCTV 상태 로드
         try {
           console.log("📹 [MainMap] Loading CCTV Status...");
-          const cctvStatuses = await getCCTVStatus();
+          const [cctvStatuses, activeIncidents] = await Promise.all([
+            getCCTVStatus(),
+            getActiveIncidents(), // ✅ PENDING/IN_PROGRESS(미처리)만
+          ]);
           
           console.log("✅ [MainMap] Loaded CCTV Status:", cctvStatuses);
           
@@ -1283,6 +1295,15 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             console.warn("⚠️ [MainMap] No CCTV status data received.");
             return;
           }
+
+          // ✅ 미처리 사건 CCTV 집계 (타입 구분 없이 '있다/없다'만 사용)
+          const activeCountByCctvId = new Map<number, number>();
+          (Array.isArray(activeIncidents) ? activeIncidents : []).forEach((inc: any) => {
+            const idRaw = inc?.cctvId ?? inc?.cctv_id;
+            const cctvIdNum = typeof idRaw === 'number' ? idRaw : Number.parseInt(String(idRaw), 10);
+            if (!Number.isFinite(cctvIdNum)) return;
+            activeCountByCctvId.set(cctvIdNum, (activeCountByCctvId.get(cctvIdNum) || 0) + 1);
+          });
           
           // ✅ VIEW 데이터를 맵 마커 형식으로 변환
           const statusMarkers = cctvStatuses.map((status: any) => {
@@ -1312,6 +1333,8 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               lastIncidentId: status.lastIncidentId,
               lastIncidentType: status.lastIncidentType,
               lastIncidentAt: status.lastIncidentAt,
+              hasActiveIncident: (activeCountByCctvId.get(status.cctvId) || 0) > 0,
+              activeIncidentCount: activeCountByCctvId.get(status.cctvId) || 0,
               incidents: {},  // 실시간 CCTV는 사건 카운트 불필요
             };
           });
@@ -2561,12 +2584,33 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               
               const isPowerOn = marker.power === 'on';
               const isNeedCheck = marker.healthStatus === 'NEED_CHECK';
+
+              // ✅ 미처리 사건(처리완료 아님)인 CCTV만 배지 표시
+              const showActiveIncidentBadge = !!marker.hasActiveIncident && (marker.activeIncidentCount || 0) > 0;
+              const badgeText = (marker.activeIncidentCount || 0) > 1 ? String(marker.activeIncidentCount) : '!';
+              const badgeHtml = showActiveIncidentBadge
+                ? `<div style="
+                    position:absolute;
+                    top:4px;
+                    right:4px;
+                    background:#EF4444;
+                    color:#FFFFFF;
+                    font-size:11px;
+                    font-weight:900;
+                    line-height:1;
+                    padding:3px 6px;
+                    border:2px solid #FFFFFF;
+                    border-radius:999px;
+                    box-shadow:0 2px 6px rgba(0,0,0,0.35);
+                    pointer-events:none;
+                  ">${badgeText}</div>`
+                : '';
               
               // 기존 아이콘 디자인 사용
               let iconHtml = '';
               if (!isPowerOn || marker.healthStatus === 'OFFLINE') {
                 // OFF 마커 (기존 CCTVOffMarkerIcon과 동일)
-                iconHtml = `<div style="width: 64px; height: 82px; pointer-events: auto;">
+                iconHtml = `<div style="width: 64px; height: 82px; position: relative; pointer-events: auto;">
                   <svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="103.102 -6.75 98 126" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75)); pointer-events: none !important;">
                     <g style="pointer-events: none !important;">
                       <g>
@@ -2578,10 +2622,11 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                       <text transform="matrix(1 0 0 1 126.5552 39.9102)" fill="#FFFFFF" font-family="NanumSquareB" font-size="20">OFF</text>
                     </g>
                   </svg>
+                  ${badgeHtml}
                 </div>`;
               } else if (isNeedCheck) {
                 // NEED_CHECK 마커 (기존 ON + 경고 아이콘)
-                iconHtml = `<div class="map-marker-wrap" style="pointer-events: auto;">
+                iconHtml = `<div class="map-marker-wrap" style="position: relative; pointer-events: auto;">
                   <svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="95.975 -44.5 98 126" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75)); pointer-events: none !important;">
                     <g style="pointer-events: none !important;">
                       <g>
@@ -2600,10 +2645,11 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                       <line x1="12" y1="16" x2="12.01" y2="16"/>
                     </svg>
                   </div>
+                  ${badgeHtml}
                 </div>`;
               } else {
                 // ON 마커 (기존 CCTVOnMarkerIcon과 동일)
-                iconHtml = `<div style="width: 64px; height: 82px; pointer-events: auto;">
+                iconHtml = `<div style="width: 64px; height: 82px; position: relative; pointer-events: auto;">
                   <svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="95.975 -44.5 98 126" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75)); pointer-events: none !important;">
                     <g style="pointer-events: none !important;">
                       <g>
@@ -2615,6 +2661,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                       <text transform="matrix(1 0 0 1 124.0278 2.4097)" fill="#FFFFFF" font-family="NanumSquareB" font-size="20">ON</text>
                     </g>
                   </svg>
+                  ${badgeHtml}
                 </div>`;
               }
               
@@ -3355,9 +3402,26 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               {selectedCCTV.cctv.power === 'on' ? (
                 <>
                   {/* 실시간 CCTV 영상 (TODO: 실제 영상 스트림 연결) */}
-                  <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-                    <Camera className="w-12 h-12 text-gray-400" />
-                  </div>
+                  {(() => {
+                    const preview = [...cctvMediaList]
+                      .filter(m => m.type === 'video')
+                      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+
+                    return preview?.url ? (
+                      <video
+                        key={preview.url}
+                        src={preview.url}
+                        controls
+                        playsInline
+                        preload="metadata"
+                        className="w-full h-full object-contain bg-black"
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-gray-800 flex items-center justify-center">
+                        <Camera className="w-12 h-12 text-gray-400" />
+                      </div>
+                    );
+                  })()}
                   {/* 점검 필요 오버레이 */}
                   {selectedCCTV.cctv.healthStatus === 'NEED_CHECK' && (
                     <div className="absolute inset-0 bg-yellow-500 bg-opacity-30 flex items-center justify-center">
@@ -3957,6 +4021,11 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               
               {/* 영상/이미지 정보 */}
               <div className="mt-2 flex items-center gap-6">
+                <div className="flex items-center gap-2 text-sm">
+                  <Clock className="w-4 h-4 text-gray-500" />
+                  <span className="text-gray-600">촬영:</span>
+                  <span className="text-gray-900 font-medium">{selectedVideoMedia?.timestamp || selectedImageMedia?.timestamp || videoDetailPopup.time || '-'}</span>
+                </div>
                 <div className="flex items-center gap-2 text-sm">
                   <Camera className="w-4 h-4 text-gray-500" />
                   <span className="text-gray-600">이미지:</span>

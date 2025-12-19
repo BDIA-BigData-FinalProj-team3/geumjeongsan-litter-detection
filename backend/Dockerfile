@@ -10,9 +10,9 @@ RUN gradle clean bootJar --no-daemon
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 
-# Install Python 3 and pip (for fire_detector.py)
+# Install Python 3 and pip (for fire_detector.py) + ffmpeg (for video clip/frame extraction)
 RUN apt-get update && \
-    apt-get install -y python3 python3-pip python3-venv libgl1 libglib2.0-0 && \
+    apt-get install -y python3 python3-pip python3-venv libgl1 libglib2.0-0 ffmpeg && \
     ln -s /usr/bin/python3 /usr/bin/python && \
     rm -rf /var/lib/apt/lists/*
 
