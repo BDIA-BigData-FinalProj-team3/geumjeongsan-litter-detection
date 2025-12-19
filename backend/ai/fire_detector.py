@@ -106,6 +106,12 @@ def analyze_fire_images(image_paths, wind_dir, wind_speed, humidity):
 • 렌즈 앞의 일시적 현상인지, 배경 속 실제 연기인지 구분
 • 연기의 이동, 형태 변화, 흐름을 반드시 분석
 
+[프레임 인덱스 응답 규칙]
+- 제공된 이미지들은 "프레임 0, 1, 2, ... 순서"로 입력됩니다.
+- 화재/연기(또는 화재 가능성이 높은 연기)가 가장 뚜렷하게 보이는 프레임의 인덱스를
+  `detected_frame_index`에 0부터 시작하는 정수로 반드시 포함하십시오.
+- 확실한 프레임을 특정할 수 없으면, 가장 가능성이 높은 프레임을 하나 선택하십시오.
+
 [미탐 방지(중요)]
 다음과 같은 경우에는 '화재 가능성'을 더 민감하게 고려하십시오:
 • 연기가 아주 희미하거나, 화면 일부에만 보이더라도 **여러 프레임에 걸쳐 지속**되는 경우
@@ -139,6 +145,7 @@ def analyze_fire_images(image_paths, wind_dir, wind_speed, humidity):
                 "type": "object",
                 "properties": {
                     "is_fire_detected": {"type": "boolean", "description": "화재 감지 여부"},
+                    "detected_frame_index": {"type": "integer", "description": "화재/연기가 가장 뚜렷한 프레임 인덱스(0부터)"},
                     "confidence_score": {"type": "number", "description": "신뢰도 점수 (0.0~1.0)"},
                     "detection_confidence_reason": {"type": "string", "description": "신뢰도 근거 설명"},
                     "risk_level": {"type": "string", "enum": ["심각", "경계", "주의", "안전"]},

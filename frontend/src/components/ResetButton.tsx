@@ -1,3 +1,6 @@
+import React from 'react';
+import { Mountain } from 'lucide-react';
+
 interface ResetButtonProps {
   isActive?: boolean;
   onClick: () => void;
@@ -10,7 +13,11 @@ export default function ResetButton({ isActive = false, onClick }: ResetButtonPr
   const iconColor = isActive ? '#FFFFFF' : '#6D6E71';
 
   return (
-    <button onClick={onClick} className="hover:opacity-90 transition-opacity">
+    <button
+      onClick={onClick}
+      className="relative hover:opacity-90 transition-opacity"
+      style={{ width: '124.951px', height: '30px' }}
+    >
       <svg width="124.951px" height="30px" viewBox="13.062 -6.271 124.951 30">
         <g>
           <path fill={bgColor} d="M13.562,8.729c0,8.008,6.492,14.5,14.5,14.5h94.951c8.008,0,14.5-6.492,14.5-14.5s-6.492-14.5-14.5-14.5
@@ -28,11 +35,21 @@ export default function ResetButton({ isActive = false, onClick }: ResetButtonPr
         >
           낙석 위험 지도
         </text>
-        {/* 낙석 아이콘 (산 모양) - 텍스트 왼쪽에 배치, RiskMapButton의 경고 아이콘과 비슷한 위치 */}
-        <g>
-          <path fill={iconColor} d="M35,10 L32,4 L35,6 L38,4 L35,10 Z" />
-        </g>
       </svg>
+
+      {/* ✅ RockfallDashboard(낙석 상황 현황)과 동일한 lucide Mountain 아이콘 */}
+      <Mountain
+        size={16}
+        color={iconColor}
+        strokeWidth={2.25}
+        style={{
+          position: 'absolute',
+          left: 20,
+          top: '50%',
+          transform: 'translateY(-50%)',
+          pointerEvents: 'none',
+        }}
+      />
     </button>
   );
 }

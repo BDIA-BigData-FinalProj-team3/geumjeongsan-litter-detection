@@ -5,7 +5,7 @@ import IncidentDetailModal from '../components/IncidentDetailModal';
 import { X, ArrowLeft, Search, ChevronDown, ArrowUpDown, Maximize, Camera, Flame, Trash2, AlertCircle, Download, Play, HeartPulse } from 'lucide-react';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { cctvList, getCCTVLocation, getOffCCTVCodes, getCCTVByCode } from '../services/common';
-import { getCCTVList, analyzeFallenVideo, analyzeEmergencyVideo, analyzeFireVideo, analyzeFireFrames, analyzeFireFromS3Video, getUnifiedIncidentDetail, analyzeTrashFrameWithGemini, type FallenAnalysisResponse } from '../services/api';
+import { getCCTVList, analyzeFallenVideo, analyzeEmergencyVideo, analyzeFireVideo, analyzeFireFrames, analyzeFireFromS3Video, getUnifiedIncidentDetail, analyzeTrashFrameWithGemini, analyzeTrashVideoFromS3, type FallenAnalysisResponse } from '../services/api';
 import API_BASE_URL, { INGEST_HLS_URL } from '../config/api';
 import Hls from 'hls.js';
 import cctv001DemoVideo from '../assets/cctv-001_20251208T140000Z.mp4';
@@ -64,7 +64,7 @@ interface Event {
     frame_urls?: string[];
   };
   emergencyLevel?: string; // Gemini 응급 분석 결과: "긴급" | "주의" | "정상"
-  analysisSource?: 'DB' | 'REALTIME'; // DB 저장된 것 vs 실시간 분석
+  analysisSource?: 'DB' | 'REALTIME' | 'S3_VIDEO'; // DB 저장된 것 vs 실시간 분석 vs S3 영상 분석
   status?: string; // 사건 상태: 'PENDING' | 'IN_PROGRESS' | 'RESOLVED'
 }
 
@@ -176,6 +176,11 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
 
   // 더미 비디오가 있는 CCTV ID 목록
   const dummyCCTVIds = ['CCTV-001', 'CCTV-002', 'CCTV-003', 'CCTV-004', 'CCTV-005', 'CCTV-006', 'CCTV-007', 'CCTV-008', 'CCTV-009', 'CCTV-010'];
+
+  // ✅ 쓰레기(S3 영상) 분석용 URL 맵 (필요 CCTV만 추가)
+  const trashS3VideoUrlMap: Record<string, string> = {
+    'CCTV-003': 'https://geumjungsan-admin.s3.ap-northeast-2.amazonaws.com/assets/cctv-003-3P2MhqPi.mp4',
+  };
   
   // 라이브 스트림 CCTV ID (CCTV-011)
   const liveStreamCCTVId = 'CCTV-011';
@@ -727,12 +732,52 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
 
   // Handle TRASH frame analysis (Gemini main). 기존 Qwen은 보조/대체로 유지 가능.
   const handleAnalyzeFrameWithQwen = async () => {
-    if (!selectedCCTV || !videoRef.current) {
-      return;
-    }
+    if (!selectedCCTV) return;
 
     setIsAnalyzingQwen(true);
     try {
+      // ✅ S3 영상 기반 쓰레기 분석(우선 적용): 감지 시 clipUrl 생성/저장 → 상세에서 영상 재생 가능
+      const s3VideoUrl = trashS3VideoUrlMap[selectedCCTV.id];
+      if (s3VideoUrl) {
+        const result = await analyzeTrashVideoFromS3(selectedCCTV.id, {
+          videoUrl: s3VideoUrl,
+          saveToDb: true,
+          frameCount: 4,
+          frameIntervalSec: 5,
+          stopOnDetect: true,
+        });
+
+        const incidentId = typeof result?.incidentId === 'number' ? result.incidentId : undefined;
+        const clipUrl = result?.clipUrl || null;
+        const overlayUrls: string[] = Array.isArray(result?.overlayUrls) ? result.overlayUrls : [];
+
+        const newEvent: Event = {
+          id: `trash-video-${Date.now()}`,
+          time: new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false }),
+          type: 'trash',
+          confidence: '85%',
+          location: selectedCCTV.location,
+          severity: '중',
+          reportProbability: '높음',
+          summary: `${selectedCCTV.location}에서 쓰레기(비디오) 분석 결과가 저장되었습니다.`,
+          clipUrl,
+          frameUrls: overlayUrls,
+          incidentId,
+          analysisSource: 'REALTIME'
+        };
+
+        setAnalysisEvents(prev => [...prev, newEvent]);
+
+        if (incidentId) {
+          alert(`✅ 쓰레기(비디오) 분석 완료 (DB 저장 완료)\n\n💡 SSE로 자동 새로고침됩니다.`);
+        } else {
+          alert(`✅ 쓰레기(비디오) 분석 완료`);
+        }
+        return;
+      }
+
+      // ⬇️ fallback: 현재 프레임 캡처(이미지 1장) 기반 분석
+      if (!videoRef.current) return;
       const video = videoRef.current;
       
       // 현재 프레임을 canvas로 캡처

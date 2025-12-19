@@ -114,13 +114,15 @@ public class EmergencyService {
 
     /**
      * Gemini 응급 분석 결과(JSON Map)로 AUTO 응급 사건 저장
+     * @param hasYolo YOLO 모델을 함께 사용했는지 여부
      */
     @Transactional
     public IncidentCreateResponse createEmergencyFromGemini(
             Map<String, Object> geminiJson,
             Long cctvId,
             String locationDesc,
-            OffsetDateTime detectedAtKst
+            OffsetDateTime detectedAtKst,
+            boolean hasYolo
     ) {
         if (geminiJson == null) throw new IllegalArgumentException("Gemini 결과가 비어 있습니다.");
 
@@ -219,7 +221,10 @@ public class EmergencyService {
         if (incidentAutoMap != null) {
             IncidentAuto auto = new IncidentAuto();
             auto.setIncidentId(incident.getId());
-            auto.setDetectionModel(geminiModelName != null && !geminiModelName.isBlank() ? geminiModelName : "gemini");
+            // YOLO와 Gemini를 함께 사용한 경우 모델명에 둘 다 표시
+            String geminiModel = geminiModelName != null && !geminiModelName.isBlank() ? geminiModelName : "gemini-2.5-flash";
+            String detectionModel = hasYolo ? ("yolo + " + geminiModel) : geminiModel;
+            auto.setDetectionModel(detectionModel);
             auto.setDetectionVersion("emergency-analysis");
             auto.setLocationDesc(locationDesc);
             auto.setIsValid(true);

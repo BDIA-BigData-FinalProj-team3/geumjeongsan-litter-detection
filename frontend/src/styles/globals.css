@@ -298,8 +298,8 @@ html {
 /* 숫자 배지(카운트) */
 .map-marker-badge {
   position: absolute;
-  top: -6px;     /* 위로 살짝 */
-  right: -6px;   /* 오른쪽으로 살짝 */
+  top: 2px;      /* 마커 쪽으로 더 붙이기(안쪽으로) */
+  right: 2px;    /* 마커 쪽으로 더 붙이기(안쪽으로) */
   width: 22px;
   height: 22px;
   border-radius: 999px;
@@ -315,11 +315,17 @@ html {
   z-index: 3;
 }
 
+/* 타입별 미세 조정: 쓰레기 마커는 아이콘이 상대적으로 작아서 배지를 더 안쪽으로 */
+.map-marker-badge--trash {
+  top: 4px;
+  right: 4px;
+}
+
 /* CCTV 경고(NEED_CHECK) 노란 점 */
 .map-marker-warn {
   position: absolute;
-  top: -6px;
-  right: -6px;
+  top: 2px;
+  right: 2px;
   width: 18px;
   height: 18px;
   border-radius: 999px;

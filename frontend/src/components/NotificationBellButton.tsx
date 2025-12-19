@@ -33,7 +33,7 @@ export default function NotificationBellButton({ onClick, count = 0 }: Notificat
       {/* 알림 개수 배지 */}
       {count > 0 && (
         <div 
-          className="absolute -top-1 -right-1 bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1.5 shadow-lg animate-pulse"
+          className="absolute -top-0.5 -right-0.5 bg-red-500 text-white text-xs font-bold rounded-full min-w-[20px] h-5 flex items-center justify-center px-1.5 shadow-lg animate-pulse"
           style={{ 
             fontSize: count > 99 ? '10px' : '12px',
             zIndex: 10

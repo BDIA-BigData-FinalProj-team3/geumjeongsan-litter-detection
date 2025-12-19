@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Menu, User, LogOut, ChevronDown, ChevronUp, Flame, Trash2, Camera, Wrench, X, Plus, Minus, Download, Bell, AlertCircle, Move, MessageSquare, Eye, Radar, Video, Activity, Home, Grid3x3, Video as VideoIcon, Heart, FileText, Edit2, Save, Clock, Wind, MapPin, Map as MapIcon, HeartPulse } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
@@ -197,6 +197,70 @@ function ZoomController({ zoom, onZoomChange }: { zoom: number; onZoomChange: (z
   return null;
 }
 
+// ✅ 지도 컨테이너 리사이즈 동기화 (사이드바 토글/레이아웃 변화 시 오른쪽 빈공간 방지 + 과도한 리렌더 방지)
+function MapAutoResize() {
+  const map = useMap();
+
+  useEffect(() => {
+    const container = map.getContainer();
+    const parent = container?.parentElement;
+    if (!parent) return;
+
+    let endTimer: number | null = null;
+    let lastThrottleAt = 0;
+
+    const invalidate = () => {
+      try {
+        map.invalidateSize({ animate: false, pan: false });
+      } catch {
+        // ignore
+      }
+    };
+
+    const onResize = () => {
+      const now =
+        typeof performance !== 'undefined' && typeof performance.now === 'function'
+          ? performance.now()
+          : Date.now();
+
+      // 애니메이션 중에는 너무 자주 하지 않도록 200ms 간격으로만 1회
+      if (now - lastThrottleAt > 200) {
+        lastThrottleAt = now;
+        invalidate();
+      }
+
+      // 애니메이션 종료(사이즈 변화 멈춤) 후 한번 더 확정 호출 (빈공간 잔존 방지)
+      if (endTimer != null) window.clearTimeout(endTimer);
+      endTimer = window.setTimeout(() => {
+        invalidate();
+      }, 180);
+    };
+
+    // 초기 1회
+    invalidate();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => onResize());
+      ro.observe(parent);
+      return () => {
+        ro.disconnect();
+        if (endTimer != null) window.clearTimeout(endTimer);
+        endTimer = null;
+      };
+    }
+
+    // fallback
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      if (endTimer != null) window.clearTimeout(endTimer);
+      endTimer = null;
+    };
+  }, [map]);
+
+  return null;
+}
+
 function getFirstLngLatFromGeoJSON(geoJson: any): { lng: number; lat: number } | null {
   try {
     const feature = geoJson?.features?.[0];
@@ -325,9 +389,6 @@ export default function MainMap({ onNavigate }: MainMapProps) {
   
   // 반응형: 화면 크기 감지 (먼저 선언)
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768);
-
-  // Leaflet map 인스턴스 참조 (트랜지션 종료 시 리사이즈 처리용)
-  const mapRef = useRef<L.Map | null>(null);
 
   // Sidebar width (반응형): 모바일은 75vw, PC는 고정 폭
   const DESKTOP_SIDEBAR_W = 317.56;
@@ -891,7 +952,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     setDragging(null);
   }, []);
 
-  // ✅ 사이드바 열고 닫을 때 날씨 위젯 자동 이동 (256px 좌우 이동) + 지도 리사이즈 처리
+  // ✅ 사이드바 열고 닫을 때 날씨 위젯 자동 이동 (256px 좌우 이동)
   const prevSidebarOpenRef = React.useRef(sidebarOpen);
   useEffect(() => {
     const prevOpen = prevSidebarOpenRef.current;
@@ -915,35 +976,6 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         return { ...prev, weather: { ...cur, x: newX } };
     });
 
-    // ✅ 지도 리사이즈 처리: 트랜지션 시간(300ms) 후 여러 번 호출하여 확실하게 처리
-    const timers: number[] = [];
-    
-    // 첫 번째 호출: 트랜지션 종료 직후
-    timers.push(window.setTimeout(() => {
-      if (mapRef.current) {
-        mapRef.current.invalidateSize({ animate: false, pan: false });
-      }
-    }, 300));
-    
-    // 두 번째 호출: 추가 여유 시간 후 (브라우저 렌더링 완료 대기)
-    timers.push(window.setTimeout(() => {
-      if (mapRef.current) {
-        mapRef.current.invalidateSize({ animate: false, pan: false });
-        // window.resize 이벤트도 트리거하여 확실하게 처리
-        window.dispatchEvent(new Event('resize'));
-      }
-    }, 400));
-    
-    // 세 번째 호출: 최종 확인
-    timers.push(window.setTimeout(() => {
-      if (mapRef.current) {
-        mapRef.current.invalidateSize({ animate: false, pan: false });
-      }
-    }, 500));
-
-    return () => {
-      timers.forEach(timer => window.clearTimeout(timer));
-    };
     }
   }, [sidebarOpen, WEATHER_WIDGET_W, WEATHER_WIDGET_MARGIN, getSidebarWidthPx]);
 
@@ -1741,8 +1773,17 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             >
               <svg width="62.667px" height="36px" viewBox="-259.049 -94.946 62.667 36">
                 <path fill="#FFB366" d="M-259.049-67.946c0,4.971,4.029,9,9,9h44.667c4.971,0,9-4.029,9-9v-18c0-4.971-4.029-9-9-9h-44.667c-4.971,0-9,4.029-9,9V-67.946z"/>
-                <path fill="#FFFFFF" d="M-241.159-73.484c-0.62,0.06-1.21,0.112-1.77,0.157c-0.561,0.045-1.168,0.083-1.822,0.113c-0.655,0.03-1.403,0.052-2.243,0.067c-0.84,0.015-1.85,0.022-3.029,0.022v-1.26c0.739,0,1.409,0,2.01,0c0.6,0,1.155-0.01,1.665-0.03v-1.365c-0.42-0.05-0.798-0.15-1.133-0.3s-0.617-0.33-0.848-0.54c-0.229-0.21-0.404-0.442-0.524-0.697c-0.12-0.255-0.181-0.518-0.181-0.788v-0.57c0-0.3,0.078-0.592,0.232-0.877c0.155-0.285,0.375-0.537,0.66-0.757c0.285-0.22,0.635-0.395,1.05-0.525s0.883-0.195,1.403-0.195c0.52,0,0.987,0.065,1.402,0.195s0.765,0.305,1.05,0.525c0.285,0.22,0.505,0.473,0.66,0.757c0.154,0.285,0.232,0.578,0.232,0.877v0.57c0,0.53-0.223,1.012-0.668,1.447c-0.444,0.435-1.067,0.718-1.867,0.848v1.35c0.67-0.02,1.287-0.053,1.853-0.098c0.564-0.045,1.147-0.092,1.747-0.143L-241.159-73.484z M-241.789-81.599h-7.95v-1.275h3.315v-1.665h1.47v1.665h3.165V-81.599z M-245.688-76.964c0.609,0,1.08-0.13,1.409-0.39c0.33-0.26,0.495-0.555,0.495-0.885v-0.3c0-0.33-0.167-0.625-0.502-0.885c-0.335-0.26-0.803-0.39-1.402-0.39c-0.61,0-1.08,0.13-1.41,0.39c-0.33,0.26-0.495,0.555-0.495,0.885v0.3c0,0.33,0.167,0.625,0.502,0.885S-246.289-76.964-245.688-76.964z M-240.469-70.604v-13.83h1.47v5.535h2.07v1.29h-2.07v7.005H-240.469z"/>
-                <path fill="#FFFFFF" d="M-232.909-77.339c-0.051,0.15-0.133,0.307-0.248,0.472s-0.247,0.337-0.397,0.518c-0.3,0.36-0.635,0.74-1.005,1.14s-0.755,0.805-1.155,1.215l-1.005-1.005c0.45-0.43,0.87-0.85,1.261-1.26c0.39-0.41,0.744-0.825,1.064-1.245c0.3-0.39,0.5-0.775,0.601-1.155c0.1-0.38,0.149-0.785,0.149-1.215v-1.98h-2.37v-1.245h6.03v1.245h-2.22v1.98c0,0.43,0.057,0.83,0.172,1.2c0.115,0.37,0.323,0.75,0.623,1.14c0.319,0.41,0.649,0.8,0.99,1.17c0.34,0.37,0.734,0.771,1.185,1.2l-1.005,0.99c-0.4-0.399-0.763-0.772-1.088-1.117c-0.325-0.345-0.638-0.698-0.938-1.058c-0.149-0.18-0.28-0.353-0.39-0.518c-0.11-0.165-0.19-0.322-0.24-0.472H-232.909z M-224.374-70.604h-1.455v-7.62h-1.575v6.945h-1.455v-12.87h1.455v4.635h1.575v-4.92h1.455V-70.604z"/>
+                <text
+                  x="-234.5"
+                  y="-73"
+                  textAnchor="start"
+                  fill="#FFFFFF"
+                  fontFamily="'NanumSquareBold', 'NanumSquare', sans-serif"
+                  fontSize="12"
+                  fontWeight="700"
+                >
+                  응급
+                </text>
                 <rect fill="#FFFFFF" x="-215" y="-85" width="3.5" height="16" rx="1"/>
                 <rect fill="#FFFFFF" x="-222" y="-78.25" width="16" height="3.5" rx="1"/>
               </svg>
@@ -2148,29 +2189,18 @@ export default function MainMap({ onNavigate }: MainMapProps) {
           }}
         />
 
-        {/* 문화재 버튼: 낙석위험지도 활성화 시 오른쪽으로 슬라이드되어 표시 */}
-        <div 
-          className={`
-            overflow-hidden transition-all duration-500 ease-out flex items-center
-            ${activeView === 'rockfall-risk-map' 
-              ? 'max-w-[100px] opacity-100 translate-x-0 ml-2' 
-              : 'max-w-0 opacity-0 -translate-x-4 ml-0 pointer-events-none'}
-          `}
-          style={{ 
-            visibility: activeView === 'rockfall-risk-map' ? 'visible' : 'hidden',
-            transitionProperty: 'all, visibility',
-            transitionDuration: '500ms',
-            transitionDelay: activeView === 'rockfall-risk-map' ? '0s' : '500ms'
-          }}
-        >
-          <CulturalButton
-            isActive={rockfallRiskFilter === 'all'}
-            onClick={() => {
-              setShowFilterDropdown(false);
-              setRockfallRiskFilter(rockfallRiskFilter === 'all' ? 'trail' : 'all');
-            }}
-          />
-        </div>
+        {/* 문화재 버튼: 낙석위험지도에서만 즉시 표시/즉시 제거 */}
+        {activeView === 'rockfall-risk-map' && (
+          <div className="ml-2 flex items-center">
+            <CulturalButton
+              isActive={rockfallRiskFilter === 'all'}
+              onClick={() => {
+                setShowFilterDropdown(false);
+                setRockfallRiskFilter(rockfallRiskFilter === 'all' ? 'trail' : 'all');
+              }}
+            />
+          </div>
+        )}
       </div>
 
 
@@ -2271,27 +2301,6 @@ export default function MainMap({ onNavigate }: MainMapProps) {
           transition: 'margin-left 0.3s',
           willChange: 'margin-left',
         }}
-        onTransitionEnd={(e) => {
-          // margin-left 트랜지션이 끝났을 때만 실행
-          if (e.propertyName !== 'margin-left') return;
-
-          // 여러 프레임에 걸쳐 호출하여 확실하게 처리
-          requestAnimationFrame(() => {
-            if (mapRef.current) {
-              mapRef.current.invalidateSize({ animate: false, pan: false });
-            }
-          });
-          
-          // 추가 호출: 다음 프레임에도 한 번 더
-          requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-              if (mapRef.current) {
-                mapRef.current.invalidateSize({ animate: false, pan: false });
-                window.dispatchEvent(new Event('resize'));
-              }
-            });
-          });
-        }}
       >
         {/* 데이터 로딩/에러 상태 (전문가 UX: 명확한 상태 표시) */}
         {mapDataLoading && (
@@ -2329,10 +2338,9 @@ export default function MainMap({ onNavigate }: MainMapProps) {
             renderer={L.svg()} // ✅ Canvas(clearRect) 오류 방지: SVG 렌더러로 고정
             maxBounds={mapMaxBounds}
             maxBoundsViscosity={0.1}
-            whenCreated={(map) => {
-              mapRef.current = map;
-            }}
           >
+            {/* ✅ 레이아웃 변화(사이드바 토글 등) 시 지도 리사이즈 동기화 */}
+            <MapAutoResize />
             {/* 1. 일반 지도 레이어 (항상 렌더링, 위성 모드일 땐 투명도 0) */}
             <TileLayer
               url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}.png"
@@ -2601,7 +2609,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               if (priority.type === 'fire') {
                 // 화재 마커
                 iconHtml = `<div class="map-marker-wrap">
-                  <svg viewBox="0 0 96.72 125.04" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75));">
+                  <svg viewBox="0 0 96.72 125.04" style="width:64px;height:82px;display:block;filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75));pointer-events:none !important;">
                     <g>
                       <path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" d="M74.481,41.241c0,18.358-33.24,61.788-33.24,61.788 S8,59.6,8,41.241C8,22.882,22.883,8,41.241,8S74.481,22.882,74.481,41.241z"/>
                     </g>
@@ -2610,12 +2618,12 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                       <path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" d="M39.315,62.526c-1.129-0.265-2.201-0.461-3.24-0.768 c-3.325-0.981-6.234-2.669-8.475-5.351c-3.346-4.005-3.923-8.571-2.506-13.47c0.9-3.116,2.497-5.878,4.46-8.513 c1.253,1.481,2.71,2.619,4.431,3.455c0.192-1.104,0.336-2.173,0.57-3.221c0.486-2.171,1.583-4.062,2.759-5.922 c0.688-1.088,1.359-2.202,1.874-3.377c0.9-2.051,0.513-4.109-0.238-6.125c-0.096-0.258-0.192-0.516-0.286-0.775 c-0.005-0.014,0.018-0.037,0.061-0.123c0.323,0.133,0.664,0.25,0.983,0.41c5.765,2.889,9.475,7.502,11.36,13.621 c0.751,2.437,1.179,4.941,1.136,7.492c-0.02,1.173,1.105,1.772,1.99,1.183c0.793-0.528,1.469-1.236,2.168-1.895 c0.28-0.264,0.485-0.607,0.835-1.056c0.18,0.884,0.358,1.626,0.478,2.377c0.55,3.489,0.664,6.97-0.154,10.445 c-1.42,6.037-6.055,10.397-12.136,11.284c0.237-0.108,0.475-0.216,0.713-0.324c2.647-1.206,4.573-3.046,5.035-6.039 c0.138-0.891,0.072-1.846-0.075-2.742c-0.33-1.998-1.318-3.71-2.477-5.282c-0.792,0.606-1.55,1.186-2.468,1.888 c-0.06-2.291-1.013-4.01-2.138-5.657c-0.935-1.371-1.033-2.822-0.469-4.35c0.046-0.126,0.088-0.254,0.132-0.381 c-0.041-0.056-0.082-0.111-0.123-0.167c-0.83,0.53-1.714,0.993-2.482,1.603c-2.485,1.972-3.836,4.612-4.328,7.712 c-0.104,0.658-0.141,1.328-0.183,1.994c-0.052,0.837-0.525,1.109-1.242,0.667c-0.27-0.167-0.502-0.402-0.73-0.629 c-0.209-0.209-0.389-0.448-0.732-0.852c-0.151,1.162-0.342,2.141-0.396,3.126c-0.17,3.073,0.414,5.919,2.922,7.986 C37.194,61.451,38.253,61.901,39.315,62.526z"/>
                     </g>
                   </svg>
-                  ${priority.count > 1 ? `<div class="map-marker-badge" style="background:#DC2626;">${priority.count}</div>` : ''}
+                  ${priority.count > 1 ? `<div class="map-marker-badge map-marker-badge--fire" style="background:#DC2626;">${priority.count}</div>` : ''}
                 </div>`;
               } else if (priority.type === 'emergency') {
                 // 응급 마커
                 iconHtml = `<div class="map-marker-wrap">
-                  <svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="86.725 -31.25 97 126" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75));">
+                  <svg version="1.1" xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="86.725 -31.25 97 126" style="width:64px;height:82px;display:block;filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75));pointer-events:none !important;">
                     <g>
                       <g>
                         <g>
@@ -2626,12 +2634,12 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                       <polygon fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" points="142.863,5.29 132.968,5.29 132.968,-4.604 123.301,-4.604 123.301,5.29 113.406,5.29 113.406,14.956 123.301,14.956 123.301,24.853 132.968,24.853 132.968,14.956 142.863,14.956"/>
                     </g>
                   </svg>
-                  ${priority.count > 1 ? `<div class="map-marker-badge" style="background:#F97316;">${priority.count}</div>` : ''}
+                  ${priority.count > 1 ? `<div class="map-marker-badge map-marker-badge--emergency" style="background:#F97316;">${priority.count}</div>` : ''}
                 </div>`;
               } else {
                 // 쓰레기 마커
                 iconHtml = `<div class="map-marker-wrap">
-                  <svg viewBox="-147.14 4.02 65 80" style="filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75));">
+                  <svg viewBox="-147.14 4.02 65 80" style="width:64px;height:82px;display:block;filter: drop-shadow(7px 7px 5px rgba(146, 146, 146, 0.75));pointer-events:none !important;">
                     <g>
                       <g>
                         <g>
@@ -2647,7 +2655,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                       </g>
                     </g>
                   </svg>
-                  ${priority.count > 1 ? `<div class="map-marker-badge" style="background:#10B981;">${priority.count}</div>` : ''}
+                  ${priority.count > 1 ? `<div class="map-marker-badge map-marker-badge--trash" style="background:#10B981;">${priority.count}</div>` : ''}
                 </div>`;
               }
               

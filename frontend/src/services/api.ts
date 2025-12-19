@@ -1122,10 +1122,13 @@ export const getRockfallHotspots = async (
     // 백엔드에 별도 hotspots API가 없어서 dashboard의 riskAreas로 대체
     const dashboard = await getRockfallDashboard();
     const areas = dashboard?.riskAreas || [];
-    return areas.slice(0, limit).map((area) => ({
-      address: area.address,
-      incidentCount: area.incidentCount
-    }));
+    return areas.slice(0, limit).map((area: any) => {
+      // backend 스펙: riskAreas는 string[] (주소 문자열). 혹시 객체로 오는 경우도 방어.
+      if (typeof area === 'string') {
+        return { address: area, incidentCount: undefined };
+      }
+      return { address: area?.address, incidentCount: area?.incidentCount };
+    });
   } catch (error) {
     console.error('Error fetching rockfall hotspots:', error);
     return [];
@@ -2403,6 +2406,36 @@ export const analyzeTrashFrameWithGemini = async (
     incidentCode: result.incidentCode,
     savedToDb: result.savedToDb
   };
+};
+
+/**
+ * 쓰레기 비디오(S3 HTTP URL) Gemini bbox 분석 + (옵션) DB 저장 + (감지 시) 클립 생성/저장
+ * POST /api/cctv/{cctvCode}/video/analyze-trash-video-s3
+ */
+export const analyzeTrashVideoFromS3 = async (
+  cctvCode: string,
+  params: {
+    videoUrl: string;
+    saveToDb?: boolean;
+    frameCount?: number;
+    frameIntervalSec?: number;
+    stopOnDetect?: boolean;
+  }
+): Promise<any> => {
+  const q = new URLSearchParams();
+  q.set('videoUrl', params.videoUrl);
+  if (typeof params.saveToDb === 'boolean') q.set('saveToDb', String(params.saveToDb));
+  if (typeof params.frameCount === 'number') q.set('frameCount', String(params.frameCount));
+  if (typeof params.frameIntervalSec === 'number') q.set('frameIntervalSec', String(params.frameIntervalSec));
+  if (typeof params.stopOnDetect === 'boolean') q.set('stopOnDetect', String(params.stopOnDetect));
+
+  const url = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/video/analyze-trash-video-s3?${q.toString()}`;
+  const res = await fetch(url, { method: 'POST' });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(text || `쓰레기(비디오) 분석 실패 (${res.status})`);
+  }
+  return await res.json();
 };
 
 /**

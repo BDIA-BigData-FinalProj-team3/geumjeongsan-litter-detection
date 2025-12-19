@@ -43,7 +43,7 @@ app:
   ffmpeg:
     command: ${FFMPEG_COMMAND:ffmpeg}
   python:
-    command: C:/Users/kmk/venvs/fire-ai/Scripts/python.exe
+    command: ${PYTHON_COMMAND:}
   model-server:
     # YOLO/낙상 등 비디오 분석 모델 서버 (기본값은 기존 하드코딩 값을 유지)
     url: ${MODEL_SERVER_URL:http://54.116.3.241:8000/api/v1/video/analyze}
