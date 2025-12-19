@@ -712,7 +712,6 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                         </>
                       )}
                       <th className="px-3 py-2 text-left text-gray-600 text-sm">심각도</th>
-                      <th className="px-3 py-2 text-left text-gray-600 text-sm">풍속</th>
                       {viewMode === 'active' && (
                         <th className="px-3 py-2 text-left text-gray-600 text-sm">상태</th>
                       )}
@@ -723,7 +722,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                     {paginatedFires.length === 0 ? (
                       <tr>
                         <td 
-                          colSpan={viewMode === 'active' ? 9 : 10} 
+                          colSpan={viewMode === 'active' ? 8 : 9} 
                           className="px-6 py-12 text-center"
                         >
                           <div className="flex flex-col items-center gap-3">
@@ -798,7 +797,6 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                             {fire.severity === 'high' ? '상' : fire.severity === 'medium' ? '중' : '하'}
                           </span>
                         </td>
-                        <td className="px-3 py-2 text-gray-600">{fire.windSpeed}</td>
                         {viewMode === 'active' && (
                           <td className="px-3 py-2 overflow-visible" onClick={(e) => e.stopPropagation()}>
                             <div className="relative inline-block">

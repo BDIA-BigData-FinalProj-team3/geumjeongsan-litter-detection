@@ -134,6 +134,9 @@ public class IncidentListView {
     private Long handlerId;
 
     // 처리 시간
+    @Column(name = "acknowledged_at")
+    private OffsetDateTime acknowledgedAt;
+
     @Column(name = "resolved_at")
     private OffsetDateTime resolvedAt;
 
@@ -184,5 +187,18 @@ public class IncidentListView {
 
     @Column(name = "trash_note")
     private String trashNote;
+
+    // 낙석 상세
+    @Column(name = "rockfall_rock_size_class")
+    private String rockfallRockSizeClass;
+
+    @Column(name = "rockfall_damage_description")
+    private String rockfallDamageDescription;
+
+    @Column(name = "rockfall_affected_asset_type")
+    private String rockfallAffectedAssetType;
+
+    @Column(name = "rockfall_affected_asset_name")
+    private String rockfallAffectedAssetName;
 }
 
