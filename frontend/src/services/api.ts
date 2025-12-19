@@ -2452,6 +2452,46 @@ export const analyzeFireFrames = async (
 };
 
 /**
+ * S3 영상 기반 화재 분석 (CCTV-002 전용)
+ * POST /api/cctv/{cctvCode}/frame/analyze-fire-video
+ */
+export const analyzeFireFromS3Video = async (
+  cctvCode: string,
+  params?: { saveToDb?: boolean }
+): Promise<any> => {
+  const url = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/frame/analyze-fire-video`;
+  
+  const searchParams = new URLSearchParams();
+  if (params?.saveToDb !== undefined) {
+    searchParams.append('saveToDb', String(params.saveToDb));
+  }
+  
+  const fullUrl = `${url}?${searchParams.toString()}`;
+  
+  const res = await fetch(fullUrl, {
+    method: 'POST'
+  });
+  
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(text || `S3 영상 화재 분석 실패 (${res.status})`);
+  }
+  
+  const result = await res.json();
+  
+  return {
+    fireDetected: result.fireDetected || false,
+    frameUrls: result.frameUrls || [],
+    overlayUrls: result.overlayUrls || [],
+    detectionCount: result.detectionCount || 0,
+    totalFramesAnalyzed: result.totalFramesAnalyzed || 0,
+    incidentId: result.incidentId,
+    incidentCode: result.incidentCode,
+    savedToDb: result.savedToDb || false
+  };
+};
+
+/**
  * 화재 비디오 분석 (Gemini) + (옵션) DB 저장
  * POST /api/fire-detection/analyze-video
  */

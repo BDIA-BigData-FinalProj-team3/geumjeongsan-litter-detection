@@ -44,6 +44,11 @@ dependencies {
     // Gemini API 호출을 위한 WebClient (Reactive)
     implementation 'org.springframework.boot:spring-boot-starter-webflux'
     
+    // JavaCV for video frame extraction (Linux x86_64 only for Docker)
+    implementation 'org.bytedeco:javacv:1.5.9'
+    implementation 'org.bytedeco:ffmpeg:5.1.2-1.5.9:linux-x86_64'
+    implementation 'org.bytedeco:opencv:4.6.0-1.5.9:linux-x86_64'
+    
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }

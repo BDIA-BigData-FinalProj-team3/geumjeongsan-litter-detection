@@ -5,7 +5,7 @@ import IncidentDetailModal from '../components/IncidentDetailModal';
 import { X, ArrowLeft, Search, ChevronDown, ArrowUpDown, Maximize, Camera, Flame, Trash2, AlertCircle, Download, Play, HeartPulse } from 'lucide-react';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { cctvList, getCCTVLocation, getOffCCTVCodes, getCCTVByCode } from '../services/common';
-import { getCCTVList, analyzeFallenVideo, analyzeEmergencyVideo, analyzeFireVideo, analyzeFireFrames, getUnifiedIncidentDetail, analyzeTrashFrameWithGemini, type FallenAnalysisResponse } from '../services/api';
+import { getCCTVList, analyzeFallenVideo, analyzeEmergencyVideo, analyzeFireVideo, analyzeFireFrames, analyzeFireFromS3Video, getUnifiedIncidentDetail, analyzeTrashFrameWithGemini, type FallenAnalysisResponse } from '../services/api';
 import API_BASE_URL, { INGEST_HLS_URL } from '../config/api';
 import Hls from 'hls.js';
 import cctv001DemoVideo from '../assets/cctv-001_20251208T140000Z.mp4';
@@ -814,57 +814,21 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
 
   // Handle fire video analysis (CCTV-002: 화재 분석)
   const handleAnalyzeFireVideo = async () => {
-    if (!selectedCCTV || selectedCCTV.id !== 'CCTV-002' || !videoRef.current) {
+    if (!selectedCCTV || selectedCCTV.id !== 'CCTV-002') {
       return;
     }
 
     setIsAnalyzingFire(true);
-    const capturedFrames: Blob[] = [];
     
     try {
-      const video = videoRef.current;
+      console.log(`🔥 [Fire] Starting S3 video analysis for ${selectedCCTV.id}`);
       
-      // 4장 캡처 (2초 간격)
-      for (let i = 0; i < 4; i++) {
-        console.log(`🎬 [Fire] Capturing frame ${i + 1}/4 at ${video.currentTime.toFixed(1)}s`);
-        
-        // 현재 프레임 캡처
-        const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const ctx = canvas.getContext('2d');
-        
-        if (!ctx) {
-          throw new Error('Canvas context를 가져올 수 없습니다.');
-        }
-        
-        ctx.drawImage(video, 0, 0);
-        
-        // Blob 변환
-        const blob = await new Promise<Blob>((resolve, reject) => {
-          canvas.toBlob((b) => {
-            if (b) resolve(b);
-            else reject(new Error('Blob 생성 실패'));
-          }, 'image/jpeg', 0.8);
-        });
-        
-        capturedFrames.push(blob);
-        console.log(`✅ [Fire] Frame ${i + 1} captured (${(blob.size / 1024).toFixed(1)} KB)`);
-        
-        // 다음 프레임까지 2초 대기 (마지막은 제외)
-        if (i < 3) {
-          await new Promise(resolve => setTimeout(resolve, 2000));
-        }
-      }
-      
-      console.log(`📤 [Fire] Sending ${capturedFrames.length} frames to backend...`);
-      
-      // 백엔드로 전송
-      const result = await analyzeFireFrames(selectedCCTV.id, capturedFrames, { 
+      // S3 영상 기반 화재 분석
+      const result = await analyzeFireFromS3Video(selectedCCTV.id, { 
         saveToDb: true 
       });
       
-      console.log('🔍 [Fire] Analysis result:', result);
+      console.log('🔍 [Fire] S3 video analysis result:', result);
       
       // 결과 처리
       if (result?.fireDetected) {
@@ -879,27 +843,27 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
           location: selectedCCTV.location,
           severity: '상',
           reportProbability: '높음',
-          summary: `${selectedCCTV.location}에서 화재/연기가 ${result.detectionCount}개 프레임에서 탐지되었습니다.`,
+          summary: `${selectedCCTV.location}에서 S3 영상 분석 결과 화재/연기가 탐지되었습니다. (총 ${result.totalFramesAnalyzed}프레임 분석, ${result.detectionCount}개 감지)`,
           clipUrl: overlayUrls[0] || null,
           frameUrls: overlayUrls,
           incidentId: incidentId,
-          analysisSource: 'REALTIME'
+          analysisSource: 'S3_VIDEO'
         };
         
         setAnalysisEvents(prev => [...prev, newEvent]);
         
         if (result.savedToDb) {
-          alert(`✅ 화재 탐지 완료 (DB 저장 완료)\n${result.detectionCount}개 프레임에서 감지되었습니다.\n\n💡 SSE로 자동 새로고침됩니다.`);
+          alert(`✅ S3 영상 화재 분석 완료 (DB 저장 완료)\n\n📊 분석 정보:\n- 총 ${result.totalFramesAnalyzed}프레임 분석\n- 화재/연기 ${result.detectionCount}개 감지\n\n💡 SSE로 자동 새로고침됩니다.`);
         } else {
-          alert(`✅ 화재 탐지 완료\n${result.detectionCount}개 프레임에서 감지되었습니다.`);
+          alert(`✅ S3 영상 화재 분석 완료\n\n📊 분석 정보:\n- 총 ${result.totalFramesAnalyzed}프레임 분석\n- 화재/연기 ${result.detectionCount}개 감지`);
         }
       } else {
-        alert('화재/연기가 탐지되지 않았습니다.');
+        alert(`화재/연기가 탐지되지 않았습니다.\n(총 ${result.totalFramesAnalyzed || 0}프레임 분석)`);
       }
       
     } catch (error) {
-      console.error('화재 분석 실패:', error);
-      alert('화재 분석에 실패했습니다: ' + (error instanceof Error ? error.message : String(error)));
+      console.error('S3 영상 화재 분석 실패:', error);
+      alert('S3 영상 화재 분석에 실패했습니다: ' + (error instanceof Error ? error.message : String(error)));
     } finally {
       setIsAnalyzingFire(false);
     }
