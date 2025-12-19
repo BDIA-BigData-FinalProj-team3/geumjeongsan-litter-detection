@@ -159,9 +159,22 @@ export const RealtimeNotificationProvider: React.FC<{ children: React.ReactNode 
     const isRedAlert = n.type === 'emergency' || n.type === 'fire';
     const isYellowAlert = n.type === 'trash';
     
+    const bgColor = isRedAlert ? '#fef2f2' : isYellowAlert ? '#fefce8' : '#ffffff';
+    const borderColor = isRedAlert ? '#ef4444' : isYellowAlert ? '#eab308' : '#e5e7eb';
+    const borderWidth = (isRedAlert || isYellowAlert) ? '2px' : '1px';
+    
     toast(n.title, {
       description: (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <div style={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          gap: 4,
+          backgroundColor: bgColor,
+          border: `${borderWidth} solid ${borderColor}`,
+          borderRadius: '8px',
+          padding: '8px',
+          margin: '-8px',
+        }}>
           <div>{n.message}</div>
           {n.recipientsText ? (
             <div style={{ fontSize: 12, opacity: 0.85 }}>
@@ -170,10 +183,6 @@ export const RealtimeNotificationProvider: React.FC<{ children: React.ReactNode 
           ) : null}
         </div>
       ),
-      style: {
-        border: isRedAlert ? '2px solid #ef4444' : isYellowAlert ? '2px solid #eab308' : '1px solid #e5e7eb',
-        backgroundColor: isRedAlert ? '#fef2f2' : isYellowAlert ? '#fefce8' : '#ffffff',
-      },
     });
   };
 
