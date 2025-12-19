@@ -2,7 +2,9 @@ version: "3.9"
 
 services:
   backend:
-    image: potato264/geumjeongsan-admin-backend:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: geumjeongsan_backend
     ports:
       - "8080:8080"
