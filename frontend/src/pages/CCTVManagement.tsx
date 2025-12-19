@@ -181,6 +181,10 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   const trashS3VideoUrlMap: Record<string, string> = {
     'CCTV-003': 'https://geumjungsan-admin.s3.ap-northeast-2.amazonaws.com/assets/cctv-003-3P2MhqPi.mp4',
   };
+
+  // ✅ 기본은 "원래 하던 방식(프레임 캡처)" 유지.
+  // 필요 시 .env에 VITE_USE_TRASH_S3_VIDEO=true 설정하면 S3 비디오 분석을 "추가로" 시도(실패해도 자동 fallback)
+  const USE_TRASH_S3_VIDEO = (import.meta.env.VITE_USE_TRASH_S3_VIDEO as string | undefined) === 'true';
   
   // 라이브 스트림 CCTV ID (CCTV-011)
   const liveStreamCCTVId = 'CCTV-011';
@@ -736,47 +740,54 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
 
     setIsAnalyzingQwen(true);
     try {
-      // ✅ S3 영상 기반 쓰레기 분석(우선 적용): 감지 시 clipUrl 생성/저장 → 상세에서 영상 재생 가능
-      const s3VideoUrl = trashS3VideoUrlMap[selectedCCTV.id];
+      // ✅ (추가 기능) S3 영상 기반 쓰레기 분석 시도
+      // - 기본은 "원래 하던 방식(프레임 캡처)" 그대로 유지
+      // - 서버 환경(ffmpeg 등) 이슈로 실패해도 아래 캡처 방식으로 자동 fallback
+      const s3VideoUrl = USE_TRASH_S3_VIDEO ? trashS3VideoUrlMap[selectedCCTV.id] : undefined;
       if (s3VideoUrl) {
-        const result = await analyzeTrashVideoFromS3(selectedCCTV.id, {
-          videoUrl: s3VideoUrl,
-          saveToDb: true,
-          frameCount: 4,
-          frameIntervalSec: 5,
-          stopOnDetect: true,
-        });
+        try {
+          const result = await analyzeTrashVideoFromS3(selectedCCTV.id, {
+            videoUrl: s3VideoUrl,
+            saveToDb: true,
+            frameCount: 4,
+            frameIntervalSec: 5,
+            stopOnDetect: true,
+          });
 
-        const incidentId = typeof result?.incidentId === 'number' ? result.incidentId : undefined;
-        const clipUrl = result?.clipUrl || null;
-        const overlayUrls: string[] = Array.isArray(result?.overlayUrls) ? result.overlayUrls : [];
+          const incidentId = typeof result?.incidentId === 'number' ? result.incidentId : undefined;
+          const clipUrl = result?.clipUrl || null;
+          const overlayUrls: string[] = Array.isArray(result?.overlayUrls) ? result.overlayUrls : [];
 
-        const newEvent: Event = {
-          id: `trash-video-${Date.now()}`,
-          time: new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false }),
-          type: 'trash',
-          confidence: '85%',
-          location: selectedCCTV.location,
-          severity: '중',
-          reportProbability: '높음',
-          summary: `${selectedCCTV.location}에서 쓰레기(비디오) 분석 결과가 저장되었습니다.`,
-          clipUrl,
-          frameUrls: overlayUrls,
-          incidentId,
-          analysisSource: 'REALTIME'
-        };
+          const newEvent: Event = {
+            id: `trash-video-${Date.now()}`,
+            time: new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', hour12: false }),
+            type: 'trash',
+            confidence: '85%',
+            location: selectedCCTV.location,
+            severity: '중',
+            reportProbability: '높음',
+            summary: `${selectedCCTV.location}에서 쓰레기(비디오) 분석 결과가 저장되었습니다.`,
+            clipUrl,
+            frameUrls: overlayUrls,
+            incidentId,
+            analysisSource: 'REALTIME'
+          };
 
-        setAnalysisEvents(prev => [...prev, newEvent]);
+          setAnalysisEvents(prev => [...prev, newEvent]);
 
-        if (incidentId) {
-          alert(`✅ 쓰레기(비디오) 분석 완료 (DB 저장 완료)\n\n💡 SSE로 자동 새로고침됩니다.`);
-        } else {
-          alert(`✅ 쓰레기(비디오) 분석 완료`);
+          if (incidentId) {
+            alert(`✅ 쓰레기(비디오) 분석 완료 (DB 저장 완료)\n\n💡 SSE로 자동 새로고침됩니다.`);
+          } else {
+            alert(`✅ 쓰레기(비디오) 분석 완료`);
+          }
+          return;
+        } catch (e) {
+          console.warn('⚠️ [Trash] S3 비디오 분석 실패 → 기존 프레임 캡처 방식으로 fallback', e);
+          // fall through
         }
-        return;
       }
 
-      // ⬇️ fallback: 현재 프레임 캡처(이미지 1장) 기반 분석
+      // ⬇️ 원래 하던 방식: 현재 프레임 캡처(이미지 1장) 기반 분석
       if (!videoRef.current) return;
       const video = videoRef.current;
       
@@ -857,7 +868,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       }, 'image/jpeg', 0.5);
       
     } catch (error) {
-      console.error('프레임 캡처 실패:', error);
+      console.error('쓰레기 분석 실패:', error);
       setIsAnalyzingQwen(false);
       alert('프레임 캡처에 실패했습니다: ' + (error instanceof Error ? error.message : String(error)));
     }
