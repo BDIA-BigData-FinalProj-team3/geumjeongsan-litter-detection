@@ -810,27 +810,21 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
           setIsAnalyzingQwen(false);
           return;
         } catch (e) {
-          console.error('⚠️ [Trash] S3 비디오 분석 실패:', e);
-          // ✅ S3 비디오 분석 실패 시 fallback 없이 그냥 종료 (상세 페이지 열림 방지)
-          setIsAnalyzingQwen(false);
-          return;
+          console.warn('⚠️ [Trash] S3 비디오 분석 실패 (백엔드 재시작 필요)', e);
+          // ✅ 백엔드가 배포되지 않으면 fallback으로 기존 방식 실행
+          // fall through
         }
       }
 
       // ⬇️ 원래 하던 방식: 현재 프레임 캡처(이미지 1장) 기반 분석
-      // ✅ 이 방식은 상세 페이지에서만 사용 (selectedCCTV가 있을 때만)
-      if (!selectedCCTV || selectedCCTV.id !== targetCctvId) {
-        console.warn('⚠️ [Trash] 프레임 캡처 방식은 상세 페이지에서만 가능합니다.');
-        setIsAnalyzingQwen(false);
-        return;
-      }
-
+      // ✅ 카드(리스트)에서 버튼만 눌러도 캡처 가능하도록:
+      // 해당 CCTV를 먼저 선택해서 상세 패널 videoRef를 만들고(렌더링), 준비될 때까지 잠깐 대기
       const ensureVideoReady = async () => {
-        // videoRef가 없으면 대기
+        // 선택이 다른 CCTV이거나 videoRef가 없으면 우선 선택
         const currentSelected = selectedCCTVRef.current;
         if (!videoRef.current || currentSelected?.id !== targetCctvId) {
-          // 이미 상세 페이지가 열려있는 상태여야만 함
-          return;
+          const dbIdFromView = backendCCTVs.find(b => b.cctvCode === targetCctvId)?.id;
+          handleCCTVClick(targetCctvId, typeof dbIdFromView === 'number' ? dbIdFromView : undefined);
         }
 
         // videoRef가 붙고 메타데이터가 잡힐 때까지 polling (최대 2초)
