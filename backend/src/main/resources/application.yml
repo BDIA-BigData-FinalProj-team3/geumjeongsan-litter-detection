@@ -53,7 +53,7 @@ app:
   cctv:
     # CCTV-002 화재 분석용 S3 영상 설정
     fire-analysis:
-      video-url: "https://geumjungsan-admin.s3.ap-northeast-2.amazonaws.com/assets/cctv-002-BzcHInbO.mp4"
+      video-url: "https://geumjungsan-admin.s3.ap-northeast-2.amazonaws.com/assets/cctv-002-1-DrFmCtMy.mp4"
       frame-interval-seconds: 10  # 10초마다 프레임 추출 (504 타임아웃 방지)
       max-frames: 6               # 최대 6프레임 추출 (처리 시간 단축)
     read-timeout-ms: ${HTTP_READ_TIMEOUT_MS:600000}
