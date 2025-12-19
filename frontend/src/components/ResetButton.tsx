@@ -28,6 +28,10 @@ export default function ResetButton({ isActive = false, onClick }: ResetButtonPr
         >
           낙석 위험 지도
         </text>
+        {/* 낙석 아이콘 (산 모양) - 텍스트 왼쪽에 배치, RiskMapButton의 경고 아이콘과 비슷한 위치 */}
+        <g>
+          <path fill={iconColor} d="M35,10 L32,4 L35,6 L38,4 L35,10 Z" />
+        </g>
       </svg>
     </button>
   );

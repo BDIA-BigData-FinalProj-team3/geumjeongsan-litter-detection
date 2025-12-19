@@ -891,7 +891,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     setDragging(null);
   }, []);
 
-  // ✅ 사이드바 열고 닫을 때 날씨 위젯 자동 이동 (256px 좌우 이동)
+  // ✅ 사이드바 열고 닫을 때 날씨 위젯 자동 이동 (256px 좌우 이동) + 지도 리사이즈 처리
   const prevSidebarOpenRef = React.useRef(sidebarOpen);
   useEffect(() => {
     const prevOpen = prevSidebarOpenRef.current;
@@ -914,6 +914,36 @@ export default function MainMap({ onNavigate }: MainMapProps) {
         prevSidebarOpenRef.current = currentOpen;
         return { ...prev, weather: { ...cur, x: newX } };
     });
+
+    // ✅ 지도 리사이즈 처리: 트랜지션 시간(300ms) 후 여러 번 호출하여 확실하게 처리
+    const timers: number[] = [];
+    
+    // 첫 번째 호출: 트랜지션 종료 직후
+    timers.push(window.setTimeout(() => {
+      if (mapRef.current) {
+        mapRef.current.invalidateSize({ animate: false, pan: false });
+      }
+    }, 300));
+    
+    // 두 번째 호출: 추가 여유 시간 후 (브라우저 렌더링 완료 대기)
+    timers.push(window.setTimeout(() => {
+      if (mapRef.current) {
+        mapRef.current.invalidateSize({ animate: false, pan: false });
+        // window.resize 이벤트도 트리거하여 확실하게 처리
+        window.dispatchEvent(new Event('resize'));
+      }
+    }, 400));
+    
+    // 세 번째 호출: 최종 확인
+    timers.push(window.setTimeout(() => {
+      if (mapRef.current) {
+        mapRef.current.invalidateSize({ animate: false, pan: false });
+      }
+    }, 500));
+
+    return () => {
+      timers.forEach(timer => window.clearTimeout(timer));
+    };
     }
   }, [sidebarOpen, WEATHER_WIDGET_W, WEATHER_WIDGET_MARGIN, getSidebarWidthPx]);
 
@@ -2242,12 +2272,24 @@ export default function MainMap({ onNavigate }: MainMapProps) {
           willChange: 'margin-left',
         }}
         onTransitionEnd={(e) => {
-          // margin-left 트랜지션이 끝났을 때만 1회 실행
+          // margin-left 트랜지션이 끝났을 때만 실행
           if (e.propertyName !== 'margin-left') return;
 
-          // 다음 프레임에 실행해서 paint 타이밍 맞춤(끊김 감소)
+          // 여러 프레임에 걸쳐 호출하여 확실하게 처리
           requestAnimationFrame(() => {
-            mapRef.current?.invalidateSize({ animate: false, pan: false });
+            if (mapRef.current) {
+              mapRef.current.invalidateSize({ animate: false, pan: false });
+            }
+          });
+          
+          // 추가 호출: 다음 프레임에도 한 번 더
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              if (mapRef.current) {
+                mapRef.current.invalidateSize({ animate: false, pan: false });
+                window.dispatchEvent(new Event('resize'));
+              }
+            });
           });
         }}
       >
