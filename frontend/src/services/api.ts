@@ -1973,60 +1973,6 @@ export const getUnifiedIncidentDetail = async (id: number) => {
 };
 
 /**
- * 응급 사건 상세 조회
- * GET /api/emergency/detail/{id}
- */
-export const getEmergencyDetail = async (id: number) => {
-  try {
-    const response = await fetch(`${BACKEND_URL}/api/emergency/detail/${id}`);
-    if (response.ok) {
-      const data = await response.json();
-      console.log('✅ [Emergency] Loaded detail:', data);
-      return data;
-    }
-  } catch (error) {
-    console.error('❌ [Emergency] Failed to fetch detail:', error);
-  }
-  return null;
-};
-
-/**
- * 화재 사건 상세 조회
- * GET /api/fire/detail/{id}
- */
-export const getFireDetail = async (id: number) => {
-  try {
-    const response = await fetch(`${BACKEND_URL}/api/fire/detail/${id}`);
-    if (response.ok) {
-      const data = await response.json();
-      console.log('✅ [Fire] Loaded detail:', data);
-      return data;
-    }
-  } catch (error) {
-    console.error('❌ [Fire] Failed to fetch detail:', error);
-  }
-  return null;
-};
-
-/**
- * 쓰레기 사건 상세 조회
- * GET /api/trash/detail/{id}
- */
-export const getTrashDetail = async (id: number) => {
-  try {
-    const response = await fetch(`${BACKEND_URL}/api/trash/detail/${id}`);
-    if (response.ok) {
-      const data = await response.json();
-      console.log('✅ [Trash] Loaded detail:', data);
-      return data;
-    }
-  } catch (error) {
-    console.error('❌ [Trash] Failed to fetch detail:', error);
-  }
-  return null;
-};
-
-/**
  * 낙석 사건 상세 조회
  * GET /api/rockfalls/detail/{id}
  */

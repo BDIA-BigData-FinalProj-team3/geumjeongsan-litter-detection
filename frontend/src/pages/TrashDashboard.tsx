@@ -6,7 +6,7 @@ import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
-import { getActiveTrashIncidents, getCompletedTrashIncidents, getTrashStats, getTrashHotspots, createTrash, updateTrashStatus, getTrashDetail, updateTrashDetail, type TrashStatsResponse, type HotspotResponse } from '../services/api';
+import { getActiveTrashIncidents, getCompletedTrashIncidents, getTrashStats, getTrashHotspots, createTrash, updateTrashStatus, getUnifiedIncidentDetail, updateTrashDetail, type TrashStatsResponse, type HotspotResponse } from '../services/api';
 import { getCurrentUser } from '../services/auth';
 import { localDateTimeToKstIso } from '../utils/time';
 import AssigneeSelectModal from '../components/AssigneeSelectModal';
@@ -741,7 +741,7 @@ export default function TrashDashboard({ onNavigate }: TrashDashboardProps) {
                           className={`border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${isHighlighted ? 'bg-yellow-100' : ''}`} 
                           onClick={async () => { 
                             try {
-                              const detail = await getTrashDetail(incident.id);
+                              const detail = await getUnifiedIncidentDetail(incident.id);
                               if (detail) {
                                 setSelectedDetail(detail as any);
                               }

@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { X, Video, Camera, Map, Edit2, Save, Play } from 'lucide-react';
+import { X, Video, Camera, Map, Edit2, Save } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Polyline, Polygon, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
-import { getCCTVList, markIncidentAsFalsePositive, analyzeEmergencyVideo } from '../services/api';
+import { getCCTVList, markIncidentAsFalsePositive } from '../services/api';
 import { cctvList, getCCTVByCode, getCCTVById } from '../services/common';
 
 // 백엔드 IncidentDetailDto와 일치하는 인터페이스
@@ -109,9 +109,6 @@ export default function IncidentDetailModal({
   const [falseReportReason, setFalseReportReason] = useState('');
   const [expandedText, setExpandedText] = useState<Record<string, boolean>>({});
   const [resolvedCctvCoords, setResolvedCctvCoords] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [isEmergencyAnalyzing, setIsEmergencyAnalyzing] = useState(false);
-  const [emergencyAiResult, setEmergencyAiResult] = useState<any | null>(null);
-  const [emergencyAiError, setEmergencyAiError] = useState<string | null>(null);
 
   const incidentHeaderBg = 'var(--ecoguard-header-bg)';
 
@@ -120,28 +117,6 @@ export default function IncidentDetailModal({
     fire: incidentHeaderBg,
     trash: incidentHeaderBg,
     rockfall: incidentHeaderBg
-  };
-
-  const runEmergencyAnalysis = async () => {
-    setEmergencyAiError(null);
-    setIsEmergencyAnalyzing(true);
-    try {
-      const code = (detail.cctvCode || detail.cctvId || '').toString();
-      if (!code || code === '수동등록') {
-        throw new Error('CCTV 코드/ID가 없어 응급 분석을 실행할 수 없습니다.');
-      }
-      const result = await analyzeEmergencyVideo(code, {
-        clipUrl: detail.clipUrl,
-        cameraId: detail.cctvCode ? detail.cctvCode.toLowerCase() : undefined,
-        maxFrames: 6,
-        saveToDb: true
-      });
-      setEmergencyAiResult(result);
-    } catch (e: any) {
-      setEmergencyAiError(e?.message || '응급 분석 중 오류가 발생했습니다.');
-    } finally {
-      setIsEmergencyAnalyzing(false);
-    }
   };
 
   const headerTitles = {
@@ -346,12 +321,42 @@ export default function IncidentDetailModal({
   );
 
   // 일반 필드(라벨 + 값)
-  const Field: React.FC<{ label: string; children: React.ReactNode; compact?: boolean }> = ({ label, children, compact = false }) => (
-    <div className={compact ? '-mb-3' : ''}>
-      <label className="text-sm text-gray-600">{label}</label>
-      <div className="mt-0.5">{children}</div>
-    </div>
-  );
+  const Field: React.FC<{ 
+    label: string; 
+    children: React.ReactNode; 
+    compact?: boolean;
+    expandable?: boolean; // 강제로 활성화/비활성화
+    minLength?: number;   // 최소 길이 (기본: 40자)
+  }> = ({ label, children, compact = false, expandable, minLength = 40 }) => {
+    // children이 string인지 확인
+    const isStringChild = typeof children === 'string';
+    const text = isStringChild ? (children as string) : '';
+    
+    // expandable이 명시되지 않으면 자동 판단 (minLength 이상)
+    const shouldExpand = expandable !== undefined 
+      ? expandable 
+      : (isStringChild && text.length > minLength);
+
+    // 고유 필드 키 생성 (라벨 기반)
+    const fieldKey = label.replace(/[^a-zA-Z0-9가-힣]/g, '_').toLowerCase();
+
+    return (
+      <div className={compact ? '-mb-3' : ''}>
+        <label className="text-sm text-gray-600">{label}</label>
+        <div className="mt-0.5 text-sm text-gray-900">
+          {shouldExpand ? (
+            <ExpandableText
+              fieldKey={fieldKey}
+              text={text}
+              className="text-sm leading-5 whitespace-pre-wrap"
+            />
+          ) : (
+            children
+          )}
+        </div>
+      </div>
+    );
+  };
 
   const ExpandableText: React.FC<{
     fieldKey: string;
@@ -359,7 +364,8 @@ export default function IncidentDetailModal({
     className?: string;
   }> = ({ fieldKey, text, className = '' }) => {
     const isExpanded = Boolean(expandedText[fieldKey]);
-    const showToggle = text.length > 80; // 너무 짧은 텍스트엔 더보기 버튼 숨김
+    // ✅ 2줄 이상이면 더보기 버튼 표시 (약 40자 이상)
+    const showToggle = text.length > 40;
 
     return (
       <div className="relative">
@@ -389,7 +395,7 @@ export default function IncidentDetailModal({
         {/* ✅ 펼침: 레이아웃에 영향 없이 아래로 "툭" 나오는 드롭다운(absolute) */}
         {isExpanded && (
           <div className="absolute left-0 right-0 mt-1 bg-white border border-gray-200 shadow-lg p-2 z-50">
-            <p className="text-gray-900 text-sm leading-5 whitespace-pre-wrap">{text}</p>
+            <p className="text-sm leading-5 whitespace-pre-wrap">{text}</p>
           </div>
         )}
       </div>
@@ -558,11 +564,6 @@ export default function IncidentDetailModal({
                           playsInline
                           preload="metadata"
                         />
-                        <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-opacity flex items-center justify-center pointer-events-none">
-                          <div className="bg-white bg-opacity-90 rounded-full p-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <Play className="w-8 h-8 text-gray-900" fill="currentColor" />
-                          </div>
-                        </div>
                       </>
                     ) : (
                       <div className="text-center text-gray-500 h-full flex items-center justify-center">
@@ -612,13 +613,11 @@ export default function IncidentDetailModal({
               <SectionTitle first>사건 요약</SectionTitle>
 
               <Field label="사고 코드">
-                <p className="text-gray-900">{detail.accidentCode}</p>
+                {detail.accidentCode}
               </Field>
 
               <Field label="유형">
-                <p className="text-gray-900">
-                  {type === 'emergency' ? '응급' : type === 'fire' ? '화재' : type === 'trash' ? '쓰레기' : '낙석'}
-                </p>
+                {type === 'emergency' ? '응급' : type === 'fire' ? '화재' : type === 'trash' ? '쓰레기' : '낙석'}
               </Field>
 
               <Field label="상태">
@@ -670,24 +669,24 @@ export default function IncidentDetailModal({
                     type="text"
                     value={editedDetail.time}
                     onChange={(e) => onFieldChange('time', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 text-gray-900"
+                    className="w-full px-3 py-2 border border-gray-300 text-sm text-gray-900"
                     style={{ borderRadius: '0px' }}
                   />
                 ) : (
-                  <p className="text-gray-900">{detail.time}</p>
+                  detail.time
                 )}
               </Field>
 
               {/* 처리완료 정보는 요약 섹션에서만 */}
               {detail.responseTime && (
                 <Field label="처리완료 시간">
-                  <p className="text-gray-900">{detail.responseTime}</p>
+                  {detail.responseTime}
                 </Field>
               )}
 
               {detail.duration && (
                 <Field label="소요 시간">
-                  <p className="text-gray-900">{detail.duration}</p>
+                  {detail.duration}
                 </Field>
               )}
 
@@ -700,28 +699,24 @@ export default function IncidentDetailModal({
                     type="text"
                     value={editedDetail.location || ''}
                     onChange={(e) => onFieldChange('location', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 text-gray-900"
+                    className="w-full px-3 py-2 border border-gray-300 text-sm text-gray-900"
                     style={{ borderRadius: '0px' }}
                   />
                 ) : (
-                  <p className="text-gray-900">{detail.location}</p>
+                  detail.location
                 )}
               </Field>
 
               <Field label="CCTV">
-                <p className="text-gray-900">
-                  {detail.cctvId && detail.cctvId !== '수동등록' ? (detail.cctvCode || detail.cctvId) : '-'}
-                </p>
+                {detail.cctvId && detail.cctvId !== '수동등록' ? (detail.cctvCode || detail.cctvId) : '-'}
               </Field>
 
               <Field label="처리자">
-                <p className="text-gray-900">
-                  {detail.handlerDept ? `${detail.handler} (${detail.handlerDept})` : detail.handler}
-                </p>
+                {detail.handlerDept ? `${detail.handler} (${detail.handlerDept})` : detail.handler}
               </Field>
 
               <Field label="등록 방식">
-                <p className="text-gray-900">{isAIDetection ? 'AI 자동 탐지' : (detail.detectionBasis || '-')}</p>
+                {isAIDetection ? 'AI 자동 탐지' : (detail.detectionBasis || '-')}
               </Field>
 
               {/* ===== (3) AI 분석 정보(있을 때만) ===== */}
@@ -736,29 +731,25 @@ export default function IncidentDetailModal({
                     <div className="flex flex-col gap-2">
                       {detail.confidence && (
                         <Field label="신뢰도">
-                          <p className="text-emerald-600 font-medium">{detail.confidence}</p>
+                          <span className="text-emerald-600 font-medium">{detail.confidence}</span>
                         </Field>
                       )}
 
                       {detail.severityReason && (
                         <Field label="심각도 산정 근거">
-                          <ExpandableText
-                            fieldKey="severityReason"
-                            text={detail.severityReason}
-                            className="text-gray-900 text-sm leading-5 whitespace-pre-wrap"
-                          />
+                          {detail.severityReason}
                         </Field>
                       )}
 
                       {modelText && (
                         <Field label="모델">
-                          <p className="text-gray-900">{modelText}</p>
+                          {modelText}
                         </Field>
                       )}
 
                       {detail.autoCreatedAt && (
                         <Field label="AI 탐지 시각">
-                          <p className="text-gray-900">{detail.autoCreatedAt}</p>
+                          {detail.autoCreatedAt}
                         </Field>
                       )}
                     </div>
@@ -767,21 +758,13 @@ export default function IncidentDetailModal({
                     <div className="flex flex-col gap-2">
                       {detail.confidenceReason && (
                         <Field label="신뢰도 근거">
-                          <ExpandableText
-                            fieldKey="confidenceReason"
-                            text={detail.confidenceReason}
-                            className="text-gray-900 text-sm leading-5 whitespace-pre-wrap"
-                          />
+                          {detail.confidenceReason}
                         </Field>
                       )}
 
                       {detail.detectedFeatures && (
                         <Field label="탐지 특징">
-                          <ExpandableText
-                            fieldKey="detectedFeatures"
-                            text={detail.detectedFeatures}
-                            className="text-gray-900 text-sm leading-5 whitespace-pre-wrap"
-                          />
+                          {detail.detectedFeatures}
                         </Field>
                       )}
                     </div>
@@ -794,98 +777,39 @@ export default function IncidentDetailModal({
 
               {type === 'emergency' && (
                 <>
-                  <div className="col-span-2 flex flex-col gap-2">
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={runEmergencyAnalysis}
-                        disabled={isEmergencyAnalyzing}
-                        className={`inline-flex items-center gap-2 px-3 py-2 border text-sm ${
-                          isEmergencyAnalyzing ? 'bg-gray-100 text-gray-500 border-gray-200' : 'bg-white text-gray-900 border-gray-300 hover:bg-gray-50'
-                        }`}
-                        style={{ borderRadius: '0px' }}
-                      >
-                        <Play className="w-4 h-4" />
-                        {isEmergencyAnalyzing ? 'AI 응급 분석 중...' : 'AI 응급 분석 실행(저장 포함)'}
-                      </button>
-                      {emergencyAiResult?.incidentCode && (
-                        <p className="text-sm text-gray-700">
-                          저장됨: <span className="font-medium">{String(emergencyAiResult.incidentCode)}</span>
-                        </p>
-                      )}
-                    </div>
-
-                    {emergencyAiError && (
-                      <p className="text-sm text-red-700 whitespace-pre-wrap">{emergencyAiError}</p>
-                    )}
-
-                    {emergencyAiResult?.analysis && (
-                      <div className="border border-gray-200 p-3" style={{ borderRadius: '0px' }}>
-                        <p className="text-sm font-medium text-gray-900 mb-2">AI 응급 분석 결과</p>
-                        <div className="grid grid-cols-2 gap-x-8 gap-y-2">
-                          <Field label="긴급도">
-                            <p className="text-gray-900">{String(emergencyAiResult.analysis.emergency_level ?? '-')}</p>
-                          </Field>
-                          <Field label="신고 가능성 점수">
-                            <ExpandableText
-                              fieldKey="emergency.reportScore"
-                              text={String(emergencyAiResult.analysis.report_possibility_score ?? '-')}
-                              className="text-gray-900 text-sm leading-5 whitespace-pre-wrap"
-                            />
-                          </Field>
-                          <Field label="부상자 수">
-                            <p className="text-gray-900">{String(emergencyAiResult.analysis?.emergency_detail?.injured_count ?? '-')}</p>
-                          </Field>
-                          <Field label="신뢰도">
-                            <p className="text-gray-900">{String(emergencyAiResult.analysis.confidence ?? '-')}</p>
-                          </Field>
-                          <div className="col-span-2">
-                            <Field label="요약">
-                              <ExpandableText
-                                fieldKey="emergency.description"
-                                text={String(emergencyAiResult.analysis.description ?? '-')}
-                                className="text-gray-900 text-sm leading-5 whitespace-pre-wrap"
-                              />
-                            </Field>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
                   {detail.patientName && (
                     <Field label="환자명">
-                      <p className="text-gray-900">{detail.patientName}</p>
+                      {detail.patientName}
                     </Field>
                   )}
                   {detail.patientAge && (
                     <Field label="나이">
-                      <p className="text-gray-900">{detail.patientAge}</p>
+                      {detail.patientAge}
                     </Field>
                   )}
                   {detail.patientGender && (
                     <Field label="성별">
-                      <p className="text-gray-900">{detail.patientGender}</p>
+                      {detail.patientGender}
                     </Field>
                   )}
                   {detail.emergencyType && (
                     <Field label="응급 유형">
-                      <p className="text-gray-900">{detail.emergencyType}</p>
+                      {detail.emergencyType}
                     </Field>
                   )}
                   {detail.emergencySymptom && (
                     <Field label="증상">
-                      <p className="text-gray-900">{detail.emergencySymptom}</p>
+                      {detail.emergencySymptom}
                     </Field>
                   )}
                   {detail.rescueTeam && (
                     <Field label="대응팀">
-                      <p className="text-gray-900">{detail.rescueTeam}</p>
+                      {detail.rescueTeam}
                     </Field>
                   )}
                   {detail.transferHospital && (
                     <Field label="이송병원/처리 기관">
-                      <p className="text-gray-900">{detail.transferHospital}</p>
+                      {detail.transferHospital}
                     </Field>
                   )}
                 </>
@@ -895,17 +819,17 @@ export default function IncidentDetailModal({
                 <>
                   {detail.windInfo && (
                     <Field label="풍향/풍속">
-                      <p className="text-gray-900">{detail.windInfo}</p>
+                      {detail.windInfo}
                     </Field>
                   )}
                   {detail.spreadDirection && (
                     <Field label="확산 방향">
-                      <p className="text-gray-900">{detail.spreadDirection}</p>
+                      {detail.spreadDirection}
                     </Field>
                   )}
                   {detail.surroundingRisk && (
                     <Field label="주변 위험">
-                      <p className="text-gray-900">{detail.surroundingRisk}</p>
+                      {detail.surroundingRisk}
                     </Field>
                   )}
                 </>
@@ -915,12 +839,12 @@ export default function IncidentDetailModal({
                 <>
                   {detail.trashType && (
                     <Field label="쓰레기 종류">
-                      <p className="text-gray-900">{detail.trashType}</p>
+                      {detail.trashType}
                     </Field>
                   )}
                   {detail.amount && (
                     <Field label="양/규모">
-                      <p className="text-gray-900">{detail.amount}</p>
+                      {detail.amount}
                     </Field>
                   )}
                 </>
@@ -930,29 +854,24 @@ export default function IncidentDetailModal({
                 <>
                   {detail.rockSizeClass && (
                     <Field label="암괴 규모">
-                      <p className="text-gray-900">{detail.rockSizeClass}</p>
+                      {detail.rockSizeClass}
                     </Field>
                   )}
                   {detail.affectedAssetType && (
                     <Field label="피해 대상 유형">
-                      <p className="text-gray-900">{detail.affectedAssetType}</p>
+                      {detail.affectedAssetType}
                     </Field>
                   )}
                   {detail.affectedAssetName && (
                     <Field label="피해 대상 식별">
-                      <p className="text-gray-900">{detail.affectedAssetName}</p>
+                      {detail.affectedAssetName}
                     </Field>
                   )}
                   {detail.damageDescription && (
                     <div className="col-span-2">
-                      <label className="text-sm text-gray-600">피해 설명</label>
-                      <div className="mt-0.5">
-                        <ExpandableText
-                          fieldKey="damageDescription"
-                          text={detail.damageDescription}
-                          className="text-gray-900 leading-5 whitespace-pre-wrap"
-                        />
-                      </div>
+                      <Field label="피해 설명">
+                        {detail.damageDescription}
+                      </Field>
                     </div>
                   )}
                 </>

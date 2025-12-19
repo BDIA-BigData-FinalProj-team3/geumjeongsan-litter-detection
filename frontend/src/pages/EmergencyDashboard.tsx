@@ -6,7 +6,7 @@ import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
-import { getActiveEmergencies, getCompletedEmergencies, getEmergencyStats, getEmergencyHotspots, getEmergencyIncidents, createEmergency, updateEmergencyStatus, getEmergencyDetail, updateEmergencyDetail, type EmergencyStatsResponse, type HotspotResponse, type IncidentListItem, type PageResponse } from '../services/api';
+import { getActiveEmergencies, getCompletedEmergencies, getEmergencyStats, getEmergencyHotspots, getEmergencyIncidents, createEmergency, updateEmergencyStatus, getUnifiedIncidentDetail, updateEmergencyDetail, type EmergencyStatsResponse, type HotspotResponse, type IncidentListItem, type PageResponse } from '../services/api';
 import { getCurrentUser } from '../services/auth';
 import { localDateTimeToKstIso } from '../utils/time';
 import AssigneeSelectModal from '../components/AssigneeSelectModal';
@@ -780,7 +780,7 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
                         className={`hover:bg-gray-50 cursor-pointer ${isHighlighted ? 'bg-yellow-100' : ''}`} 
                         onClick={async () => { 
                           try {
-                            const detail = await getEmergencyDetail(emergency.id);
+                            const detail = await getUnifiedIncidentDetail(emergency.id);
                             if (detail) {
                               setSelectedDetail(detail as any);
                               setIsEditing(false);

@@ -11,6 +11,7 @@ import com.example.geumjeongsan.domain.cctv.CCTV;
 import com.example.geumjeongsan.domain.cctv.CCTVRepository;
 import com.example.geumjeongsan.domain.weather.Weather;
 import com.example.geumjeongsan.service.RealtimeSseService;
+import com.example.geumjeongsan.service.WeatherService;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import lombok.extern.slf4j.Slf4j;
@@ -43,6 +44,7 @@ public class FireService {
     private final CCTVRepository cctvRepository;
     private final IncidentAutoRepository incidentAutoRepository;
     private final RealtimeSseService realtimeSseService;
+    private final WeatherService weatherService;
     private final EntityManager entityManager;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final ZoneOffset KST = ZoneOffset.ofHours(9);
@@ -59,6 +61,7 @@ public class FireService {
                       CCTVRepository cctvRepository,
                       IncidentAutoRepository incidentAutoRepository,
                       RealtimeSseService realtimeSseService,
+                      WeatherService weatherService,
                       EntityManager entityManager,
                       com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
         this.incidentRepository = incidentRepository;
@@ -70,6 +73,7 @@ public class FireService {
         this.cctvRepository = cctvRepository;
         this.incidentAutoRepository = incidentAutoRepository;
         this.realtimeSseService = realtimeSseService;
+        this.weatherService = weatherService;
         this.entityManager = entityManager;
     }
 
@@ -195,6 +199,30 @@ public class FireService {
         detail.setCreatedAt(now);
         detail.setNote(memoBuilder.toString());
         detail.setNearbyRisks(String.format("%d개 감지", detections.size()));
+        
+        // ✅ 기상 정보 조회 및 저장
+        try {
+            Weather weather = weatherService.getLatestWeather();
+            if (weather != null && weather.getWindSpeed() != null) {
+                // windSpeed: m/s -> km/h 변환
+                BigDecimal kmh = weather.getWindSpeed().multiply(new BigDecimal("3.6"));
+                detail.setWindSpeed(kmh);
+                
+                // windInfo: "풍향 풍속 (습도%)" 형식
+                String windInfo = (weather.getWindDirection() != null ? weather.getWindDirection() : "")
+                        + " " + kmh.setScale(1, java.math.RoundingMode.HALF_UP) + "km/h"
+                        + (weather.getHumidity() != null ? (" (습도 " + weather.getHumidity() + "%)") : "");
+                detail.setWindInfo(windInfo.trim());
+            }
+        } catch (Exception e) {
+            log.warn("⚠️ [Fire] Failed to fetch weather info for fire detail", e);
+        }
+        
+        // ✅ 확산 방향 및 위험도 (기본값)
+        // TODO: Python fire_detector.py 통합 시 실제 분석 결과로 대체
+        detail.setSpreadDirection("분석 중");
+        detail.setSpreadRisk("보통");
+        
         fireDetailRepository.save(detail);
         
         // 3) IncidentAuto 생성

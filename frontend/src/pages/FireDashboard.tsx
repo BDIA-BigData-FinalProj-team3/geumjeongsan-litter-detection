@@ -6,7 +6,7 @@ import IncidentDetailModal from '../components/IncidentDetailModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
-import { getActiveFires, getCompletedFires, getFireStats, getFireHotspots, createFire, updateFireStatus, getFireDetail, updateFireDetail, getMainMapWeather, type FireStatsResponse, type HotspotResponse } from '../services/api';
+import { getActiveFires, getCompletedFires, getFireStats, getFireHotspots, createFire, updateFireStatus, getUnifiedIncidentDetail, updateFireDetail, getMainMapWeather, type FireStatsResponse, type HotspotResponse } from '../services/api';
 import { getCurrentUser } from '../services/auth';
 import { localDateTimeToKstIso } from '../utils/time';
 import AssigneeSelectModal from '../components/AssigneeSelectModal';
@@ -742,7 +742,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
                         className={`hover:bg-gray-50 cursor-pointer ${isHighlighted ? 'bg-yellow-100' : ''}`} 
                         onClick={async () => { 
                           try {
-                            const detail = await getFireDetail(fire.id);
+                            const detail = await getUnifiedIncidentDetail(fire.id);
                             if (detail) {
                               setSelectedDetail(detail as any);
                               setIsEditing(false);
