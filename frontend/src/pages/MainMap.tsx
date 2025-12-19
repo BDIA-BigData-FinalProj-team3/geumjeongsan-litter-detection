@@ -1715,6 +1715,17 @@ export default function MainMap({ onNavigate }: MainMapProps) {
       const y = event.clientY || (event.currentTarget ? event.currentTarget.getBoundingClientRect().top : 0);
       setSelectedCCTV({ cctv: marker, x, y });
     } else if (activeView === 'detections' || activeView === 'risk-map') {
+      // ✅ 팝업을 화면 정중앙에 배치
+      const popupWidth = 500;
+      const popupHeight = 600;
+      const centerX = (window.innerWidth / 2) - (popupWidth / 2);
+      const centerY = (window.innerHeight / 2) - (popupHeight / 2);
+      
+      setPopupPositions(prev => ({
+        ...prev,
+        detection: { x: centerX, y: centerY }
+      }));
+      
       // 즉시 팝업 표시 (로딩 상태)
       setSelectedDetection({ marker: marker, incidents: [] });
       

@@ -1224,13 +1224,18 @@ public class IncidentService {
         incident.setStatus("RESOLVED");  // 또는 "FALSE_POSITIVE"라는 별도 상태 사용 가능
         incident.setMemo((incident.getMemo() != null ? incident.getMemo() + "\n" : "") + 
                         "[오탐 처리] " + (reason != null ? reason : "사유 없음"));
-        incident.setUpdatedAt(OffsetDateTime.now());
+        
+        OffsetDateTime now = OffsetDateTime.now();
+        incident.setUpdatedAt(now);
         incidentRepository.save(incident);
 
-        // ✅ 처리카드 upsert + 오탐 담당자를 처리자로 지정(STAFF만)
-        if (actorId != null) {
-            upsertIncidentResponse(incidentId, actorId, OffsetDateTime.now());
+        // ✅ 처리카드 upsert + 처리완료 시각 기록 (actorId가 없어도 completedAt은 기록)
+        IncidentResponse ir = upsertIncidentResponse(incidentId, actorId, now);
+        if (ir.getCompletedAt() == null) {
+            ir.setCompletedAt(now);  // 오탐 처리 = 처리완료
         }
+        ir.setUpdatedAt(now);
+        incidentResponseRepository.save(ir);
         
         // 3. IncidentAction 생성
         IncidentAction action = new IncidentAction();

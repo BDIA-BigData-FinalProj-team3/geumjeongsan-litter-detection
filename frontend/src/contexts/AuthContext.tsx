@@ -11,6 +11,8 @@ export interface User {
   role: UserRole;
   permissions: string[];
   email?: string;
+  organization?: string; // 부서명 (예: "시스템관리팀", "광역사업부")
+  position?: string; // 직급 (예: "관리자", "부장(지방)", "직원")
 }
 
 // 권한별 메뉴 접근 권한
@@ -98,16 +100,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // 임시 로그인 로직 (데모용)
       let role: UserRole = 'VIEWER';
-      if (username === 'admin') role = 'ADMIN';
-      else if (username === 'manager') role = 'MANAGER';
-      else if (username === 'operator') role = 'OPERATOR';
+      let organization = '';
+      let position = '';
+      let name = '';
+      
+      if (username === 'admin') {
+        role = 'ADMIN';
+        name = '김관리';
+        organization = '시스템관리팀';
+        position = '관리자';
+      } else if (username === 'manager') {
+        role = 'MANAGER';
+        name = '박부장';
+        organization = '광역사업부';
+        position = '부장(지방)';
+      } else if (username === 'operator') {
+        role = 'OPERATOR';
+        name = '이직원';
+        organization = '금정산국립공원준비단(TF)';
+        position = '직원';
+      } else {
+        name = '최열람';
+        organization = '광역사업부';
+        position = '직원';
+      }
 
       const loggedInUser: User = {
         id: `user-${Date.now()}`,
         username,
-        name: username === 'admin' ? '관리자' : username === 'manager' ? '매니저' : username === 'operator' ? '운영자' : '열람자',
+        name,
         role,
         permissions: ROLE_PERMISSIONS[role],
+        organization,
+        position,
       };
 
       setUser(loggedInUser);

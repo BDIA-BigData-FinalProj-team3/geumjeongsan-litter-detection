@@ -69,6 +69,7 @@ export default function Sidebar({ onNavigate, currentPath, onClose }: SidebarPro
   const navigate = useNavigate();
   const location = useLocation();
   const { emergencyCount, fireCount, trashCount, rockfallCount } = useIncidentCount();
+  const { user, logout } = useAuth();
   
   // Use currentPath prop if provided, otherwise derive from location
   // + Normalize legacy values (ex: 'dashboard' -> 'statistics') so active highlight never breaks.
@@ -253,19 +254,52 @@ export default function Sidebar({ onNavigate, currentPath, onClose }: SidebarPro
         })}
       </nav>
 
-      {/* Logout Button */}
-      <div className="border-t py-4" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
-        <button
-          onClick={() => handleNavigate('login')}
-          className="w-full text-left px-6 py-3 text-slate-300 hover:text-white transition-colors"
-          style={{
-            fontFamily: 'NanumSquareBold, NanumSquare, sans-serif',
-            fontSize: '15.57px',
-            fontWeight: 'bold'
-          }}
-        >
-          로그아웃
-        </button>
+      {/* User Info & Logout */}
+      <div className="border-t py-4 px-6" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+        {user ? (
+          <div className="flex items-start justify-between gap-3">
+            {/* 사용자 정보 */}
+            <div className="flex flex-col gap-1">
+              {/* 부서명 - 크게 */}
+              <div className="text-white font-bold" style={{ fontSize: '16px', lineHeight: '1.2' }}>
+                {user.organization || '부서 미지정'}
+              </div>
+              {/* 직급과 이름 */}
+              <div className="text-slate-300" style={{ fontSize: '14px', lineHeight: '1.2' }}>
+                {user.position || '직급'} {user.name}
+              </div>
+            </div>
+            
+            {/* 로그아웃 버튼 */}
+            <button
+              onClick={() => {
+                logout();
+                handleNavigate('login');
+              }}
+              className="px-3 py-1.5 text-xs bg-slate-700 text-white hover:bg-slate-600 transition-colors rounded"
+              style={{
+                fontFamily: 'NanumSquareBold, NanumSquare, sans-serif',
+                fontWeight: 'bold',
+                whiteSpace: 'nowrap',
+                flexShrink: 0
+              }}
+            >
+              로그아웃
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => handleNavigate('login')}
+            className="w-full text-left py-2 text-slate-300 hover:text-white transition-colors"
+            style={{
+              fontFamily: 'NanumSquareBold, NanumSquare, sans-serif',
+              fontSize: '15.57px',
+              fontWeight: 'bold'
+            }}
+          >
+            로그인
+          </button>
+        )}
       </div>
     </div>
   );

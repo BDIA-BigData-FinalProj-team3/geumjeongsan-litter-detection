@@ -59,8 +59,12 @@ public class AllIncidentDto {
         // 심각도 한글 변환
         this.severity = convertSeverityToKorean(view.getSeverityLevel());
         
-        // 처리자
-        this.handler = view.getHandlerName() != null ? view.getHandlerName() : "미지정";
+        // ✅ 오탐 처리 여부 확인 (memo에 "[오탐 처리]" 포함 여부)
+        boolean isFalsePositive = view.getMemo() != null && view.getMemo().contains("[오탐 처리]");
+        
+        // ✅ 처리자: 오탐이면 "오탐", 아니면 기존 로직
+        this.handler = isFalsePositive ? "오탐" 
+                : (view.getHandlerName() != null ? view.getHandlerName() : "미지정");
         
         // 위치
         this.location = view.getCctvAddress() != null 
@@ -75,13 +79,29 @@ public class AllIncidentDto {
         // AI 탐지 신뢰도
         this.detectionConfidence = view.getDetectionConfidence();
         
-        // 처리완료 시간
-        this.responseTime = view.getResolvedAt() != null ? formatKst(view.getResolvedAt()) : "";
+        // ✅ 처리완료 시간: resolvedAt이 없고 RESOLVED 상태면 updatedAt 사용
+        if (view.getResolvedAt() != null) {
+            this.responseTime = formatKst(view.getResolvedAt());
+        } else if ("RESOLVED".equals(view.getStatus()) && view.getUpdatedAt() != null) {
+            this.responseTime = formatKst(view.getUpdatedAt());
+        } else {
+            this.responseTime = "";
+        }
         
-        // 소요 시간
-        this.duration = view.getProcessingMinutes() != null 
-                ? formatDuration(view.getProcessingMinutes()) 
-                : "";
+        // ✅ 소요 시간: processingMinutes가 없으면 수동 계산
+        if (view.getProcessingMinutes() != null) {
+            this.duration = formatDuration(view.getProcessingMinutes());
+        } else if ("RESOLVED".equals(view.getStatus()) && view.getDetectedAt() != null && view.getResolvedAt() != null) {
+            // resolvedAt이 있으면 계산
+            long minutes = java.time.Duration.between(view.getDetectedAt(), view.getResolvedAt()).toMinutes();
+            this.duration = formatDuration((double) minutes);
+        } else if ("RESOLVED".equals(view.getStatus()) && view.getDetectedAt() != null && view.getUpdatedAt() != null) {
+            // resolvedAt이 없으면 updatedAt으로 계산
+            long minutes = java.time.Duration.between(view.getDetectedAt(), view.getUpdatedAt()).toMinutes();
+            this.duration = formatDuration((double) minutes);
+        } else {
+            this.duration = "";
+        }
     }
 
     private String convertTypeToKorean(String type) {
