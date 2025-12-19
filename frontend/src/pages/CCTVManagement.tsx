@@ -20,6 +20,8 @@ import cctv007Video from '../assets/cctv_dummy/cctv-007.mp4';
 import cctv008Video from '../assets/cctv_dummy/cctv-008.mp4';
 import cctv009Video from '../assets/cctv_dummy/cctv-009.mp4';
 import cctv010Video from '../assets/cctv_dummy/cctv-010.mp4';
+import cctv011Video from '../assets/cctv_dummy/cctv-011.avi';
+import cctv012Video from '../assets/cctv_dummy/cctv-012.mp4';
 
 interface CCTVManagementProps {
   onNavigate: (screen: string) => void;
@@ -184,10 +186,12 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     'CCTV-008': cctv008Video,
     'CCTV-009': cctv009Video,
     'CCTV-010': cctv010Video,
+    'CCTV-011': cctv011Video,
+    'CCTV-012': cctv012Video,
   };
 
   // 더미 비디오가 있는 CCTV ID 목록
-  const dummyCCTVIds = ['CCTV-001', 'CCTV-002', 'CCTV-003', 'CCTV-004', 'CCTV-005', 'CCTV-006', 'CCTV-007', 'CCTV-008', 'CCTV-009', 'CCTV-010'];
+  const dummyCCTVIds = ['CCTV-001', 'CCTV-002', 'CCTV-003', 'CCTV-004', 'CCTV-005', 'CCTV-006', 'CCTV-007', 'CCTV-008', 'CCTV-009', 'CCTV-010', 'CCTV-011', 'CCTV-012'];
 
   // ✅ 쓰레기(S3 영상) 분석용 URL 맵 (필요 CCTV만 추가)
   const trashS3VideoUrlMap: Record<string, string> = {

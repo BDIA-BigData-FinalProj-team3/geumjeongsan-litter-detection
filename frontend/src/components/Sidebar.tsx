@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Home, LayoutDashboard, Camera, UserX, TrendingUp, Clock, Trash2, Users, ChevronDown, ChevronUp, ChevronRight, HeartPulse, FileText, AlertTriangle, Flame, Mountain } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useIncidentCount } from '../contexts/IncidentCountContext';
-import { useAuth } from '../contexts/AuthContext';
+import * as authService from '../services/auth';
 
 const Logo = () => (
   <svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlnsXlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
@@ -69,7 +69,35 @@ export default function Sidebar({ onNavigate, currentPath, onClose }: SidebarPro
   const navigate = useNavigate();
   const location = useLocation();
   const { emergencyCount, fireCount, trashCount, rockfallCount } = useIncidentCount();
-  const { user, logout } = useAuth();
+  
+  // 실제 백엔드 로그인 정보 사용
+  const [user, setUser] = useState<authService.LoginResponse | null>(null);
+  
+  // 컴포넌트 마운트 시 user 정보 로드
+  useEffect(() => {
+    const currentUser = authService.getCurrentUser();
+    setUser(currentUser);
+  }, []);
+  
+  // localStorage 변경 감지 (다른 탭에서 로그인/로그아웃 시)
+  useEffect(() => {
+    const handleStorageChange = () => {
+      const currentUser = authService.getCurrentUser();
+      setUser(currentUser);
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+  
+  // 로그인 이벤트 감지 (같은 탭에서 로그인 시)
+  useEffect(() => {
+    const handleUserLogin = () => {
+      const currentUser = authService.getCurrentUser();
+      setUser(currentUser);
+    };
+    window.addEventListener('userLogin', handleUserLogin);
+    return () => window.removeEventListener('userLogin', handleUserLogin);
+  }, []);
   
   // Use currentPath prop if provided, otherwise derive from location
   // + Normalize legacy values (ex: 'dashboard' -> 'statistics') so active highlight never breaks.
@@ -262,18 +290,19 @@ export default function Sidebar({ onNavigate, currentPath, onClose }: SidebarPro
             <div className="flex flex-col gap-1">
               {/* 부서명 - 크게 */}
               <div className="text-white font-bold" style={{ fontSize: '16px', lineHeight: '1.2' }}>
-                {user.organization || '부서 미지정'}
+                {user.dept || '부서 미지정'}
               </div>
               {/* 직급과 이름 */}
               <div className="text-slate-300" style={{ fontSize: '14px', lineHeight: '1.2' }}>
-                {user.position || '직급'} {user.name}
+                {user.role || '직급'} {user.name}
               </div>
             </div>
             
             {/* 로그아웃 버튼 */}
             <button
               onClick={() => {
-                logout();
+                authService.logout();
+                setUser(null);
                 handleNavigate('login');
               }}
               className="px-3 py-1.5 text-xs bg-slate-700 text-white hover:bg-slate-600 transition-colors rounded"

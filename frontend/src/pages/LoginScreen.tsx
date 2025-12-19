@@ -55,6 +55,9 @@ export default function LoginScreen({ onNavigate }: LoginScreenProps) {
       
       console.log('로그인 성공:', user);
       
+      // Sidebar에 로그인 상태 변경 알림
+      window.dispatchEvent(new CustomEvent('userLogin'));
+      
       // 로그인 시 모든 데이터 초기화
       resetCompletedIncidents();
       // 첫 방문 플래그 제거 (로그인 시 사이드바가 닫힌 상태로 시작)
