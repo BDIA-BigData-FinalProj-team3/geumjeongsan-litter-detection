@@ -62,10 +62,12 @@ export function IncidentCountProvider({ children }: { children: ReactNode }) {
           getActiveRockfalls(),
         ]);
         if (cancelled) return;
-        setEmergencyCount(Array.isArray(em) ? em.length : 0);
-        setFireCount(Array.isArray(fire) ? fire.length : 0);
-        setTrashCount(Array.isArray(trash) ? trash.length : 0);
-        setRockfallCount(Array.isArray(rock) ? rock.length : 0);
+        
+        // ✅ 각 타입별로 필터링
+        setEmergencyCount(Array.isArray(em) ? em.filter((item: any) => item.type === '응급').length : 0);
+        setFireCount(Array.isArray(fire) ? fire.filter((item: any) => item.type === '화재').length : 0);
+        setTrashCount(Array.isArray(trash) ? trash.filter((item: any) => item.type === '쓰레기').length : 0);
+        setRockfallCount(Array.isArray(rock) ? rock.filter((item: any) => item.type === '낙석').length : 0);
       } catch {
         // 네트워크 오류 시 카운트 유지 (필요시 추후 토스트 처리)
       }

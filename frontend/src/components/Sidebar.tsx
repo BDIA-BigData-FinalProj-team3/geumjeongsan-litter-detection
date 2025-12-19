@@ -182,11 +182,11 @@ export default function Sidebar({ onNavigate, currentPath, onClose }: SidebarPro
                         }
                       }}
                       className={`flex-1 flex items-center gap-3 px-6 py-3 transition-colors ${
-                        isItemActive
+                        activePath === item.path
                           ? 'text-white'
                           : 'text-slate-300 hover:bg-slate-800'
                       }`}
-                      style={isItemActive ? { backgroundColor: 'rgba(255,255,255,0.1)' } : {}}
+                      style={activePath === item.path ? { backgroundColor: 'rgba(255,255,255,0.1)' } : {}}
                     >
                       {item.icon && <item.icon className="w-5 h-5" />}
                       <span className="flex-1 text-left">{item.label}</span>
