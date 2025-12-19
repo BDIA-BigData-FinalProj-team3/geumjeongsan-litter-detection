@@ -11,6 +11,10 @@ spring:
       # 로컬 영상 업로드(테스트용)에서 413(Request Entity Too Large) 방지
       max-file-size: 500MB
       max-request-size: 500MB
+  mvc:
+    # 비동기 요청 타임아웃 (화재 분석 등 오래 걸리는 작업용, 5분)
+    async:
+      request-timeout: 300000
   jpa:
     hibernate:
       ddl-auto: none

@@ -2507,27 +2507,46 @@ export const analyzeFireFromS3Video = async (
   
   const fullUrl = `${url}?${searchParams.toString()}`;
   
-  const res = await fetch(fullUrl, {
-    method: 'POST'
-  });
+  // ✅ AbortController로 5분(300초) timeout 설정 (화재 분석은 오래 걸릴 수 있음)
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 300000); // 5분
   
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(text || `S3 영상 화재 분석 실패 (${res.status})`);
+  try {
+    const res = await fetch(fullUrl, {
+      method: 'POST',
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(text || `S3 영상 화재 분석 실패 (${res.status})`);
+    }
+    
+    const result = await res.json();
+  
+    return {
+      fireDetected: result.fireDetected || false,
+      frameUrls: result.frameUrls || [],
+      overlayUrls: result.overlayUrls || [],
+      detectionCount: result.detectionCount || 0,
+      savedToDb: result.savedToDb || false,
+      totalFramesAnalyzed: result.totalFramesAnalyzed || 0,
+      scannedSegments: result.scannedSegments || 0,
+      detectedSegmentIndex: result.detectedSegmentIndex || -1,
+      analysisResult: result.analysisResult || null,
+      incidentId: result.incidentId,
+      incidentCode: result.incidentCode,
+      clipUrl: result.clipUrl || null
+    };
+  } catch (error) {
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('화재 분석 요청이 타임아웃되었습니다 (5분 초과). 작업이 너무 오래 걸리고 있습니다.');
+    }
+    throw error;
   }
-  
-  const result = await res.json();
-  
-  return {
-    fireDetected: result.fireDetected || false,
-    frameUrls: result.frameUrls || [],
-    overlayUrls: result.overlayUrls || [],
-    detectionCount: result.detectionCount || 0,
-    totalFramesAnalyzed: result.totalFramesAnalyzed || 0,
-    incidentId: result.incidentId,
-    incidentCode: result.incidentCode,
-    savedToDb: result.savedToDb || false
-  };
 };
 
 /**

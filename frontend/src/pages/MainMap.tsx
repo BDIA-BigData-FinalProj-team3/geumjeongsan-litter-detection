@@ -719,14 +719,14 @@ export default function MainMap({ onNavigate }: MainMapProps) {
     // 5. 필터 초기화 (필요시)
     // setActiveFilters(new Set(['fire', 'emergency', 'trash']));
   };
-
+  
   // ✅ 영상 상세보기 모달용 (실제 video src)
   const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
   const [activePlaybackUrl, setActivePlaybackUrl] = useState<string | null>(null);
   const [selectedVideoMedia, setSelectedVideoMedia] = useState<CCTVMedia | null>(null);
   const [selectedImageMedia, setSelectedImageMedia] = useState<CCTVMedia | null>(null);
   const [isVideoLoading, setIsVideoLoading] = useState(false);
-
+  
   const [cctvMediaList, setCctvMediaList] = useState<CCTVMedia[]>([]);
   const [weather, setWeather] = useState<any>(null);
 
@@ -776,7 +776,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
           setSelectedImageMedia(imagePick);
           setSelectedVideoUrl(videoPick?.url ?? null);
           setActivePlaybackUrl(videoPick?.url ?? null);
-        }
+      }
       } catch (error) {
         console.error('❌ [MainMap] Failed to load CCTV video media for videoDetailPopup:', error);
         if (!cancelled) {
@@ -1852,7 +1852,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
               <svg width="62.667px" height="36px" viewBox="-259.049 -94.946 62.667 36">
                 <path fill="#FFB366" d="M-259.049-67.946c0,4.971,4.029,9,9,9h44.667c4.971,0,9-4.029,9-9v-18c0-4.971-4.029-9-9-9h-44.667c-4.971,0-9,4.029-9,9V-67.946z"/>
                 <text
-                  x="-234.5"
+                  x="-237"
                   y="-73"
                   textAnchor="start"
                   fill="#FFFFFF"
@@ -3422,9 +3422,9 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                         className="w-full h-full object-contain bg-black"
                       />
                     ) : (
-                      <div className="w-full h-full bg-gray-800 flex items-center justify-center">
-                        <Camera className="w-12 h-12 text-gray-400" />
-                      </div>
+                  <div className="w-full h-full bg-gray-800 flex items-center justify-center">
+                    <Camera className="w-12 h-12 text-gray-400" />
+                  </div>
                     );
                   })()}
                   {/* 점검 필요 오버레이 */}

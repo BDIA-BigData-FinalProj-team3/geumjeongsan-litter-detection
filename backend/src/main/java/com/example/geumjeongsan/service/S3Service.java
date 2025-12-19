@@ -170,6 +170,34 @@ public class S3Service {
     }
 
     /**
+     * Overlay가 적용된 MP4 영상을 S3에 업로드
+     *
+     * @param videoBytes 영상 바이트 배열
+     * @param cameraId 카메라 ID (예: "cctv-003")
+     * @return S3 키 (예: "cctv/cctv-003/videos/cctv-003_overlay_clip_20251217T120000.mp4")
+     */
+    public String uploadOverlayVideo(byte[] videoBytes, String cameraId) {
+        try {
+            LocalDateTime now = LocalDateTime.now();
+            String timeStr = now.format(DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss"));
+            String s3Key = String.format("cctv/%s/videos/%s_overlay_clip_%s.mp4", cameraId, cameraId, timeStr);
+
+            PutObjectRequest putObjectRequest = PutObjectRequest.builder()
+                    .bucket(bucketName)
+                    .key(s3Key)
+                    .contentType("video/mp4")
+                    .build();
+
+            s3Client.putObject(putObjectRequest, RequestBody.fromBytes(videoBytes));
+            log.info("✅ [S3Service] Overlay video uploaded: {}", s3Key);
+            return s3Key;
+        } catch (Exception e) {
+            log.error("❌ [S3Service] Failed to upload overlay video: {}", e.getMessage(), e);
+            throw new RuntimeException("S3 overlay video 업로드 실패: " + e.getMessage(), e);
+        }
+    }
+
+    /**
      * S3 객체를 바이트 배열로 다운로드
      *
      * @param s3Key S3 키

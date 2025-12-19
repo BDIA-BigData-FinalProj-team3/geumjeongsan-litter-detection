@@ -45,6 +45,25 @@ public class ImageOverlayService {
                 // 픽셀 좌표인지 정규화 좌표인지 자동 판단
                 boolean isPixelCoord = (x > 1.0 || y > 1.0 || w > 1.0 || h > 1.0);
                 
+                // 🔧 일부 모델이 (x,y,w,h) 대신 (x1,y1,x2,y2)를 w/h 자리에 넣는 경우가 있어 보정
+                // - normalized: x+w > 1.0 이면 w를 x2로 보고 (w-x)로 변환
+                // - pixel: x+w > W 이면 w를 x2로 보고 (w-x)로 변환
+                if (!isPixelCoord) {
+                    if (w <= 1.0 && x <= 1.0 && (x + w) > 1.01 && w > x) {
+                        w = w - x;
+                    }
+                    if (h <= 1.0 && y <= 1.0 && (y + h) > 1.01 && h > y) {
+                        h = h - y;
+                    }
+                } else {
+                    if ((x + w) > (W + 1) && w > x) {
+                        w = w - x;
+                    }
+                    if ((y + h) > (H + 1) && h > y) {
+                        h = h - y;
+                    }
+                }
+
                 if (isPixelCoord) {
                     // 픽셀 → 정규화 변환
                     x = clampDouble(x / W, 0.0, 1.0);
