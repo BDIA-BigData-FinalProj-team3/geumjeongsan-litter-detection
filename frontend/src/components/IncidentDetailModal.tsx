@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Video, Camera, Map, Edit2, Save } from 'lucide-react';
+import { X, Video, Camera, Edit2, Save, MapPin, Clock, User, Cpu, ClipboardList, Info, HeartPulse } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Polyline, Polygon, Tooltip } from 'react-leaflet';
 import L from 'leaflet';
 import { getCCTVList, markIncidentAsFalsePositive } from '../services/api';
@@ -306,9 +306,38 @@ export default function IncidentDetailModal({
   );
 
   // AI 모델 표기용 (모델명/버전 묶기)
-  const modelText = [detail.modelName, detail.modelVersion]
+  // ✅ 요구사항: 모델 표기
+  // - 응급: yolov8m(탐지) + gemini-2.5-flash(판정)
+  // - 그 외 AI: gemini-2.5-flash
+  const modelText = isAIDetection
+    ? (type === 'emergency' ? 'yolov8m + gemini-2.5-flash' : 'gemini-2.5-flash')
+    : [detail.modelName, detail.modelVersion]
     .filter((v): v is string => Boolean(v))
     .join(' / ');
+
+  // ✅ 요구사항: 심각도 산정 근거에 risk_level/spread_risk 같은 키가 UI에 노출되지 않도록 정제
+  // - 우선 '매우낮음/낮음/보통/높음/매우높음' 같은 값이 있으면 그것만 추출
+  // - 없으면 risk_level/spread_risk 관련 조각을 제거한 텍스트를 사용
+  const sanitizeSeverityReason = (v?: string): string => {
+    const raw = (v ?? '').trim();
+    if (!raw) return '';
+
+    const allowed = ['매우높음', '높음', '보통', '낮음', '매우낮음'] as const;
+    for (const token of allowed) {
+      if (raw.includes(token)) return token;
+    }
+
+    let s = raw;
+    // key=value 형태 제거
+    s = s.replace(/risk_level\s*=\s*[^,\n]+/gi, '').replace(/spread_risk\s*=\s*[^,\n]+/gi, '');
+    // JSON 키 형태 제거 (대충)
+    s = s.replace(/"risk_level"\s*:\s*"[^"]*"\s*,?/gi, '')
+         .replace(/"spread_risk"\s*:\s*"[^"]*"\s*,?/gi, '');
+    // 구분자/공백 정리
+    s = s.replace(/\s*,\s*,/g, ',').replace(/^\s*,\s*/g, '').replace(/\s*,\s*$/g, '').trim();
+
+    return s || raw;
+  };
 
   // 섹션 제목(가로 2칸) + 기본 구분선
   const SectionTitle: React.FC<{ children: React.ReactNode; first?: boolean }> = ({
@@ -342,13 +371,13 @@ export default function IncidentDetailModal({
 
     return (
       <div className={compact ? '-mb-3' : ''}>
-        <label className="text-sm text-gray-600">{label}</label>
-        <div className="mt-0.5 text-sm text-gray-900">
+        <label className="text-[11px] font-semibold text-gray-600 tracking-wide">{label}</label>
+        <div className="mt-0.5 text-[13px] text-gray-900">
           {shouldExpand ? (
             <ExpandableText
               fieldKey={fieldKey}
               text={text}
-              className="text-sm leading-5 whitespace-pre-wrap"
+              className="text-[13px] leading-5 whitespace-pre-wrap"
             />
           ) : (
             children
@@ -364,20 +393,20 @@ export default function IncidentDetailModal({
     className?: string;
   }> = ({ fieldKey, text, className = '' }) => {
     const isExpanded = Boolean(expandedText[fieldKey]);
-    // ✅ 2줄 이상이면 더보기 버튼 표시 (약 40자 이상)
-    const showToggle = text.length > 40;
+    // ✅ 3줄 이상이면 더보기 버튼 표시 (약 60자 이상)
+    const showToggle = text.length > 60;
 
     return (
       <div className="relative">
         <p
           className={className}
           style={
-            {
+            !isExpanded && showToggle ? {
               display: '-webkit-box',
               WebkitBoxOrient: 'vertical',
-              WebkitLineClamp: 2, // ✅ 기본 2줄 고정
+              WebkitLineClamp: 3, // ✅ 기본 3줄로 제한
               overflow: 'hidden',
-            } as React.CSSProperties
+            } as React.CSSProperties : {}
           }
         >
           {text}
@@ -391,11 +420,60 @@ export default function IncidentDetailModal({
             {isExpanded ? '접기' : '더보기'}
           </button>
         )}
+      </div>
+    );
+  };
 
-        {/* ✅ 펼침: 레이아웃에 영향 없이 아래로 "툭" 나오는 드롭다운(absolute) */}
-        {isExpanded && (
-          <div className="absolute left-0 right-0 mt-1 bg-white border border-gray-200 shadow-lg p-2 z-50">
-            <p className="text-sm leading-5 whitespace-pre-wrap">{text}</p>
+  const typeKo = type === 'emergency' ? '응급' : type === 'fire' ? '화재' : type === 'trash' ? '쓰레기' : '낙석';
+
+  const statusPillClass = (() => {
+    if (detail.status === '처리완료' || detail.status === '진화완료') return 'bg-green-100 text-green-700 border-green-200';
+    if (detail.status === '대응중' || detail.status === '진화중') return 'bg-orange-100 text-orange-700 border-orange-200';
+    return 'bg-gray-100 text-gray-700 border-gray-200';
+  })();
+
+  // ✅ 심각도(상/중/하) 색상: 빨강/주황/노랑으로 통일
+  const severityPillClass = (() => {
+    if (detail.severity === '상') return 'bg-red-100 text-red-700 border-red-200';
+    if (detail.severity === '중') return 'bg-orange-100 text-orange-700 border-orange-200';
+    return 'bg-yellow-100 text-yellow-700 border-yellow-200';
+  })();
+
+  const RightCard: React.FC<{
+    title: string;
+    icon?: React.ReactNode;
+    accent?: 'red' | 'orange' | 'yellow' | 'blue' | 'purple' | 'gray';
+    splitLayout?: boolean;
+    children: React.ReactNode;
+  }> = ({ title, icon, accent = 'gray', splitLayout = false, children }) => {
+    const accentClass =
+      accent === 'red' ? 'border-l-red-500' :
+      accent === 'orange' ? 'border-l-orange-500' :
+      accent === 'yellow' ? 'border-l-yellow-500' :
+      accent === 'blue' ? 'border-l-blue-500' :
+      accent === 'purple' ? 'border-l-purple-500' :
+      'border-l-gray-300';
+
+    return (
+      <div
+        className={`bg-white border border-gray-200 border-l-4 ${accentClass} p-2.5 flex flex-col min-h-0 h-full`}
+        style={{ borderRadius: '0px' }}
+      >
+        <div className="flex items-center gap-2 mb-1.5 shrink-0">
+          {icon}
+          <h4 className="text-sm font-semibold text-gray-900">{title}</h4>
+        </div>
+
+        {/* ✅ splitLayout일 때는 좌우 분할, 아니면 기존 2열 그리드 */}
+        {splitLayout ? (
+          <div className="flex-1 min-h-0 flex gap-3">
+            {children}
+          </div>
+        ) : (
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="grid grid-cols-2 gap-x-8 gap-y-2">
+              {children}
+            </div>
           </div>
         )}
       </div>
@@ -404,7 +482,11 @@ export default function IncidentDetailModal({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4" style={{ zIndex: 10000 }} onClick={onClose}>
-      <div className="bg-white rounded-lg shadow-xl w-full max-h-[95vh] overflow-y-auto" style={{ maxWidth: '1100px' }} onClick={(e) => e.stopPropagation()}>
+      <div
+        className="bg-white rounded-lg shadow-xl w-full overflow-hidden flex flex-col"
+        style={{ maxWidth: '1320px', height: '90vh', maxHeight: '95vh' }}
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* 모달 헤더 */}
         <div className="flex items-center justify-between p-4 border-b border-gray-200" style={{ backgroundColor: headerColors[type] }}>
           <h2 className="text-xl font-semibold text-white">{headerTitles[type]}</h2>
@@ -414,9 +496,9 @@ export default function IncidentDetailModal({
         </div>
 
         {/* 모달 내용 */}
-        <div className="flex p-4 gap-4">
+        <div className="flex-1 min-h-0 overflow-hidden flex p-4 gap-5">
           {/* 좌측 패널 */}
-          <div className="flex-1 flex flex-col">
+          <div className="flex flex-col min-h-0 overflow-y-auto" style={{ width: '640px' }}>
             {/* ✅ 수동 등록은 자동탐지와 레이아웃을 완전히 분리 */}
             {isManualIncident ? (
               <>
@@ -482,6 +564,13 @@ export default function IncidentDetailModal({
 
                     zoomControl={false}
                     key={`${mapLatitude}-${mapLongitude}`}  // 좌표 변경 시 지도 재렌더링
+                    // ✅ 모달/레이아웃 리사이즈 시 Leaflet이 사이즈를 못 잡아 회색 영역이 생기는 문제 방지
+                    whenReady={(e) => {
+                      const map = (e as any).target;
+                      // 0ms/50ms 두 번 invalidate로 레이아웃 안정화
+                      setTimeout(() => map?.invalidateSize?.(), 0);
+                      setTimeout(() => map?.invalidateSize?.(), 50);
+                    }}
                   >
                     <TileLayer
                       attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -606,277 +695,188 @@ export default function IncidentDetailModal({
           </div>
 
           {/* 우측 패널 */}
-          <div className="flex-1 flex flex-col">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">상세정보 내용</h3>
-            <div className="grid grid-cols-2 gap-x-8 gap-y-3 flex-1">
-              {/* ===== (1) 사건 요약 ===== */}
-              <SectionTitle first>사건 요약</SectionTitle>
-
-              <Field label="사고 코드">
-                {detail.accidentCode}
-              </Field>
-
-              <Field label="유형">
-                {type === 'emergency' ? '응급' : type === 'fire' ? '화재' : type === 'trash' ? '쓰레기' : '낙석'}
-              </Field>
-
-              <Field label="상태">
-                <span
-                  className={`px-2 py-1 text-xs ${
-                    detail.status === '처리완료' || detail.status === '진화완료'
-                      ? 'bg-green-100 text-green-700'
-                      : detail.status === '대응중' || detail.status === '진화중'
-                      ? 'bg-orange-100 text-orange-700'
-                      : 'bg-gray-100 text-gray-700'
-                  }`}
-                  style={{ borderRadius: '0px' }}
-                >
-                  {detail.status}
-                </span>
-              </Field>
-
-              <Field label="심각도">
-                {isEditing && editedDetail ? (
-                  <select
-                    value={editedDetail.severity}
-                    onChange={(e) => onFieldChange('severity', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 text-gray-900"
-                    style={{ borderRadius: '0px' }}
-                  >
-                    <option value="상">상</option>
-                    <option value="중">중</option>
-                    <option value="하">하</option>
-                  </select>
-                ) : (
-                  <span
-                    className={`px-2 py-1 text-xs ${
-                      detail.severity === '상'
-                        ? 'bg-red-100 text-red-700'
-                        : detail.severity === '중'
-                        ? 'bg-yellow-100 text-yellow-700'
-                        : 'bg-blue-100 text-blue-700'
-                    }`}
-                    style={{ borderRadius: '0px' }}
-                  >
-                    {detail.severity}
-                  </span>
-                )}
-              </Field>
-
-              <Field label="발생시간">
-                {isEditing && editedDetail ? (
-                  <input
-                    type="text"
-                    value={editedDetail.time}
-                    onChange={(e) => onFieldChange('time', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 text-sm text-gray-900"
-                    style={{ borderRadius: '0px' }}
-                  />
-                ) : (
-                  detail.time
-                )}
-              </Field>
-
-              {/* 처리완료 정보는 요약 섹션에서만 */}
-              {detail.responseTime && (
-                <Field label="처리완료 시간">
-                  {detail.responseTime}
-                </Field>
-              )}
-
-              {detail.duration && (
-                <Field label="소요 시간">
-                  {detail.duration}
-                </Field>
-              )}
-
-              {/* ===== (2) 현장/운영 정보 ===== */}
-              <SectionTitle>현장/운영 정보</SectionTitle>
-
-              <Field label="위치">
-                {isEditing && editedDetail ? (
-                  <input
-                    type="text"
-                    value={editedDetail.location || ''}
-                    onChange={(e) => onFieldChange('location', e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 text-sm text-gray-900"
-                    style={{ borderRadius: '0px' }}
-                  />
-                ) : (
-                  detail.location
-                )}
-              </Field>
-
-              <Field label="CCTV">
-                {detail.cctvId && detail.cctvId !== '수동등록' ? (detail.cctvCode || detail.cctvId) : '-'}
-              </Field>
-
-              <Field label="처리자">
-                {detail.handlerDept ? `${detail.handler} (${detail.handlerDept})` : detail.handler}
-              </Field>
-
-              <Field label="등록 방식">
-                {isAIDetection ? 'AI 자동 탐지' : (detail.detectionBasis || '-')}
-              </Field>
-
-              {/* ===== (3) AI 분석 정보(있을 때만) ===== */}
-              {isAIDetection && (
-                <>
-                  <SectionTitle>AI 분석 정보</SectionTitle>
-
-                  {/* AI 섹션만 "좌/우 독립 컬럼"으로 배치해서
-                      오른쪽(신뢰도 근거)이 길어도 왼쪽(신뢰도/심각도 근거)이 안 밀리게 함 */}
-                  <div className="col-span-2 grid grid-cols-2 gap-x-8">
-                    {/* 왼쪽 컬럼: 신뢰도 -> 심각도 산정 근거 -> 모델 -> AI 탐지 시각 (촘촘하게) */}
-                    <div className="flex flex-col gap-2">
-                      {detail.confidence && (
-                        <Field label="신뢰도">
-                          <span className="text-emerald-600 font-medium">{detail.confidence}</span>
-                        </Field>
-                      )}
-
-                      {detail.severityReason && (
-                        <Field label="심각도 산정 근거">
-                          {detail.severityReason}
-                        </Field>
-                      )}
-
-                      {modelText && (
-                        <Field label="모델">
-                          {modelText}
-                        </Field>
-                      )}
-
-                      {detail.autoCreatedAt && (
-                        <Field label="AI 탐지 시각">
-                          {detail.autoCreatedAt}
-                        </Field>
-                      )}
-                    </div>
-
-                    {/* 오른쪽 컬럼: 신뢰도 근거 -> 탐지 특징 */}
-                    <div className="flex flex-col gap-2">
-                      {detail.confidenceReason && (
-                        <Field label="신뢰도 근거">
-                          {detail.confidenceReason}
-                        </Field>
-                      )}
-
-                      {detail.detectedFeatures && (
-                        <Field label="탐지 특징">
-                          {detail.detectedFeatures}
-                        </Field>
-                      )}
-                    </div>
+          <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+            {/* ✅ 핵심 하이라이트 */}
+            <div className="border border-gray-200 bg-white p-4 mb-3" style={{ borderRadius: '0px' }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 mb-2">
+                    <HeartPulse className="w-4 h-4 text-gray-700" />
+                    <p className="text-sm font-semibold text-gray-900 truncate">{typeKo} 탐지 상세</p>
                   </div>
-                </>
-              )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={`px-2 py-1 text-xs border ${statusPillClass}`} style={{ borderRadius: '0px' }}>
+                      상태: {detail.status || '-'}
+                    </span>
+                    <span className={`px-2 py-1 text-xs border ${severityPillClass}`} style={{ borderRadius: '0px' }}>
+                      심각도: {detail.severity || '-'}
+                    </span>
+                  </div>
+                </div>
+                <div className="text-right text-xs text-gray-600 shrink-0">
+                  <div className="flex items-center justify-end gap-1">
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>{isEditing && editedDetail ? editedDetail.time : detail.time}</span>
+                  </div>
+                  <div className="flex items-center justify-end gap-1 mt-1">
+                    <MapPin className="w-3.5 h-3.5" />
+                    <span className="max-w-[240px] truncate">{isEditing && editedDetail ? (editedDetail.location || '-') : (detail.location || '-')}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
 
-              {/* ===== (4) 유형별 상세 ===== */}
-              <SectionTitle>유형별 상세</SectionTitle>
+            {/* ✅ 그룹 카드들 (가로 확장: 데스크탑에서 2열) */}
+            <div className="flex-1 min-h-0 overflow-y-auto lg:overflow-hidden pr-1">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 lg:h-full lg:min-h-0" style={{ gridTemplateRows: '38% 1fr' }}>
+                <RightCard title="기본 정보" icon={<ClipboardList className="w-4 h-4 text-gray-700" />} accent={type === 'emergency' ? 'red' : 'gray'}>
+                <Field label="사고 코드">{detail.accidentCode}</Field>
+                <Field label="유형">{typeKo}</Field>
+                <Field label="상태">
+                  <span className={`px-2 py-1 text-xs border ${statusPillClass}`} style={{ borderRadius: '0px' }}>
+                    {detail.status}
+                  </span>
+                </Field>
+                <Field label="심각도">
+                  {isEditing && editedDetail ? (
+                    <select
+                      value={editedDetail.severity}
+                      onChange={(e) => onFieldChange('severity', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 text-gray-900"
+                      style={{ borderRadius: '0px' }}
+                    >
+                      <option value="상">상</option>
+                      <option value="중">중</option>
+                      <option value="하">하</option>
+                    </select>
+                  ) : (
+                    <span className={`px-2 py-1 text-xs border ${severityPillClass}`} style={{ borderRadius: '0px' }}>
+                      {detail.severity}
+                    </span>
+                  )}
+                </Field>
+                </RightCard>
 
-              {type === 'emergency' && (
-                <>
-                  {detail.patientName && (
-                    <Field label="환자명">
-                      {detail.patientName}
-                    </Field>
+              <RightCard title="위치/시간 정보" icon={<MapPin className="w-4 h-4 text-gray-700" />} accent="orange">
+                <Field label="발생시간">
+                  {isEditing && editedDetail ? (
+                    <input
+                      type="text"
+                      value={editedDetail.time}
+                      onChange={(e) => onFieldChange('time', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 text-sm text-gray-900"
+                      style={{ borderRadius: '0px' }}
+                    />
+                  ) : (
+                    detail.time
                   )}
-                  {detail.patientAge && (
-                    <Field label="나이">
-                      {detail.patientAge}
-                    </Field>
-                  )}
-                  {detail.patientGender && (
-                    <Field label="성별">
-                      {detail.patientGender}
-                    </Field>
-                  )}
-                  {detail.emergencyType && (
-                    <Field label="응급 유형">
-                      {detail.emergencyType}
-                    </Field>
-                  )}
-                  {detail.emergencySymptom && (
-                    <Field label="증상">
-                      {detail.emergencySymptom}
-                    </Field>
-                  )}
-                  {detail.rescueTeam && (
-                    <Field label="대응팀">
-                      {detail.rescueTeam}
-                    </Field>
-                  )}
-                  {detail.transferHospital && (
-                    <Field label="이송병원/처리 기관">
-                      {detail.transferHospital}
-                    </Field>
-                  )}
-                </>
-              )}
+                </Field>
 
-              {type === 'fire' && (
-                <>
-                  {detail.windInfo && (
-                    <Field label="풍향/풍속">
-                      {detail.windInfo}
-                    </Field>
+                <Field label="위치">
+                  {isEditing && editedDetail ? (
+                    <input
+                      type="text"
+                      value={editedDetail.location || ''}
+                      onChange={(e) => onFieldChange('location', e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 text-sm text-gray-900"
+                      style={{ borderRadius: '0px' }}
+                    />
+                  ) : (
+                    detail.location
                   )}
-                  {detail.spreadDirection && (
-                    <Field label="확산 방향">
-                      {detail.spreadDirection}
-                    </Field>
-                  )}
-                  {detail.surroundingRisk && (
-                    <Field label="주변 위험">
-                      {detail.surroundingRisk}
-                    </Field>
-                  )}
-                </>
-              )}
+                </Field>
 
-              {type === 'trash' && (
-                <>
-                  {detail.trashType && (
-                    <Field label="쓰레기 종류">
-                      {detail.trashType}
-                    </Field>
-                  )}
-                  {detail.amount && (
-                    <Field label="양/규모">
-                      {detail.amount}
-                    </Field>
-                  )}
-                </>
-              )}
+                <Field label="CCTV">{detail.cctvId && detail.cctvId !== '수동등록' ? (detail.cctvCode || detail.cctvId) : '-'}</Field>
+                <Field label="처리자">{detail.handlerDept ? `${detail.handler || '미지정'} (${detail.handlerDept})` : (detail.handler || '미지정')}</Field>
 
-              {type === 'rockfall' && (
-                <>
-                  {detail.rockSizeClass && (
-                    <Field label="암괴 규모">
-                      {detail.rockSizeClass}
-                    </Field>
-                  )}
-                  {detail.affectedAssetType && (
-                    <Field label="피해 대상 유형">
-                      {detail.affectedAssetType}
-                    </Field>
-                  )}
-                  {detail.affectedAssetName && (
-                    <Field label="피해 대상 식별">
-                      {detail.affectedAssetName}
-                    </Field>
-                  )}
-                  {detail.damageDescription && (
-                    <div className="col-span-2">
-                      <Field label="피해 설명">
-                        {detail.damageDescription}
-                      </Field>
+                {detail.responseTime && <Field label="처리완료 시간">{detail.responseTime}</Field>}
+                {detail.duration && <Field label="소요 시간">{detail.duration}</Field>}
+              </RightCard>
+
+              <RightCard title="기술 정보" icon={<Cpu className="w-4 h-4 text-gray-700" />} accent="yellow">
+                <Field label="등록 방식">{isAIDetection ? 'AI 자동 탐지' : (detail.detectionBasis || '-')}</Field>
+                {modelText && <Field label="모델">{modelText}</Field>}
+                {detail.confidence && (
+                  <Field label="신뢰도">
+                    <span className="text-emerald-600 font-semibold">{detail.confidence}</span>
+                  </Field>
+                )}
+                {detail.severityReason && (
+                  <Field label="심각도 산정 근거">
+                    {sanitizeSeverityReason(detail.severityReason)}
+                  </Field>
+                )}
+                {detail.autoCreatedAt && <Field label="AI 탐지 시각">{detail.autoCreatedAt}</Field>}
+              </RightCard>
+
+              <RightCard title="추가 상세" icon={<Info className="w-4 h-4 text-gray-700" />} accent={type === 'emergency' ? 'red' : 'gray'} splitLayout={type !== 'trash' && type !== 'rockfall'}>
+                {type === 'trash' || type === 'rockfall' ? (
+                  // 쓰레기, 낙석: 좌우 분할 없이 통합
+                  <>
+                    {type === 'trash' && (
+                      <>
+                        {detail.trashType && <Field label="쓰레기 종류">{detail.trashType}</Field>}
+                        {detail.amount && <Field label="양/규모">{detail.amount}</Field>}
+                      </>
+                    )}
+                    {type === 'rockfall' && (
+                      <>
+                        {detail.rockSizeClass && <Field label="암괴 규모">{detail.rockSizeClass}</Field>}
+                        {detail.affectedAssetType && <Field label="피해 대상 유형">{detail.affectedAssetType}</Field>}
+                        {detail.affectedAssetName && <Field label="피해 대상 식별">{detail.affectedAssetName}</Field>}
+                        {detail.damageDescription && <Field label="피해 설명">{detail.damageDescription}</Field>}
+                      </>
+                    )}
+                    {isAIDetection && (
+                      <>
+                        {detail.confidenceReason && <Field label="신뢰도 근거">{detail.confidenceReason}</Field>}
+                        {detail.detectedFeatures && <Field label="탐지 특징">{detail.detectedFeatures}</Field>}
+                      </>
+                    )}
+                  </>
+                ) : (
+                  // 응급, 화재: 좌우 분할
+                  <>
+                    {/* 왼쪽 영역: 유형별 상세 */}
+                    <div className="flex-1 min-h-0 overflow-y-auto">
+                      <div className="space-y-2">
+                        {type === 'emergency' && (
+                          <>
+                            {detail.emergencyType && <Field label="응급 유형">{detail.emergencyType}</Field>}
+                            {detail.emergencySymptom && <Field label="증상">{detail.emergencySymptom}</Field>}
+                            {detail.rescueTeam && <Field label="대응팀">{detail.rescueTeam}</Field>}
+                            {detail.transferHospital && <Field label="이송병원/처리 기관">{detail.transferHospital}</Field>}
+                            {detail.patientName && <Field label="환자명">{detail.patientName}</Field>}
+                            {detail.patientAge && <Field label="나이">{detail.patientAge}</Field>}
+                            {detail.patientGender && <Field label="성별">{detail.patientGender}</Field>}
+                          </>
+                        )}
+
+                        {type === 'fire' && (
+                          <>
+                            {detail.windInfo && <Field label="풍향/풍속">{detail.windInfo}</Field>}
+                            {detail.spreadDirection && <Field label="확산 방향">{detail.spreadDirection}</Field>}
+                            {detail.surroundingRisk && <Field label="주변 위험">{detail.surroundingRisk}</Field>}
+                          </>
+                        )}
+                      </div>
                     </div>
-                  )}
-                </>
-              )}
 
+                    {/* 오른쪽 영역: AI 근거 */}
+                    <div className="flex-1 min-h-0 overflow-y-auto">
+                      <div className="space-y-2">
+                        {isAIDetection && (
+                          <>
+                            {detail.confidenceReason && <Field label="신뢰도 근거">{detail.confidenceReason}</Field>}
+                            {detail.detectedFeatures && <Field label="탐지 특징">{detail.detectedFeatures}</Field>}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </RightCard>
+              </div>
             </div>
 
             {/* 하단 버튼 */}

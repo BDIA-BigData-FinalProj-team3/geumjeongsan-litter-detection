@@ -1377,6 +1377,7 @@ public class CCTVController {
             @RequestParam(value = "saveToDb", required = false, defaultValue = "true") boolean saveToDb,
             @RequestParam(value = "frameCount", required = false, defaultValue = "4") int frameCount,
             @RequestParam(value = "frameIntervalSec", required = false, defaultValue = "5") int frameIntervalSec,
+            @RequestParam(value = "startTimeSec", required = false, defaultValue = "0") int startTimeSec,
             @RequestParam(value = "stopOnDetect", required = false, defaultValue = "true") boolean stopOnDetect
     ) {
         File tempVideo = null;
@@ -1396,9 +1397,15 @@ public class CCTVController {
             // 2) URL에서 mp4 다운로드
             tempVideo = videoFrameExtractor.downloadVideoToTemp(videoUrl.trim());
 
-            // 3) FFmpeg로 프레임 추출
-            List<File> frameFiles = extractFrames(tempVideo, tempDir, frameCount, frameIntervalSec);
-            log.info("📸 [CCTV] Extracted {} frames (trash bbox)", frameFiles.size());
+            // 3) FFmpeg로 프레임 추출 (startTimeSec 지원)
+            List<File> frameFiles;
+            if (startTimeSec > 0) {
+                frameFiles = extractFramesFromStart(tempVideo, tempDir, startTimeSec, frameCount, frameIntervalSec);
+                log.info("📸 [CCTV] Extracted {} frames starting from {}s (trash bbox)", frameFiles.size(), startTimeSec);
+            } else {
+                frameFiles = extractFrames(tempVideo, tempDir, frameCount, frameIntervalSec);
+                log.info("📸 [CCTV] Extracted {} frames (trash bbox)", frameFiles.size());
+            }
 
             if (frameFiles.isEmpty()) {
                 return ResponseEntity.status(HttpStatus.BAD_REQUEST)
@@ -1452,6 +1459,28 @@ public class CCTVController {
                     @SuppressWarnings("unchecked")
                     List<Map<String, Object>> dets = (List<Map<String, Object>>) parsedJson.get("detections");
                     detections = dets != null ? dets : new ArrayList<>();
+                }
+
+                // ✅ bbox가 center (cx,cy,w,h)로 오는 경우를 대비해 top-left (x,y,w,h)로 변환
+                //    (ImageOverlayService와 trash_bbox_refiner.py는 top-left를 기대함)
+                for (Map<String, Object> det : detections) {
+                    Object bboxObj = det.get("bbox");
+                    if (bboxObj instanceof Map) {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> bbox = (Map<String, Object>) bboxObj;
+                        
+                        double x = convertToDouble(bbox.get("x"), 0.0);
+                        double y = convertToDouble(bbox.get("y"), 0.0);
+                        double w = convertToDouble(bbox.get("w"), 0.0);
+                        double h = convertToDouble(bbox.get("h"), 0.0);
+
+                        // 간단한 휴리스틱: x,y가 0.5 근처이고 w,h가 작으면 center일 가능성 높음
+                        // (정확한 판단은 모델 문서 필요하나, 일단 이 방식으로 보정)
+                        if (x > 0.1 && x < 0.9 && y > 0.1 && y < 0.9 && w < 0.5 && h < 0.5) {
+                            bbox.put("x", x - (w / 2.0));
+                            bbox.put("y", y - (h / 2.0));
+                        }
+                    }
                 }
 
                 // 5-3) overlay 생성 + S3 업로드
@@ -2391,6 +2420,13 @@ public class CCTVController {
         File imgFile = null;
         File detFile = null;
         try {
+            // local numeric parser (avoid extra dependency)
+            java.util.function.BiFunction<Object, Double, Double> toDouble = (v, def) -> {
+                if (v == null) return def;
+                if (v instanceof Number n) return n.doubleValue();
+                try { return Double.parseDouble(String.valueOf(v)); } catch (Exception e) { return def; }
+            };
+
             tmpDir = new File(System.getProperty("java.io.tmpdir"), "trash-bbox-refine-" + System.currentTimeMillis());
             tmpDir.mkdirs();
 
@@ -2399,7 +2435,44 @@ public class CCTVController {
             Files.write(imgFile.toPath(), imageBytes);
 
             detFile = new File(tmpDir, safeCamera + "_detections.json");
-            objectMapper.writeValue(detFile, detections);
+            // ✅ 일부 모델/Gemini가 bbox를 center(cx,cy,w,h)로 주는 케이스가 있어
+            //    refiner(OpenCV)와 overlay는 top-left(x,y,w,h)를 기대하므로 여기서 보정한다.
+            List<Map<String, Object>> normalized = new ArrayList<>();
+            for (Map<String, Object> det : detections) {
+                if (det == null) continue;
+                Object bboxObj = det.get("bbox");
+                if (!(bboxObj instanceof Map<?, ?>)) {
+                    normalized.add(det);
+                    continue;
+                }
+                @SuppressWarnings("unchecked")
+                Map<String, Object> bbox = (Map<String, Object>) bboxObj;
+                double x = toDouble.apply(bbox.get("x"), 0.0);
+                double y = toDouble.apply(bbox.get("y"), 0.0);
+                double w = toDouble.apply(bbox.get("w"), 0.0);
+                double h = toDouble.apply(bbox.get("h"), 0.0);
+
+                String label = det.get("label") != null ? String.valueOf(det.get("label")) : "";
+                boolean looksNormalized = (x <= 1.0 && y <= 1.0 && w <= 1.0 && h <= 1.0);
+
+                // TRASH는 center 좌표로 들어오는 사례가 있어, 안전하게 center->top-left 변환
+                if (looksNormalized && label.toLowerCase().contains("trash") && w > 0 && h > 0) {
+                    double nx = x - (w / 2.0);
+                    double ny = y - (h / 2.0);
+                    // clamp
+                    nx = Math.max(0.0, Math.min(1.0, nx));
+                    ny = Math.max(0.0, Math.min(1.0, ny));
+                    Map<String, Object> bbox2 = new HashMap<>(bbox);
+                    bbox2.put("x", nx);
+                    bbox2.put("y", ny);
+                    Map<String, Object> det2 = new HashMap<>(det);
+                    det2.put("bbox", bbox2);
+                    normalized.add(det2);
+                } else {
+                    normalized.add(det);
+                }
+            }
+            objectMapper.writeValue(detFile, normalized);
 
             // script path
             String userDir = System.getProperty("user.dir");
@@ -2629,6 +2702,23 @@ public class CCTVController {
             }
         } catch (Exception e) {
             log.warn("⚠️ [CCTV] Failed to cleanup temp files", e);
+        }
+    }
+
+    /**
+     * Object를 double로 변환하는 헬퍼 메서드
+     */
+    private static double convertToDouble(Object obj, double defaultValue) {
+        if (obj == null) {
+            return defaultValue;
+        }
+        if (obj instanceof Number) {
+            return ((Number) obj).doubleValue();
+        }
+        try {
+            return Double.parseDouble(obj.toString());
+        } catch (NumberFormatException e) {
+            return defaultValue;
         }
     }
 

@@ -79,6 +79,16 @@ public class ImageOverlayService {
                     h = clamp01(h);
                 }
 
+                // ✅ 일부 모델은 bbox를 center(cx,cy,w,h)로 주는 경우가 있어 오프셋이 생김.
+                // - TRASH/FIRE/SMOKE 라벨은 center 기반 케이스가 자주 발생 → 좌상단(top-left)으로 변환
+                if (label != null) {
+                    String ll = label.toLowerCase();
+                    if ((ll.contains("trash") || ll.contains("fire") || ll.contains("smoke")) && w > 0.0 && h > 0.0) {
+                        x = clamp01(x - (w / 2.0));
+                        y = clamp01(y - (h / 2.0));
+                    }
+                }
+
                 // 정규화 좌표 → 픽셀 변환
                 int px = (int) Math.round(x * W);
                 int py = (int) Math.round(y * H);

@@ -91,6 +91,11 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   }, []);
   
   const [selectedCCTV, setSelectedCCTV] = useState<CCTVData | null>(null);
+  // ✅ 비동기(분석 버튼)에서 최신 selectedCCTV를 안정적으로 참조하기 위한 ref
+  const selectedCCTVRef = useRef<CCTVData | null>(null);
+  useEffect(() => {
+    selectedCCTVRef.current = selectedCCTV;
+  }, [selectedCCTV]);
   const [showEvents, setShowEvents] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
   const [selectedEventDetail, setSelectedEventDetail] = useState<any | null>(null); // IncidentDetailDto 기반
@@ -756,7 +761,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   }, [selectedEvent?.incidentId]);
 
   // Handle TRASH frame analysis (Gemini main). 기존 Qwen은 보조/대체로 유지 가능.
-  const handleAnalyzeFrameWithQwen = async (cctvId?: string, cctvLocation?: string) => {
+  const handleAnalyzeFrameWithQwen = async (cctvId?: string, cctvLocation?: string, fromCard: boolean = false) => {
     const targetCctvId = cctvId || selectedCCTV?.id;
     const targetLocation = cctvLocation || selectedCCTV?.location;
     
@@ -764,17 +769,19 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
 
     setIsAnalyzingQwen(true);
     try {
-      // ✅ (추가 기능) S3 영상 기반 쓰레기 분석 시도
-      // - 기본은 "원래 하던 방식(프레임 캡처)" 그대로 유지
+      // ✅ S3 영상 기반 쓰레기 분석 시도 (8초 지점 캡처)
+      // - S3 URL이 있으면 S3 비디오에서 8초 지점을 추출해서 분석 (bbox 포함)
       // - 서버 환경(ffmpeg 등) 이슈로 실패해도 아래 캡처 방식으로 자동 fallback
-      const s3VideoUrl = USE_TRASH_S3_VIDEO ? trashS3VideoUrlMap[targetCctvId] : undefined;
+      const s3VideoUrl = trashS3VideoUrlMap[targetCctvId];
       if (s3VideoUrl) {
         try {
+          // ✅ 8초 지점 1프레임만 추출해서 분석 (bbox 포함)
           const result = await analyzeTrashVideoFromS3(targetCctvId, {
             videoUrl: s3VideoUrl,
             saveToDb: true,
-            frameCount: 4,
-            frameIntervalSec: 5,
+            frameCount: 1,
+            frameIntervalSec: 0,
+            startTimeSec: 8,
             stopOnDetect: true,
           });
 
@@ -800,6 +807,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
           setAnalysisEvents(prev => [...prev, newEvent]);
 
           // ✅ 결과는 events/SSE로 반영되므로 팝업(alert) 없이 조용히 처리
+          setIsAnalyzingQwen(false);
           return;
         } catch (e) {
           console.warn('⚠️ [Trash] S3 비디오 분석 실패 → 기존 프레임 캡처 방식으로 fallback', e);
@@ -808,12 +816,38 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       }
 
       // ⬇️ 원래 하던 방식: 현재 프레임 캡처(이미지 1장) 기반 분석
+      // ✅ 카드(리스트)에서 버튼만 눌러도 캡처 가능하도록:
+      // 해당 CCTV를 먼저 선택해서 상세 패널 videoRef를 만들고(렌더링), 준비될 때까지 잠깐 대기
+      const ensureVideoReady = async () => {
+        // 선택이 다른 CCTV이거나 videoRef가 없으면 우선 선택
+        const currentSelected = selectedCCTVRef.current;
+        if (!videoRef.current || currentSelected?.id !== targetCctvId) {
+          const dbIdFromView = backendCCTVs.find(b => b.cctvCode === targetCctvId)?.id;
+          handleCCTVClick(targetCctvId, typeof dbIdFromView === 'number' ? dbIdFromView : undefined);
+        }
+
+        // videoRef가 붙고 메타데이터가 잡힐 때까지 polling (최대 2초)
+        const timeoutMs = 2000;
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          const v = videoRef.current;
+          const selectedNow = selectedCCTVRef.current;
+          if (v && selectedNow?.id === targetCctvId) {
+            // 메타데이터가 없으면 duration/seek 불가 → loadedmetadata까지 대기
+            if (Number.isFinite(v.duration) && v.duration > 0) return;
+            if (v.readyState >= 1) return; // loadedmetadata 수준
+          }
+          await new Promise<void>((r) => setTimeout(() => r(), 50));
+        }
+      };
+
+      await ensureVideoReady();
+
       if (!videoRef.current) {
-        // 카드(리스트)에서 버튼만 누르는 경우: 상세 패널/비디오가 렌더링되지 않아 캡처 불가
         setIsAnalyzingQwen(false);
-        // ✅ 팝업 없이 종료 (필요 시 UI 토스트로 대체 가능)
         return;
       }
+
       const video = videoRef.current;
       
       // ✅ "무조건 8초" 지점 프레임을 캡처해서 분석에 사용
@@ -1506,6 +1540,9 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                                 // 프레임 인덱스 초기화
                                 thumbnailFrameIndices.current.set(cctv.id, 0);
                               }}
+                              onPointerDown={(e) => e.stopPropagation()}
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onClick={(e) => e.stopPropagation()}
                             />
                           ) : cctv.detecting && EventIcon ? (
                             /* 이벤트 발생 시 썸네일 표시 */
@@ -1591,7 +1628,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                         {/* 하단 설명바 - 메뉴바 상태에 따라 내용만 다르게, 전체 카드 높이는 크게 안 건드림 */}
                         {sidebarOpen ? (
                           // 기존 레이아웃 (메뉴바 펼침)
-                          <div className="px-3 py-1 transition-colors duration-300 group-hover:bg-gray-50">
+                          <div className="px-3 py-1 transition-colors duration-300 group-hover:bg-gray-50 relative z-20">
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-2">
                                 <p className="text-base text-gray-900 font-medium transition-colors duration-300 group-hover:text-blue-600">{cctv.id}</p>
@@ -1608,10 +1645,11 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                               {(cctv.id === 'CCTV-001' || cctv.id === 'CCTV-002' || cctv.id === 'CCTV-003') && (
                                 <button
                                   type="button"
-                                  onPointerDown={(e) => e.stopPropagation()}
-                                  onMouseDown={(e) => e.stopPropagation()}
+                                  onPointerDown={(e) => { e.stopPropagation(); }}
+                                  onMouseDown={(e) => { e.stopPropagation(); }}
                                   onClick={async (e) => {
                                     e.stopPropagation();
+                                    e.preventDefault();
                                     const location =
                                       backendCCTVs.find(b => b.cctvCode === cctv.id)?.locationDesc || cctv.id;
                                     if (cctv.id === 'CCTV-001') {
@@ -1627,7 +1665,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                                     (cctv.id === 'CCTV-002' && isAnalyzingFire) ||
                                     (cctv.id === 'CCTV-003' && isAnalyzingQwen)
                                   }
-                                  className="px-2 py-1 text-xs bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors whitespace-nowrap leading-tight"
+                                  className="relative z-50 px-2 py-1 text-xs bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors whitespace-nowrap leading-tight cursor-pointer"
                                 >
                                   {cctv.id === 'CCTV-001' && (isAnalyzing ? '탐지 중...' : '응급 환자 탐지 실행')}
                                   {cctv.id === 'CCTV-002' && (isAnalyzingFire ? '탐지 중...' : '화재 조기 탐지 실행')}
@@ -1723,10 +1761,11 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                                 {(cctv.id === 'CCTV-001' || cctv.id === 'CCTV-002' || cctv.id === 'CCTV-003') && (
                                   <button
                                     type="button"
-                                    onPointerDown={(e) => e.stopPropagation()}
-                                    onMouseDown={(e) => e.stopPropagation()}
+                                    onPointerDown={(e) => { e.stopPropagation(); }}
+                                    onMouseDown={(e) => { e.stopPropagation(); }}
                                     onClick={async (e) => {
                                       e.stopPropagation();
+                                      e.preventDefault();
                                       const location =
                                         backendCCTVs.find(b => b.cctvCode === cctv.id)?.locationDesc || cctv.id;
                                       if (cctv.id === 'CCTV-001') {
@@ -1742,7 +1781,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                                       (cctv.id === 'CCTV-002' && isAnalyzingFire) ||
                                       (cctv.id === 'CCTV-003' && isAnalyzingQwen)
                                     }
-                                    className="px-2 py-1 text-xs bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors whitespace-nowrap leading-tight"
+                                    className="relative z-50 px-2 py-1 text-xs bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors whitespace-nowrap leading-tight cursor-pointer"
                                   >
                                     {cctv.id === 'CCTV-001' && (isAnalyzing ? '탐지 중...' : '응급 환자 탐지 실행')}
                                     {cctv.id === 'CCTV-002' && (isAnalyzingFire ? '탐지 중...' : '화재 조기 탐지 실행')}

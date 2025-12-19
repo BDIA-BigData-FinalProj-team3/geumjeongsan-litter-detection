@@ -103,7 +103,9 @@ public class NotificationService {
         if ("ALL".equals(normalized)) {
             return recipientRepository.findAll();
         }
-        return recipientRepository.findByIncidentTypeIn(List.of(normalized, "ALL"));
+        List<NotificationRecipient> result = recipientRepository.findByIncidentTypeIn(List.of(normalized, "ALL"));
+        System.out.println("📢 [NotificationService] getRecipientsByIncidentType - incidentType: " + normalized + ", result size: " + result.size());
+        return result;
     }
     
     public List<NotificationRecipient> getRecipientsByType(String recipientType) {

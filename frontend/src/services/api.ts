@@ -2425,6 +2425,7 @@ export const analyzeTrashVideoFromS3 = async (
     saveToDb?: boolean;
     frameCount?: number;
     frameIntervalSec?: number;
+    startTimeSec?: number;
     stopOnDetect?: boolean;
   }
 ): Promise<any> => {
@@ -2433,6 +2434,7 @@ export const analyzeTrashVideoFromS3 = async (
   if (typeof params.saveToDb === 'boolean') q.set('saveToDb', String(params.saveToDb));
   if (typeof params.frameCount === 'number') q.set('frameCount', String(params.frameCount));
   if (typeof params.frameIntervalSec === 'number') q.set('frameIntervalSec', String(params.frameIntervalSec));
+  if (typeof params.startTimeSec === 'number') q.set('startTimeSec', String(params.startTimeSec));
   if (typeof params.stopOnDetect === 'boolean') q.set('stopOnDetect', String(params.stopOnDetect));
 
   const url = `${BACKEND_URL}/api/cctv/${encodeURIComponent(cctvCode)}/video/analyze-trash-video-s3?${q.toString()}`;

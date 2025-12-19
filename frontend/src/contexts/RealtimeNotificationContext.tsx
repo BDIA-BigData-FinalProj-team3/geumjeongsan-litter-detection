@@ -96,18 +96,29 @@ export const RealtimeNotificationProvider: React.FC<{ children: React.ReactNode 
 
   const fetchRecipientsText = async (incidentTypeCode: string): Promise<string> => {
     const key = String(incidentTypeCode || '').toUpperCase().trim();
-    if (!key) return '';
+    if (!key) {
+      console.log('📢 [Recipients] Empty incidentTypeCode');
+      return '';
+    }
 
     const cached = recipientsCacheRef.current.get(key);
-    if (cached && Date.now() - cached.fetchedAt < RECIPIENTS_TTL_MS) return cached.text;
+    if (cached && Date.now() - cached.fetchedAt < RECIPIENTS_TTL_MS) {
+      console.log('📢 [Recipients] Using cached:', key, cached.text);
+      return cached.text;
+    }
 
     try {
-      const res = await fetch(`${BACKEND_URL}/api/notifications/recipients/incident/${encodeURIComponent(key)}`);
+      const url = `${BACKEND_URL}/api/notifications/recipients/incident/${encodeURIComponent(key)}`;
+      console.log('📢 [Recipients] Fetching:', url);
+      const res = await fetch(url);
       if (!res.ok) throw new Error(`Failed to fetch recipients (${res.status})`);
       const list = await res.json();
+      console.log('📢 [Recipients] Response:', list);
 
       const arr = Array.isArray(list) ? list : [];
       const enabled = arr.filter((r: any) => r?.isEnabled !== false);
+      console.log('📢 [Recipients] Enabled count:', enabled.length);
+      
       const labels = enabled
         .map((r: any) => {
           const org = String(r?.organization || '').trim();
@@ -127,6 +138,7 @@ export const RealtimeNotificationProvider: React.FC<{ children: React.ReactNode 
           ? ''
           : `${head.join(', ')}${rest > 0 ? ` 외 ${rest}명` : ''}`;
 
+      console.log('📢 [Recipients] Final text:', text);
       recipientsCacheRef.current.set(key, { text, fetchedAt: Date.now() });
       return text;
     } catch (e) {
@@ -183,6 +195,8 @@ export const RealtimeNotificationProvider: React.FC<{ children: React.ReactNode 
 
           const message = `${payload?.incidentCode ?? '사건'} (${payload?.status ?? ''})`;
           const recipientsText = await fetchRecipientsText(incidentTypeCode);
+
+          console.log('📢 [Notification] incidentTypeCode:', incidentTypeCode, 'recipientsText:', recipientsText);
 
           // 체감: 토스트 + 비프
           toastIncident({ type: mappedType, title, message, recipientsText });
