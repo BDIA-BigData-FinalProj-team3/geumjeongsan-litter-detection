@@ -10,7 +10,8 @@ import API_BASE_URL, { INGEST_HLS_URL } from '../config/api';
 import Hls from 'hls.js';
 import cctv001DemoVideo from '../assets/cctv-001_20251208T140000Z.mp4';
 // 더미 비디오 import
-import cctv002Video from '../assets/cctv_dummy/cctv-002.mp4';
+import cctv002Video from '../assets/cctv_dummy/cctv-002-1.mp4';
+import cctv002Video2 from '../assets/cctv_dummy/cctv-002-2.mp4';
 import cctv003Video from '../assets/cctv_dummy/cctv-003.mp4';
 import cctv004Video from '../assets/cctv_dummy/cctv-004.mp4';
 import cctv005Video from '../assets/cctv_dummy/cctv-005.mp4';
@@ -108,6 +109,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
   
   // Video playback state
   const [isPlayingVideo, setIsPlayingVideo] = useState(false);
+  const [activeVideoSrc, setActiveVideoSrc] = useState<string | null>(null); // 현재 재생 중인 비디오 src (CCTV-002 연속 재생용)
   const [analysisResult, setAnalysisResult] = useState<FallenAnalysisResponse | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [showGeminiPopup, setShowGeminiPopup] = useState(false);
@@ -217,6 +219,20 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       lastIncidentType: fromDb?.lastIncidentType ?? null,
     });
   }, [initialSelectedCCTVId, backendCCTVs]);
+
+  // ✅ CCTV 선택 시 기본 비디오 src 세팅 (더미 CCTV만)
+  useEffect(() => {
+    if (!selectedCCTV) {
+      setActiveVideoSrc(null);
+      return;
+    }
+    if (!dummyCCTVIds.includes(selectedCCTV.id)) {
+      setActiveVideoSrc(null);
+      return;
+    }
+    // 기본 비디오로 초기화
+    setActiveVideoSrc(cctvVideoMap[selectedCCTV.id] || null);
+  }, [selectedCCTV?.id]);
 
   // 더미 비디오가 있는 CCTV가 선택되면 자동으로 재생
   useEffect(() => {
@@ -1143,13 +1159,34 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
                       {(dummyCCTVIds.includes(selectedCCTV.id) || selectedCCTV.id === liveStreamCCTVId) && (
                         <video
                           ref={videoRef}
-                          src={dummyCCTVIds.includes(selectedCCTV.id) ? cctvVideoMap[selectedCCTV.id] : undefined}
+                          key={activeVideoSrc || cctvVideoMap[selectedCCTV.id]} // src 변경 시 강제 리렌더링
+                          src={dummyCCTVIds.includes(selectedCCTV.id) ? (activeVideoSrc ?? cctvVideoMap[selectedCCTV.id]) : undefined}
                           controls
                           muted={selectedCCTV.id !== liveStreamCCTVId}
-                          loop={dummyCCTVIds.includes(selectedCCTV.id)}
+                          loop={dummyCCTVIds.includes(selectedCCTV.id) && selectedCCTV.id !== 'CCTV-002'} // CCTV-002는 loop=false (연속 재생으로 처리)
                           autoPlay
                           className={`w-full h-full object-contain ${isPlayingVideo ? '' : 'hidden'}`}
                           onPlay={() => setIsPlayingVideo(true)}
+                          onEnded={() => {
+                            // ✅ CCTV-002: 첫 번째 영상 끝나면 두 번째 영상(cctv-002-2)으로 자동 전환
+                            if (selectedCCTV?.id === 'CCTV-002') {
+                              if (activeVideoSrc === cctv002Video2) {
+                                // 이미 2번 영상이 끝났으면 종료 (또는 다시 1번으로 돌아가게 하려면 아래 주석 해제)
+                                // setActiveVideoSrc(cctv002Video);
+                                return;
+                              }
+                              // 1번 영상 끝나면 2번 영상으로 전환
+                              setActiveVideoSrc(cctv002Video2);
+                              // 비디오 재생
+                              setTimeout(() => {
+                                if (videoRef.current) {
+                                  videoRef.current.play().catch(error => {
+                                    console.error('Video play error:', error);
+                                  });
+                                }
+                              }, 100);
+                            }
+                          }}
                         />
                       )}
                       
