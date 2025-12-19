@@ -125,6 +125,134 @@ public class FireService {
      * 파이썬 fire_detector.py 결과(JSON Map)로 AUTO 화재 사건 저장
      */
     @Transactional
+    /**
+     * Gemini 화재 분석 결과(detections)를 DB에 저장
+     * @param detections Gemini detections 배열 (fire/smoke bbox 정보)
+     * @param cctvId CCTV ID
+     * @param locationDesc 위치 설명
+     * @return IncidentCreateResponse
+     */
+    public IncidentCreateResponse createFireFromGemini(
+            List<Map<String, Object>> detections,
+            Long cctvId,
+            String locationDesc
+    ) {
+        OffsetDateTime now = OffsetDateTime.now(KST);
+        
+        // 1) Incident 생성
+        Incident incident = new Incident();
+        incident.setIncidentType("FIRE");
+        incident.setSourceType("AUTO");
+        incident.setStatus("PENDING");
+        incident.setCctvId(cctvId);
+        incident.setDetectedAt(now);
+        incident.setLocationDesc(locationDesc != null ? locationDesc : "CCTV 자동 탐지(화재)");
+        incident.setCreatedAt(now);
+        incident.setUpdatedAt(now);
+        incident.setSeverityLevel("HIGH"); // 화재는 기본 HIGH
+        
+        // Memo: detections 요약
+        StringBuilder memoBuilder = new StringBuilder();
+        memoBuilder.append("AI 자동 탐지(화재/연기)\n");
+        memoBuilder.append(String.format("감지 객체: %d개\n", detections.size()));
+        for (int i = 0; i < detections.size(); i++) {
+            Map<String, Object> det = detections.get(i);
+            String label = det.get("label") != null ? det.get("label").toString() : "unknown";
+            Object scoreObj = det.get("score");
+            double score = 0.0;
+            if (scoreObj instanceof Number n) {
+                score = n.doubleValue();
+            }
+            memoBuilder.append(String.format("  %d. %s (%.0f%%)\n", i + 1, label, score * 100));
+        }
+        incident.setMemo(memoBuilder.toString());
+        
+        // incident_code: F-YYMMDD-XXXA
+        String dateStr = incident.getDetectedAt().format(DateTimeFormatter.ofPattern("yyMMdd"));
+        String prefix = String.format("F-%s-", dateStr);
+        Incident lastIncident = incidentRepository.findTopByIncidentCodeStartingWithOrderByIncidentCodeDesc(prefix);
+        int nextSequence = 1;
+        if (lastIncident != null && lastIncident.getIncidentCode() != null) {
+            String lastCode = lastIncident.getIncidentCode();
+            try {
+                String[] parts = lastCode.split("-");
+                if (parts.length >= 3) {
+                    String seqPart = parts[2].substring(0, 3);
+                    nextSequence = Integer.parseInt(seqPart) + 1;
+                }
+            } catch (Exception ignored) {
+                nextSequence = 1;
+            }
+        }
+        String sequence = String.format("%03d", nextSequence);
+        incident.setIncidentCode(String.format("%s%sA", prefix, sequence));
+        
+        incident = incidentRepository.save(incident);
+        
+        // 2) FireDetail 생성
+        FireDetail detail = new FireDetail();
+        detail.setIncidentId(incident.getId());
+        detail.setCreatedAt(now);
+        detail.setNote(memoBuilder.toString());
+        detail.setNearbyRisks(String.format("%d개 감지", detections.size()));
+        fireDetailRepository.save(detail);
+        
+        // 3) IncidentAuto 생성
+        IncidentAuto auto = new IncidentAuto();
+        auto.setIncidentId(incident.getId());
+        auto.setDetectionModel(geminiModelName != null ? geminiModelName : "gemini-2.5-flash");
+        auto.setDetectionVersion("1.0");
+        auto.setLocationDesc(locationDesc);
+        auto.setIsValid(true);
+        auto.setAutoCreatedAt(now);
+        
+        // 평균 신뢰도 계산
+        double avgConfidence = 0.0;
+        for (Map<String, Object> det : detections) {
+            Object scoreObj = det.get("score");
+            if (scoreObj instanceof Number n) {
+                avgConfidence += n.doubleValue();
+            }
+        }
+        if (!detections.isEmpty()) {
+            avgConfidence /= detections.size();
+        }
+        auto.setDetectionConfidence(avgConfidence);
+        auto.setConfidenceReason(String.format("%d개 객체 평균 신뢰도", detections.size()));
+        auto.setSeverityReason("화재/연기 감지");
+        auto.setDetectedFeatures(detections.stream()
+                .map(d -> d.get("label") != null ? d.get("label").toString() : "unknown")
+                .distinct()
+                .collect(java.util.stream.Collectors.joining(", ")));
+        incidentAutoRepository.save(auto);
+        
+        // 4) IncidentAction 로그
+        IncidentAction action = new IncidentAction();
+        action.setIncidentId(incident.getId());
+        action.setActionType("CREATED");
+        action.setPrevStatus(null);
+        action.setNextStatus("PENDING");
+        action.setActorId(null);
+        action.setMemo("AI 자동 탐지(화재/연기 - Gemini)");
+        action.setCreatedAt(now);
+        incidentActionRepository.save(action);
+        
+        // 5) SSE 이벤트 발행
+        publishAfterCommit("incident.created", Map.of(
+                "incidentId", incident.getId(),
+                "incidentCode", incident.getIncidentCode(),
+                "incidentType", incident.getIncidentType(),
+                "status", incident.getStatus(),
+                "detectedAt", incident.getDetectedAt().toString(),
+                "cctvId", incident.getCctvId(),
+                "cctvCode", resolveCctvCode(incident.getCctvId()),
+                "locationDesc", incident.getLocationDesc(),
+                "sourceType", incident.getSourceType()
+        ));
+        
+        return IncidentCreateResponse.success(incident.getId(), incident.getIncidentCode());
+    }
+
     public IncidentCreateResponse createFireFromAiAnalysis(
             Map<String, Object> aiJson,
             Long cctvId,

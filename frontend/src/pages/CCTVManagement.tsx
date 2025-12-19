@@ -87,6 +87,25 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+  
+  // SSE 이벤트로 DB 저장 시 자동 새로고침
+  useEffect(() => {
+    const loadCctvIncidents = async () => {
+      if (!selectedCCTV) return;
+      
+      try {
+        const detail = await getUnifiedIncidentDetail(selectedCCTV.id);
+        if (detail && detail.incidents) {
+          setCctvIncidents(detail.incidents);
+          console.log(`🔄 [SSE] Refreshed ${detail.incidents.length} incidents for ${selectedCCTV.id}`);
+        }
+      } catch (error) {
+        console.error('❌ [SSE] Failed to refresh incidents:', error);
+      }
+    };
+    
+    loadCctvIncidents();
+  }, [refreshKey, selectedCCTV]);
   const [selectedCCTV, setSelectedCCTV] = useState<CCTVData | null>(null);
   const [showEvents, setShowEvents] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);

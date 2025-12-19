@@ -11,6 +11,7 @@ import com.example.geumjeongsan.api.dto.IncidentCreateResponse;
 import com.example.geumjeongsan.domain.incident.IncidentService;
 import com.example.geumjeongsan.domain.incident.TrashService;
 import com.example.geumjeongsan.domain.incident.EmergencyService;
+import com.example.geumjeongsan.domain.incident.FireService;
 import com.example.geumjeongsan.domain.cctv.CCTVRepository;
 import com.example.geumjeongsan.service.GeminiService;
 import com.example.geumjeongsan.service.GeminiJsonExtractor;
@@ -49,6 +50,7 @@ public class CCTVController {
     private final IncidentService incidentService;
     private final TrashService trashService;
     private final EmergencyService emergencyService;
+    private final FireService fireService;
     private final CCTVRepository cctvRepository;
     private final RestTemplate restTemplate;
     private final S3Service s3Service;
@@ -96,6 +98,7 @@ public class CCTVController {
     public CCTVController(IncidentService incidentService,
                           TrashService trashService,
                           EmergencyService emergencyService,
+                          FireService fireService,
                           CCTVRepository cctvRepository,
                           RestTemplate restTemplate,
                           S3Service s3Service,
@@ -106,6 +109,7 @@ public class CCTVController {
         this.incidentService = incidentService;
         this.trashService = trashService;
         this.emergencyService = emergencyService;
+        this.fireService = fireService;
         this.cctvRepository = cctvRepository;
         this.restTemplate = restTemplate;
         this.s3Service = s3Service;
@@ -794,6 +798,7 @@ public class CCTVController {
             String cameraId = cctvCode.toLowerCase();
             List<String> frameUrls = new ArrayList<>();
             List<String> overlayUrls = new ArrayList<>();
+            List<Map<String, Object>> allDetections = new ArrayList<>(); // 모든 detections 수집
             int totalDetectionCount = 0;
             boolean fireDetected = false;
             
@@ -838,6 +843,7 @@ public class CCTVController {
                 if (!detections.isEmpty()) {
                     fireDetected = true;
                     totalDetectionCount += detections.size();
+                    allDetections.addAll(detections); // 전체 목록에 추가
                     log.info("🔥 [CCTV] Frame {} detected {} fire/smoke objects", i + 1, detections.size());
                     
                     // 4. overlay 생성 + S3 업로드
@@ -865,13 +871,16 @@ public class CCTVController {
                     log.info("💾 [CCTV] Saving fire incident to database");
                     Long resolvedCctvId = resolveCctvId(null, cctvCode);
                     
-                    // TODO: FireService 구현 후 활성화
-                    // var createResponse = fireService.createFireIncident(...);
-                    // incidentId = createResponse.getIncidentId();
-                    // incidentCode = createResponse.getIncidentCode();
-                    // savedToDbResult = true;
-                    
-                    log.warn("⚠️ [CCTV] Fire incident DB save not implemented yet");
+                    // detections 전체를 FireService에 전달
+                    var createResponse = fireService.createFireFromGemini(
+                            allDetections,
+                            resolvedCctvId,
+                            resolveCctvLocationDesc(resolvedCctvId, cctvCode)
+                    );
+                    incidentId = createResponse.getIncidentId();
+                    incidentCode = createResponse.getIncidentCode();
+                    savedToDbResult = true;
+                    log.info("✅ [CCTV] Fire incident saved to DB: {} (ID: {})", incidentCode, incidentId);
                     
                 } catch (Exception e) {
                     log.error("❌ [CCTV] Failed to save fire incident to DB", e);
