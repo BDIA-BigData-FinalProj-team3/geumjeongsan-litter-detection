@@ -140,7 +140,7 @@ def analyze_fire_images(image_paths, wind_dir, wind_speed, humidity):
 - 아래 detections는 "detected_frame_index"에서 가장 명확한 화재/연기 영역만 표시한다.
 - detections는 0~3개만 출력한다. (가장 대표 영역 위주)
 - bbox 좌표는 반드시 0~1 사이 정규화 값만 사용한다. 픽셀 값 금지.
-- bbox 형식: {"x": 0~1, "y": 0~1, "w": 0~1, "h": 0~1}
+- bbox 형식: {{"x": 0~1, "y": 0~1, "w": 0~1, "h": 0~1}}
   * x,y 는 **왼쪽 상단** 좌표(Top-Left)이며 w,h는 너비/높이 비율이다.
 - 박스는 실제 연기/불꽃 영역을 타이트하게 감싸야 한다. (하늘 전체/산 전체 같은 과대 박스 금지)
 - 확실하지 않으면 detections는 [] 로 출력한다.

@@ -1915,6 +1915,7 @@ public class CCTVController {
             boolean fireDetected = false;
             Map<String, Object> finalAnalysisResult = null;
             List<String> allFrameUrls = new ArrayList<>();
+            List<String> allOverlayUrls = new ArrayList<>();
             int detectedSegmentIndex = -1;
             int detectedFrameIndexInSegment = 0;
             int totalScannedSegments = 0;
@@ -1963,26 +1964,55 @@ public class CCTVController {
                     if (segmentFireDetected) {
                         log.info("🔥 [CCTV] FIRE DETECTED in segment {} (start={}s)!", seg, segmentStartSec);
                         
-                        // 프레임 업로드
-                        for (File frameFile : frameFiles) {
+                        // detected_frame_index 추출 (세그먼트 내 인덱스)
+                        int detectedIdx = 0;
+                        try {
+                            Object idxObj = analysisResult.get("detected_frame_index");
+                            if (idxObj instanceof Number n) detectedIdx = n.intValue();
+                            else if (idxObj != null) detectedIdx = Integer.parseInt(idxObj.toString());
+                        } catch (Exception ignore) {
+                            detectedIdx = 0;
+                        }
+                        detectedFrameIndexInSegment = detectedIdx;
+                        
+                        // detections 추출 (bbox 정보)
+                        List<Map<String, Object>> detections = new ArrayList<>();
+                        if (pythonResult.get("detections") instanceof List<?>) {
+                            try {
+                                @SuppressWarnings("unchecked")
+                                List<Map<String, Object>> dets = (List<Map<String, Object>>) pythonResult.get("detections");
+                                detections = dets != null ? dets : new ArrayList<>();
+                                log.info("🎯 [CCTV] Extracted {} detections from Python result", detections.size());
+                            } catch (Exception e) {
+                                log.warn("⚠️ [CCTV] Failed to extract detections: {}", e.getMessage());
+                            }
+                        }
+                        
+                        // 프레임 업로드 및 overlay 생성
+                        for (int i = 0; i < frameFiles.size(); i++) {
+                            File frameFile = frameFiles.get(i);
                             byte[] frameBytes = Files.readAllBytes(frameFile.toPath());
                             String frameKey = s3Service.uploadFrame(frameBytes, cameraId);
                             String frameUrl = s3Service.toHttpUrl(frameKey);
                             allFrameUrls.add(frameUrl);
+                            
+                            // detected_frame_index에만 overlay 생성
+                            if (i == detectedIdx && !detections.isEmpty()) {
+                                try {
+                                    byte[] overlayBytes = imageOverlayService.drawOverlayJpeg(frameBytes, detections);
+                                    String overlayKey = s3Service.uploadOverlayFrame(overlayBytes, cameraId);
+                                    String overlayUrl = s3Service.toHttpUrl(overlayKey);
+                                    allOverlayUrls.add(overlayUrl);
+                                    log.info("✅ [CCTV] Overlay created for frame {}: {}", i, overlayUrl);
+                                } catch (Exception e) {
+                                    log.warn("⚠️ [CCTV] Failed to create overlay for frame {}: {}", i, e.getMessage());
+                                }
+                            }
                         }
                         
                         fireDetected = true;
                         finalAnalysisResult = analysisResult;
                         detectedSegmentIndex = seg;
-                        
-                        // detected_frame_index 추출 (세그먼트 내 인덱스)
-                        try {
-                            Object idxObj = analysisResult.get("detected_frame_index");
-                            if (idxObj instanceof Number n) detectedFrameIndexInSegment = n.intValue();
-                            else if (idxObj != null) detectedFrameIndexInSegment = Integer.parseInt(idxObj.toString());
-                        } catch (Exception ignore) {
-                            detectedFrameIndexInSegment = 0;
-                        }
                         
                         if (stopOnDetect) {
                             log.info("✋ [CCTV] Stopping on first detection (stopOnDetect=true)");
@@ -2068,7 +2098,7 @@ public class CCTVController {
             Map<String, Object> response = new HashMap<>();
             response.put("fireDetected", fireDetected);
             response.put("frameUrls", allFrameUrls);
-            response.put("overlayUrls", new ArrayList<>()); // Python 분석에서는 overlay 생성 안 함
+            response.put("overlayUrls", allOverlayUrls); // bbox overlay 이미지
             response.put("detectionCount", fireDetected ? 1 : 0);
             response.put("savedToDb", savedToDbResult);
             response.put("totalFramesAnalyzed", allFrameUrls.size());

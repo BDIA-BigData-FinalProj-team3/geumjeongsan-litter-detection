@@ -26,6 +26,7 @@ import type { CCTVMarker as BackendCCTVMarker } from '../services/common';
 import HotspotFireIcon from '../components/HotspotFireIcon';
 import HotspotEmergencyIcon from '../components/HotspotEmergencyIcon';
 import HotspotTrashIcon from '../components/HotspotTrashIcon';
+import cctv002_2 from '../assets/cctv_dummy/cctv-002-2.mp4';
 import mapImage from 'figma:asset/e2eee362b605222576aa0e01e59c017ebe22e4e9.png';
 import logoIcon from 'figma:asset/0abed642df6551dc36712b1dfc4c5cda079eed1a.png';
 import headerLogo from 'figma:asset/14f294982efa79d8462919ccdda7d0c0c674d095.png';
@@ -721,6 +722,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
 
   // ✅ 영상 상세보기 모달용 (실제 video src)
   const [selectedVideoUrl, setSelectedVideoUrl] = useState<string | null>(null);
+  const [activePlaybackUrl, setActivePlaybackUrl] = useState<string | null>(null);
   const [selectedVideoMedia, setSelectedVideoMedia] = useState<CCTVMedia | null>(null);
   const [selectedImageMedia, setSelectedImageMedia] = useState<CCTVMedia | null>(null);
   const [isVideoLoading, setIsVideoLoading] = useState(false);
@@ -734,6 +736,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
 
     const loadVideoUrl = async () => {
       setSelectedVideoUrl(null);
+      setActivePlaybackUrl(null);
       setSelectedVideoMedia(null);
       setSelectedImageMedia(null);
 
@@ -772,6 +775,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
           setSelectedVideoMedia(videoPick);
           setSelectedImageMedia(imagePick);
           setSelectedVideoUrl(videoPick?.url ?? null);
+          setActivePlaybackUrl(videoPick?.url ?? null);
         }
       } catch (error) {
         console.error('❌ [MainMap] Failed to load CCTV video media for videoDetailPopup:', error);
@@ -779,6 +783,7 @@ export default function MainMap({ onNavigate }: MainMapProps) {
           setSelectedVideoMedia(null);
           setSelectedImageMedia(null);
           setSelectedVideoUrl(null);
+          setActivePlaybackUrl(null);
         }
       } finally {
         if (!cancelled) setIsVideoLoading(false);
@@ -3985,14 +3990,21 @@ export default function MainMap({ onNavigate }: MainMapProps) {
                     <p className="text-gray-300 text-sm">영상 로딩중...</p>
                     <p className="text-gray-500 text-xs mt-1">{videoDetailPopup.cctvId} - {videoDetailPopup.time}</p>
                   </div>
-                ) : selectedVideoUrl ? (
+                ) : activePlaybackUrl ? (
                   <video
-                    key={selectedVideoUrl}
-                    src={selectedVideoUrl}
+                    key={activePlaybackUrl}
+                    src={activePlaybackUrl}
                     controls
                     autoPlay
                     playsInline
                     className="w-full h-full object-contain"
+                    onEnded={() => {
+                      // ✅ 화재는 더미 영상(cctv-002-2) 1개를 뒤에 이어붙여 재생 (거의 한 영상처럼)
+                      if (videoDetailPopup.type !== 'fire') return;
+                      if (!selectedVideoUrl) return;
+                      if (activePlaybackUrl !== selectedVideoUrl) return; // 이미 더미로 넘어간 상태면 종료
+                      setActivePlaybackUrl(cctv002_2);
+                    }}
                   />
                 ) : (
                   <div className="text-center">
