@@ -35,7 +35,7 @@ export const RealtimeNotificationProvider: React.FC<{ children: React.ReactNode 
   const eventSourceRef = useRef<EventSource | null>(null);
 
   // 너무 잦은 refetch 방지: refreshKey를 쿨다운으로 배치 처리
-  const refreshCooldownMs = 800;
+  const refreshCooldownMs = 50; // 50ms (거의 즉시, 체감 불가)
   const lastRefreshAtRef = useRef(0);
   const refreshTimerRef = useRef<number | null>(null);
 
