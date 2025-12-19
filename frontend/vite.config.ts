@@ -5,7 +5,6 @@
 
   export default defineConfig({
     plugins: [react()],
-    assetsInclude: ['**/*.avi'],
     resolve: {
       extensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
       alias: {

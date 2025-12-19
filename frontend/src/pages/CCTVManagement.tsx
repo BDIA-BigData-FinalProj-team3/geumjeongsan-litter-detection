@@ -20,7 +20,7 @@ import cctv007Video from '../assets/cctv_dummy/cctv-007.mp4';
 import cctv008Video from '../assets/cctv_dummy/cctv-008.mp4';
 import cctv009Video from '../assets/cctv_dummy/cctv-009.mp4';
 import cctv010Video from '../assets/cctv_dummy/cctv-010.mp4';
-import cctv011Video from '../assets/cctv_dummy/cctv-011.avi';
+import cctv011Video from '../assets/cctv_dummy/cctv-011.mp4';
 import cctv012Video from '../assets/cctv_dummy/cctv-012.mp4';
 
 interface CCTVManagementProps {
