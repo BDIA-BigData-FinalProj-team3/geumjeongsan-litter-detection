@@ -15,6 +15,7 @@ export interface LoginResponse {
   loginId: string;
   name: string;
   role: string;
+  position?: string; // 직급 (예: "관리자", "부장(지방)", "직원")
   dept: string;
   email: string;
   phone: string;

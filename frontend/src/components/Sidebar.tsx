@@ -294,7 +294,7 @@ export default function Sidebar({ onNavigate, currentPath, onClose }: SidebarPro
               </div>
               {/* 직급과 이름 */}
               <div className="text-slate-300" style={{ fontSize: '14px', lineHeight: '1.2' }}>
-                {user.role || '직급'} {user.name}
+                {user.position || user.role || '직급'} {user.name}
               </div>
             </div>
             
