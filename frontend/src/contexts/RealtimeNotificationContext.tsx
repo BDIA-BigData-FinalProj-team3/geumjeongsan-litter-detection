@@ -155,7 +155,10 @@ export const RealtimeNotificationProvider: React.FC<{ children: React.ReactNode 
     message: string;
     recipientsText?: string;
   }) => {
-    // ✅ 타입별 색상 필요 없다고 해서 단일 스타일로 통일
+    // 🎨 타입별 색상: 응급/화재=빨강, 쓰레기=노랑
+    const isRedAlert = n.type === 'emergency' || n.type === 'fire';
+    const isYellowAlert = n.type === 'trash';
+    
     toast(n.title, {
       description: (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -167,6 +170,10 @@ export const RealtimeNotificationProvider: React.FC<{ children: React.ReactNode 
           ) : null}
         </div>
       ),
+      style: {
+        border: isRedAlert ? '2px solid #ef4444' : isYellowAlert ? '2px solid #eab308' : '1px solid #e5e7eb',
+        backgroundColor: isRedAlert ? '#fef2f2' : isYellowAlert ? '#fefce8' : '#ffffff',
+      },
     });
   };
 
