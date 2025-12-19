@@ -5,7 +5,7 @@ import IncidentDetailModal from '../components/IncidentDetailModal';
 import { X, ArrowLeft, Search, ChevronDown, ArrowUpDown, Maximize, Camera, Flame, Trash2, AlertCircle, Download, Play, HeartPulse } from 'lucide-react';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { cctvList, getCCTVLocation, getOffCCTVCodes, getCCTVByCode } from '../services/common';
-import { getCCTVList, analyzeFallenVideo, analyzeEmergencyVideo, analyzeFireVideo, analyzeFireFrames, analyzeFireFromS3Video, getUnifiedIncidentDetail, analyzeTrashFrameWithGemini, analyzeTrashVideoFromS3, type FallenAnalysisResponse } from '../services/api';
+import { getCCTVList, getCCTVIncidents, analyzeFallenVideo, analyzeEmergencyVideo, analyzeFireVideo, analyzeFireFrames, analyzeFireFromS3Video, getUnifiedIncidentDetail, analyzeTrashFrameWithGemini, analyzeTrashVideoFromS3, type FallenAnalysisResponse } from '../services/api';
 import API_BASE_URL, { INGEST_HLS_URL } from '../config/api';
 import Hls from 'hls.js';
 import cctv001DemoVideo from '../assets/cctv-001_20251208T140000Z.mp4';
@@ -148,11 +148,16 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       if (!selectedCCTV) return;
       
       try {
-        const detail = await getUnifiedIncidentDetail(selectedCCTV.id);
-        if (detail && detail.incidents) {
-          setCctvIncidents(detail.incidents);
-          console.log(`🔄 [SSE] Refreshed ${detail.incidents.length} incidents for ${selectedCCTV.id}`);
+        // ✅ selectedCCTV.id는 "CCTV-001" 같은 코드(string)라서
+        // /api/all-incidents/detail/{id} (id=Long)로는 절대 조회할 수 없음 → 400 원인
+        // CCTV별 사건 목록은 /api/cctv/{dbId}/incidents 로 새로고침
+        if (typeof selectedCCTV.dbId !== 'number') {
+          console.warn('⚠️ [SSE] Cannot refresh incidents: selectedCCTV.dbId is missing', selectedCCTV);
+          return;
         }
+        const incidents = await getCCTVIncidents(selectedCCTV.dbId);
+        setCctvIncidents(Array.isArray(incidents) ? incidents : []);
+        console.log(`🔄 [SSE] Refreshed ${Array.isArray(incidents) ? incidents.length : 0} incidents for ${selectedCCTV.id} (dbId=${selectedCCTV.dbId})`);
       } catch (error) {
         console.error('❌ [SSE] Failed to refresh incidents:', error);
       }
@@ -896,6 +901,7 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
       if (result?.fireDetected) {
         const overlayUrls = result.overlayUrls || [];
         const incidentId = result.incidentId;
+        const clipUrl = result?.clipUrl || null;
         
         const newEvent: Event = {
           id: `fire-${Date.now()}`,
@@ -906,7 +912,8 @@ export default function CCTVManagement({ onNavigate, initialSelectedCCTVId }: CC
           severity: '상',
           reportProbability: '높음',
           summary: `${selectedCCTV.location}에서 S3 영상 분석 결과 화재/연기가 탐지되었습니다. (총 ${result.totalFramesAnalyzed}프레임 분석, ${result.detectionCount}개 감지)`,
-          clipUrl: overlayUrls[0] || null,
+          // ✅ 화재도 응급/쓰레기처럼 영상 클립을 우선 사용(있으면 clipUrl, 없으면 overlay fallback)
+          clipUrl: clipUrl || overlayUrls[0] || null,
           frameUrls: overlayUrls,
           incidentId: incidentId,
           analysisSource: 'S3_VIDEO'

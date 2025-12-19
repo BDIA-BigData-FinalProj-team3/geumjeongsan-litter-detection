@@ -68,6 +68,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
   const [dropdownPosition, setDropdownPosition] = useState<{top: number, left: number} | null>(null);
   const [assigneeModalOpen, setAssigneeModalOpen] = useState(false);
   const [pendingStatusChange, setPendingStatusChange] = useState<{ id: number; newStatus: string; dbStatus: string } | null>(null);
+  const [pendingBatchStatusChange, setPendingBatchStatusChange] = useState<{ ids: number[]; newStatus: string; dbStatus: string } | null>(null);
   
   // 페이지네이션
   const [currentPage, setCurrentPage] = useState(0);
@@ -215,6 +216,38 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
   };
 
   const confirmAssigneeAndUpdate = async (assignedToId: number) => {
+    // 일괄처리인 경우
+    if (pendingBatchStatusChange) {
+      const { ids, newStatus, dbStatus } = pendingBatchStatusChange;
+      try {
+        // 모든 선택된 항목의 상태를 업데이트
+        for (const id of ids) {
+          await updateFireStatus(id, dbStatus, { assignedToId });
+        }
+        
+        // 데이터 재로드
+        const [active, completed] = await Promise.all([getActiveFires(), getCompletedFires()]);
+        const filteredActive = active.filter(f => f.type === '화재');
+        const filteredCompleted = completed.filter(f => f.type === '화재');
+        const filteredActiveFinal = filteredActive.filter(f => !completedIncidents.has(f.cctvId));
+        setActiveFires(filteredActiveFinal);
+        setCompletedFires(filteredCompleted);
+        setFireCount(filteredActiveFinal.length);
+        
+        // 선택 초기화
+        setSelectedIds([]);
+        alert(`${ids.length}건이 일괄처리되었습니다.`);
+      } catch (error) {
+        console.error('일괄 상태 업데이트 실패:', error);
+        alert('일괄 처리에 실패했습니다.');
+      } finally {
+        setAssigneeModalOpen(false);
+        setPendingBatchStatusChange(null);
+      }
+      return;
+    }
+    
+    // 개별처리인 경우
     if (!pendingStatusChange) return;
     const { id, newStatus, dbStatus } = pendingStatusChange;
     try {
@@ -259,26 +292,15 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
   };
 
   const handleBatchComplete = () => {
-    const now = new Date();
-    const responseTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    if (selectedIds.length === 0) return;
     
-    const itemsToComplete = activeFires.filter(f => selectedIds.includes(f.id)).map(f => ({
-      ...f,
-      status: '진화완료',
-      responseTime,
-      duration: '30분'
-    }));
-    
-    // 처리완료된 사건의 CCTV ID를 전역 상태에 추가
-    itemsToComplete.forEach(item => {
-      addCompletedIncident(item.cctvId);
+    // 일괄처리: 처리자 선택 모달 띄우기
+    setPendingBatchStatusChange({ 
+      ids: selectedIds, 
+      newStatus: '진화완료', 
+      dbStatus: 'RESOLVED' 
     });
-    
-    const newActiveFires = activeFires.filter(f => !selectedIds.includes(f.id));
-    setCompletedFires(prev => [...itemsToComplete, ...prev]);
-    setActiveFires(newActiveFires);
-    setFireCount(newActiveFires.length);
-    setSelectedIds([]);
+    setAssigneeModalOpen(true);
   };
 
   const handleEditClick = () => {
@@ -490,6 +512,7 @@ export default function FireDashboard({ onNavigate }: FireDashboardProps) {
         onClose={() => {
           setAssigneeModalOpen(false);
           setPendingStatusChange(null);
+          setPendingBatchStatusChange(null);
         }}
         onConfirm={(assignedToId) => confirmAssigneeAndUpdate(assignedToId)}
       />

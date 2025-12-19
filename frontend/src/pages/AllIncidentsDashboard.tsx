@@ -76,6 +76,7 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
   const [dropdownPosition, setDropdownPosition] = useState<{top: number, left: number} | null>(null);
   const [assigneeModalOpen, setAssigneeModalOpen] = useState(false);
   const [pendingStatusChange, setPendingStatusChange] = useState<{ id: number; newStatus: string; dbStatus: string; incidentType: string } | null>(null);
+  const [pendingBatchStatusChange, setPendingBatchStatusChange] = useState<{ ids: number[]; newStatus: string; dbStatus: string; incidentType: string } | null>(null);
   
   // 신규 유형 선택 모달
   const [showTypeSelectModal, setShowTypeSelectModal] = useState(false);
@@ -304,6 +305,45 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
   };
 
   const confirmAssigneeAndUpdate = async (assignedToId: number) => {
+    // 일괄처리인 경우
+    if (pendingBatchStatusChange) {
+      const { ids, newStatus, dbStatus, incidentType } = pendingBatchStatusChange;
+      try {
+        // 모든 선택된 항목의 상태를 업데이트
+        for (const id of ids) {
+          if (incidentType === 'FIRE') {
+            await updateFireStatus(id, dbStatus, { assignedToId });
+          } else if (incidentType === 'EMERGENCY') {
+            await updateEmergencyStatus(id, dbStatus, { assignedToId });
+          } else if (incidentType === 'ROCKFALL') {
+            await updateRockfallStatus(id, dbStatus, { assignedToId });
+          } else {
+            await updateTrashStatus(id, dbStatus, { assignedToId });
+          }
+        }
+        
+        // 데이터 재로드
+        const [activeList, completedList] = await Promise.all([
+          getAllIncidentsList('active'),
+          getAllIncidentsList('completed'),
+        ]);
+        setActiveIncidents(activeList || []);
+        setCompletedIncidentsList(completedList || []);
+        
+        // 선택 초기화
+        setSelectedIds([]);
+        alert(`${ids.length}건이 일괄처리되었습니다.`);
+      } catch (error) {
+        console.error('일괄 상태 업데이트 실패:', error);
+        alert('일괄 처리에 실패했습니다.');
+      } finally {
+        setAssigneeModalOpen(false);
+        setPendingBatchStatusChange(null);
+      }
+      return;
+    }
+    
+    // 개별처리인 경우
     if (!pendingStatusChange) return;
     const { id, newStatus, dbStatus, incidentType } = pendingStatusChange;
     try {
@@ -334,24 +374,28 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
   };
 
   const handleBatchComplete = () => {
-    const now = new Date();
-    const responseTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    if (selectedIds.length === 0) return;
     
-    const itemsToComplete = activeIncidents.filter(e => selectedIds.includes(e.id)).map(e => ({
-      ...e,
-      status: '처리완료',
-      responseTime,
-      duration: '10분'
-    }));
+    // 첫 번째 선택된 항목의 타입을 사용
+    const firstSelected = activeIncidents.find(e => selectedIds.includes(e.id));
+    if (!firstSelected) return;
     
-    itemsToComplete.forEach(item => {
-      addCompletedIncident(item.cctvId);
+    const incidentTypeMap: Record<string, string> = {
+      '응급': 'EMERGENCY',
+      '화재': 'FIRE',
+      '쓰레기': 'TRASH',
+      '낙석': 'ROCKFALL'
+    };
+    const incidentType = incidentTypeMap[firstSelected.type] || 'EMERGENCY';
+    
+    // 일괄처리: 처리자 선택 모달 띄우기
+    setPendingBatchStatusChange({ 
+      ids: selectedIds, 
+      newStatus: '처리완료', 
+      dbStatus: 'RESOLVED',
+      incidentType 
     });
-    
-    const newActiveIncidents = activeIncidents.filter(e => !selectedIds.includes(e.id));
-    setCompletedIncidentsList(prev => [...itemsToComplete, ...prev]);
-    setActiveIncidents(newActiveIncidents);
-    setSelectedIds([]);
+    setAssigneeModalOpen(true);
   };
 
   const handleEditClick = () => {
@@ -502,14 +546,23 @@ export default function AllIncidentsDashboard({ onNavigate }: AllIncidentsDashbo
     <div className="flex h-screen">
       <AssigneeSelectModal
         open={assigneeModalOpen}
-        incidentType={pendingStatusChange?.incidentType === '화재' ? 'FIRE'
-          : pendingStatusChange?.incidentType === '응급' ? 'EMERGENCY'
-          : pendingStatusChange?.incidentType === '낙석' ? 'ROCKFALL'
+        incidentType={
+          (pendingStatusChange?.incidentType === '화재' || pendingBatchStatusChange?.incidentType === 'FIRE') ? 'FIRE'
+          : (pendingStatusChange?.incidentType === '응급' || pendingBatchStatusChange?.incidentType === 'EMERGENCY') ? 'EMERGENCY'
+          : (pendingStatusChange?.incidentType === '낙석' || pendingBatchStatusChange?.incidentType === 'ROCKFALL') ? 'ROCKFALL'
           : 'TRASH'}
-        title={`처리자 선택 (${pendingStatusChange?.incidentType ?? ''})`}
+        title={`처리자 선택 (${
+          pendingBatchStatusChange 
+            ? (pendingBatchStatusChange.incidentType === 'FIRE' ? '화재' 
+              : pendingBatchStatusChange.incidentType === 'EMERGENCY' ? '응급'
+              : pendingBatchStatusChange.incidentType === 'ROCKFALL' ? '낙석' 
+              : '쓰레기')
+            : (pendingStatusChange?.incidentType ?? '')
+        })`}
         onClose={() => {
           setAssigneeModalOpen(false);
           setPendingStatusChange(null);
+          setPendingBatchStatusChange(null);
         }}
         onConfirm={(assignedToId) => confirmAssigneeAndUpdate(assignedToId)}
       />

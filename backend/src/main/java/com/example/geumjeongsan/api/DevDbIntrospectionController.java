@@ -3,6 +3,7 @@ package com.example.geumjeongsan.api;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -16,11 +17,12 @@ import java.util.Set;
 
 /**
  * 로컬 디버깅용: DB의 VIEW 정의/컬럼을 조회합니다.
- * - 운영 환경에서는 노출하면 위험하니 필요 시 @Profile("local")로 제한하세요.
+ * - 운영 환경에서는 노출하면 위험하니, 기본은 비활성화하고 설정으로만 켜지게 합니다.
  */
 @RestController
 @RequestMapping("/api/dev/db")
 @Slf4j
+@ConditionalOnProperty(name = "debug.dbviews.enabled", havingValue = "true")
 public class DevDbIntrospectionController {
 
     private static final Set<String> ALLOWLIST = Set.of(
@@ -28,7 +30,12 @@ public class DevDbIntrospectionController {
             "incident_response",
             "incident_action",
             "view_all_incidents_list",
-            "v_notification_recipients"
+            "v_notification_recipients",
+
+            // ✅ MainMap에서 쓰는 VIEW들
+            "view_mainmap_incident_markers",
+            "view_mainmap_cctv_status",
+            "view_map_active_incidents"
     );
 
     @PersistenceContext

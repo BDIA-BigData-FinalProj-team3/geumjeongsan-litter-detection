@@ -301,6 +301,48 @@ public class FireDetectionController {
                     }
                 }
 
+                // ✅ overlay 생성용: "감지된 프레임 인덱스"의 이미지 + (가능하면) 파이썬 결과의 detections를 사용
+                byte[] frameBytesForOverlay = null;
+                List<Map<String, Object>> detectionsForOverlay = new ArrayList<>();
+                if (detected && !savedFirst && !frameFiles.isEmpty()) {
+                    int pickIdx = 0;
+                    try {
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> ar = parsed != null ? (Map<String, Object>) parsed.get("analysis_result") : null;
+                        if (ar != null) {
+                            Object dfi = ar.get("detected_frame_index");
+                            if (dfi instanceof Number n) pickIdx = n.intValue();
+                            else if (dfi != null) {
+                                try { pickIdx = Integer.parseInt(dfi.toString()); } catch (Exception ignore) {}
+                            }
+                        }
+                    } catch (Exception ignore) {}
+
+                    if (pickIdx < 0) pickIdx = 0;
+                    if (pickIdx >= frameFiles.size()) pickIdx = frameFiles.size() - 1;
+
+                    try {
+                        frameBytesForOverlay = Files.readAllBytes(frameFiles.get(pickIdx).toPath());
+                        log.info("📸 [FireDetection] Captured frame {} for overlay (size: {} bytes)",
+                                pickIdx, frameBytesForOverlay != null ? frameBytesForOverlay.length : 0);
+                    } catch (Exception e) {
+                        log.warn("⚠️ [FireDetection] Failed to read overlay frame (idx={}): {}", pickIdx, e.getMessage());
+                    }
+
+                    try {
+                        Object detsObj = parsed != null ? parsed.get("detections") : null;
+                        if (detsObj instanceof List<?> list) {
+                            for (Object o : list) {
+                                if (o instanceof Map<?, ?>) {
+                                    @SuppressWarnings("unchecked")
+                                    Map<String, Object> m = (Map<String, Object>) o;
+                                    detectionsForOverlay.add(m);
+                                }
+                            }
+                        }
+                    } catch (Exception ignore) {}
+                }
+
                 if (emitProgress) {
                     Map<String, Object> segPayload = new HashMap<>();
                     segPayload.put("scanId", scanId);
@@ -316,18 +358,6 @@ public class FireDetectionController {
                     if (parsed != null) segPayload.put("parsedJson", parsed);
                     else segPayload.put("rawJson", resultJson);
                     realtimeSseService.publish("fire.scan.segment", segPayload);
-                }
-
-                // 감지 시 첫 프레임 bytes 확보 (overlay 생성용)
-                byte[] firstFrameBytesForOverlay = null;
-                if (detected && !savedFirst && !frameFiles.isEmpty()) {
-                    try {
-                        firstFrameBytesForOverlay = Files.readAllBytes(frameFiles.get(0).toPath());
-                        log.info("📸 [FireDetection] Captured first frame for overlay (size: {} bytes)", 
-                                firstFrameBytesForOverlay != null ? firstFrameBytesForOverlay.length : 0);
-                    } catch (Exception e) {
-                        log.warn("⚠️ [FireDetection] Failed to read first frame for overlay: {}", e.getMessage());
-                    }
                 }
 
                 // 프레임 파일은 구간마다 바로 삭제(디스크 누적 방지)
@@ -352,36 +382,40 @@ public class FireDetectionController {
                             incidentCode = createResp.getIncidentCode();
                             incidentId = createResp.getIncidentId();
                             
-                            // ✅ DB 저장 성공 후, Gemini bbox → overlay → S3 → media_file
-                            if (incidentId != null && firstFrameBytesForOverlay != null && 
-                                fireBboxAnalysisPrompt != null && !fireBboxAnalysisPrompt.isEmpty()) {
+                            // ✅ DB 저장 성공 후, (우선) 파이썬 결과의 bbox(detections)로 overlay 생성
+                            // - 파이썬 결과에 detections가 없으면(구버전) 기존 Gemini bbox 프롬프트로 fallback
+                            if (incidentId != null && frameBytesForOverlay != null) {
                                 try {
-                                    log.info("🎨 [FireDetection] Generating overlay with Gemini bbox for incidentId={}", incidentId);
+                                    List<Map<String, Object>> finalDetections = detectionsForOverlay;
+                                    if ((finalDetections == null || finalDetections.isEmpty())
+                                            && fireBboxAnalysisPrompt != null && !fireBboxAnalysisPrompt.isEmpty()) {
+                                        log.info("🎨 [FireDetection] No python detections; fallback to Gemini bbox for incidentId={}", incidentId);
+                                        String base64 = Base64.getEncoder().encodeToString(frameBytesForOverlay);
+                                        String geminiText = geminiService.analyzeImage(fireBboxAnalysisPrompt, base64);
+                                        Map<String, Object> geminiJson = extractJsonFromGeminiResponse(geminiText);
+                                        if (geminiJson != null && geminiJson.get("detections") instanceof List<?>) {
+                                            @SuppressWarnings("unchecked")
+                                            List<Map<String, Object>> dets = (List<Map<String, Object>>) geminiJson.get("detections");
+                                            finalDetections = dets != null ? dets : new ArrayList<>();
+                                        }
+                                    }
+
+                                    // Overlay 생성
+                                    byte[] overlayBytes = imageOverlayService.drawOverlayJpeg(frameBytesForOverlay, finalDetections != null ? finalDetections : List.of());
                                     
-                                    // Gemini bbox 분석
-                                    String base64 = Base64.getEncoder().encodeToString(firstFrameBytesForOverlay);
-                                    String geminiText = geminiService.analyzeImage(fireBboxAnalysisPrompt, base64);
-                                    Map<String, Object> geminiJson = extractJsonFromGeminiResponse(geminiText);
-                                    
-                                    if (geminiJson != null) {
-                                        @SuppressWarnings("unchecked")
-                                        List<Map<String, Object>> detections = 
-                                            (List<Map<String, Object>>) geminiJson.getOrDefault("detections", List.of());
-                                        
-                                        // Overlay 생성
-                                        byte[] overlayBytes = imageOverlayService.drawOverlayJpeg(firstFrameBytesForOverlay, detections);
-                                        
                                         // S3 업로드
-                                        String cameraId = resolvedCctvId != null 
-                                                ? String.format("cctv-%03d", resolvedCctvId) 
-                                                : "cctv-unknown";
-                                        String overlayKey = s3Service.uploadOverlayFrame(overlayBytes, cameraId);
-                                        String overlayUrl = s3Service.toHttpUrl(overlayKey);
-                                        
-                                        // media_file 저장
-                                        mediaFileService.saveFrame(incidentId, resolvedCctvId, overlayUrl, detectedAtKst);
-                                        
-                                        log.info("✅ [FireDetection] Overlay saved: incidentId={}, url={}", incidentId, overlayUrl);
+                                        // ✅ 저장 경로는 CCTV "코드" 기준으로 고정 (예: CCTV-002 -> cctv-002)
+                                        // DB PK(resolvedCctvId)는 환경/데이터에 따라 코드와 1:1로 매칭되지 않을 수 있어 경로가 꼬일 수 있음.
+                                        String cameraId = (cctvCode != null && !cctvCode.isBlank())
+                                                ? cctvCode.toLowerCase()
+                                                : (resolvedCctvId != null ? resolveCctvCodeOrDefault(resolvedCctvId).toLowerCase() : "cctv-unknown");
+                                    String overlayKey = s3Service.uploadOverlayFrame(overlayBytes, cameraId);
+                                    String overlayUrl = s3Service.toHttpUrl(overlayKey);
+                                    
+                                    // media_file 저장
+                                    mediaFileService.saveFrame(incidentId, resolvedCctvId, overlayUrl, detectedAtKst);
+                                    
+                                    log.info("✅ [FireDetection] Overlay saved: incidentId={}, url={}", incidentId, overlayUrl);
 
                                         // ✅ 감지 구간 기준 앞뒤 10초(총 20초) 클립 추출 → S3 업로드 → media_file(VIDEO) 저장
                                         try {
@@ -392,11 +426,8 @@ public class FireDetectionController {
                                             mediaFileService.saveVideo(incidentId, resolvedCctvId, clipUrl, detectedAtKst);
                                             log.info("✅ [FireDetection] Clip saved to S3+media_file: {}", clipUrl);
                                         } catch (Exception e) {
-                                            log.warn("⚠️ [FireDetection] Failed to extract/upload clip: {}", e.getMessage());
+                                            log.warn("⚠️ [FireDetection] Failed to extract/upload clip (segmentStartSec={}, durationSec=20)", segmentStartSec, e);
                                         }
-                                    } else {
-                                        log.warn("⚠️ [FireDetection] Gemini bbox response parsing failed");
-                                    }
                                 } catch (Exception e) {
                                     log.warn("⚠️ [FireDetection] Failed to generate/save overlay: {}", e.getMessage());
                                 }

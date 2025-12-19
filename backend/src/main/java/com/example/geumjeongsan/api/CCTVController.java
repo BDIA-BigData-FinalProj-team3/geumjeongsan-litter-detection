@@ -64,6 +64,7 @@ public class CCTVController {
     private final GeminiService geminiService;
     private final GeminiJsonExtractor geminiJsonExtractor;
     private final WeatherService weatherService;
+    private final ObjectMapper objectMapper;
 
     @Value("${app.model-server.url:http://54.116.3.241:8000/api/v1/video/analyze}")
     private String modelServerUrl;
@@ -131,6 +132,7 @@ public class CCTVController {
                           S3Service s3Service,
                           GeminiService geminiService,
                           GeminiJsonExtractor geminiJsonExtractor,
+                          ObjectMapper objectMapper,
                           ImageOverlayService imageOverlayService,
                           MediaFileService mediaFileService,
                           com.example.geumjeongsan.service.VideoFrameExtractor videoFrameExtractor,
@@ -144,6 +146,7 @@ public class CCTVController {
         this.s3Service = s3Service;
         this.geminiService = geminiService;
         this.geminiJsonExtractor = geminiJsonExtractor;
+        this.objectMapper = objectMapper;
         this.imageOverlayService = imageOverlayService;
         this.mediaFileService = mediaFileService;
         this.videoFrameExtractor = videoFrameExtractor;
@@ -740,6 +743,7 @@ public class CCTVController {
             // 6. overlay 생성 + S3 업로드
             String overlayUrl = null;
             try {
+                detections = refineTrashDetectionsWithPython(imageBytes, cameraId, detections);
                 byte[] overlayBytes = imageOverlayService.drawOverlayJpeg(imageBytes, detections);
                 String overlayKey = s3Service.uploadOverlayFrame(overlayBytes, cameraId);
                 overlayUrl = s3Service.toHttpUrl(overlayKey);
@@ -1078,11 +1082,13 @@ public class CCTVController {
             // 6. Overlay 이미지 생성 및 S3 업로드
             String overlayUrl = null;
             try {
+                detections = refineTrashDetectionsWithPython(imageBytes, (cctvCode != null ? cctvCode.toLowerCase() : "cctv-unknown"), detections);
                 byte[] overlayBytes = imageOverlayService.drawOverlayJpeg(imageBytes, detections);
-                Long resolvedCctvId = resolveCctvId(cctvId, cctvCode);
-                String cameraId = resolvedCctvId != null 
-                        ? String.format("cctv-%03d", resolvedCctvId) 
-                        : (cctvCode != null ? cctvCode.toLowerCase() : "cctv-unknown");
+                // ✅ 저장 경로는 CCTV "코드" 기준으로 고정 (예: CCTV-003 -> cctv-003)
+                // DB PK(resolvedCctvId)는 코드와 1:1 매칭이 보장되지 않아 경로가 꼬일 수 있음.
+                String cameraId = (cctvCode != null && !cctvCode.isBlank())
+                        ? cctvCode.toLowerCase()
+                        : "cctv-unknown";
                 String s3Key = s3Service.uploadOverlayFrame(overlayBytes, cameraId);
                 overlayUrl = s3Service.toHttpUrl(s3Key);
                 log.info("✅ [CCTV] Overlay image uploaded to S3: {}", overlayUrl);
@@ -1216,9 +1222,11 @@ public class CCTVController {
                             : trashAnalysisPrompt);
             
             Long resolvedCctvId = resolveCctvId(cctvId, cctvCode);
-            String cameraId = resolvedCctvId != null
-                    ? String.format("cctv-%03d", resolvedCctvId)
-                    : (cctvCode != null ? cctvCode.toLowerCase() : "cctv-unknown");
+            // ✅ 저장 경로는 CCTV "코드" 기준으로 고정 (예: CCTV-003 -> cctv-003)
+            // DB PK(resolvedCctvId)는 코드와 1:1 매칭이 보장되지 않아 경로가 꼬일 수 있음.
+            String cameraId = (cctvCode != null && !cctvCode.isBlank())
+                    ? cctvCode.toLowerCase()
+                    : "cctv-unknown";
             
             boolean savedToDb = false;
             Long incidentId = null;
@@ -1257,6 +1265,7 @@ public class CCTVController {
                 // 5-3) overlay 생성 + S3 업로드
                 String overlayUrl = null;
                 try {
+                    detections = refineTrashDetectionsWithPython(frameBytes, cameraId, detections);
                     byte[] overlayBytes = imageOverlayService.drawOverlayJpeg(frameBytes, detections);
                     String s3Key = s3Service.uploadOverlayFrame(overlayBytes, cameraId);
                     overlayUrl = s3Service.toHttpUrl(s3Key);
@@ -1403,9 +1412,11 @@ public class CCTVController {
 
             Long resolvedCctvId = resolveCctvId(null, cctvCode);
             String resolvedLocationDesc = resolveCctvLocationDesc(resolvedCctvId, cctvCode);
-            String cameraId = resolvedCctvId != null
-                    ? String.format("cctv-%03d", resolvedCctvId)
-                    : (cctvCode != null ? cctvCode.toLowerCase() : "cctv-unknown");
+            // ✅ S3 저장 경로는 "CCTV 코드"를 기준으로 고정 (예: CCTV-003 -> cctv-003)
+            // DB PK(resolvedCctvId)는 CCTV 코드와 1:1로 매칭되지 않을 수 있어 경로가 엉킬 수 있음.
+            String cameraId = (cctvCode != null && !cctvCode.isBlank())
+                    ? cctvCode.toLowerCase()
+                    : "cctv-unknown";
 
             boolean savedToDbResult = false;
             Long incidentId = null;
@@ -1444,6 +1455,7 @@ public class CCTVController {
                 // 5-3) overlay 생성 + S3 업로드
                 String overlayUrl = null;
                 try {
+                    detections = refineTrashDetectionsWithPython(frameBytes, cameraId, detections);
                     byte[] overlayBytes = imageOverlayService.drawOverlayJpeg(frameBytes, detections);
                     String s3Key = s3Service.uploadOverlayFrame(overlayBytes, cameraId);
                     overlayUrl = s3Service.toHttpUrl(s3Key);
@@ -1500,7 +1512,7 @@ public class CCTVController {
                                 mediaFileService.saveVideo(incidentId, resolvedCctvId, clipUrl, OffsetDateTime.now());
                                 log.info("✅ [CCTV] Trash clip saved to S3+media_file: {}", clipUrl);
                             } catch (Exception e) {
-                                log.warn("⚠️ [CCTV] Failed to extract/upload trash clip: {}", e.getMessage());
+                                log.warn("⚠️ [CCTV] (TrashVideoS3) clip extraction/upload failed (centerSec={}, durationSec=10)", i * frameIntervalSec, e);
                             }
 
                             if (stopOnDetect) {
@@ -1677,19 +1689,6 @@ public class CCTVController {
     }
 
     /**
-     * 이미지 파일을 Base64 문자열로 변환
-     */
-    private String imageToBase64(File imageFile) {
-        try {
-            byte[] imageBytes = Files.readAllBytes(imageFile.toPath());
-            return Base64.getEncoder().encodeToString(imageBytes);
-        } catch (IOException e) {
-            log.error("❌ [CCTV] Failed to convert image to Base64: {}", imageFile.getName(), e);
-            return null;
-        }
-    }
-
-    /**
      * 임시 파일 정리
      */
     private void cleanupTempFiles(File videoFile, File tempDir) {
@@ -1790,11 +1789,13 @@ public class CCTVController {
             // 5. Overlay 생성 & S3 업로드
             String overlayUrl = null;
             try {
+                detections = refineTrashDetectionsWithPython(imageBytes, (cctvCode != null ? cctvCode.toLowerCase() : "cctv-unknown"), detections);
                 byte[] overlayBytes = imageOverlayService.drawOverlayJpeg(imageBytes, detections);
-                Long resolvedCctvId = resolveCctvId(null, cctvCode);
-                String cameraId = resolvedCctvId != null
-                        ? String.format("cctv-%03d", resolvedCctvId)
-                        : cctvCode.toLowerCase();
+                // ✅ S3 저장 경로는 "CCTV 코드"를 기준으로 고정 (예: CCTV-003 -> cctv-003)
+                // DB PK(resolvedCctvId)는 CCTV 코드와 1:1로 매칭되지 않을 수 있어 경로가 엉킬 수 있음.
+                String cameraId = (cctvCode != null && !cctvCode.isBlank())
+                        ? cctvCode.toLowerCase()
+                        : "cctv-unknown";
                 String overlayKey = s3Service.uploadOverlayFrame(overlayBytes, cameraId);
                 overlayUrl = s3Service.toHttpUrl(overlayKey);
                 log.info("✅ [CCTV] Overlay uploaded: {}", overlayUrl);
@@ -1855,20 +1856,31 @@ public class CCTVController {
     }
 
     /**
-     * S3 영상 기반 화재 분석 (CCTV-002 전용)
+     * S3 영상 기반 화재 분석 (CCTV-002 전용) - 세그먼트 방식
      * POST /api/cctv/{cctvCode}/frame/analyze-fire-video
+     * 
+     * 10초마다 세그먼트 이동하며, 각 세그먼트당 2초 간격 5장의 프레임을 추출하여 분석
+     * 첫 감지 시 중단 옵션
      */
     @PostMapping("/{cctvCode}/frame/analyze-fire-video")
     public ResponseEntity<?> analyzeFireFromS3Video(
             @PathVariable String cctvCode,
-            @RequestParam(value = "saveToDb", defaultValue = "true") boolean saveToDb
+            @RequestParam(value = "saveToDb", defaultValue = "true") boolean saveToDb,
+            @RequestParam(value = "segmentStepSec", defaultValue = "10") int segmentStepSec,
+            @RequestParam(value = "framesPerSegment", defaultValue = "5") int framesPerSegment,
+            @RequestParam(value = "frameIntervalSec", defaultValue = "2") int frameIntervalSec,
+            @RequestParam(value = "maxSegments", defaultValue = "9999") int maxSegments,
+            @RequestParam(value = "minFrames", defaultValue = "2") int minFrames,
+            @RequestParam(value = "stopOnDetect", defaultValue = "true") boolean stopOnDetect
     ) {
         File videoFile = null;
         File tempDir = null;
         List<File> frameFiles = new ArrayList<>();
         
         try {
-            log.info("🔥 [CCTV] Starting S3 video fire analysis for: {}", cctvCode);
+            log.info("🔥 [CCTV] Starting S3 video fire analysis (SEGMENTED) for: {}", cctvCode);
+            log.info("⚙️ [CCTV] Segment config: step={}s, framesPerSegment={}, interval={}s", 
+                     segmentStepSec, framesPerSegment, frameIntervalSec);
             
             if (!"CCTV-002".equalsIgnoreCase(cctvCode)) {
                 return ResponseEntity.badRequest()
@@ -1895,103 +1907,116 @@ public class CCTVController {
             videoFile = videoFrameExtractor.downloadVideoToTemp(fireAnalysisVideoUrl);
             log.info("📥 [CCTV] Video downloaded from S3");
             
-            // 3. 임시 디렉토리 생성 및 프레임 추출
+            // 3. 임시 디렉토리 생성
             tempDir = new File(System.getProperty("java.io.tmpdir"), "fire-frames-" + System.currentTimeMillis());
             tempDir.mkdirs();
             
-            List<byte[]> extractedFrames = videoFrameExtractor.extractFrames(
-                videoFile, frameIntervalSeconds, maxFrames
-            );
-            
-            if (extractedFrames.isEmpty()) {
-                return ResponseEntity.ok(Map.of(
-                    "fireDetected", false,
-                    "message", "영상에서 프레임을 추출할 수 없습니다."
-                ));
-            }
-            
-            log.info("📸 [CCTV] Extracted {} frames", extractedFrames.size());
-            
-            // 4. 프레임을 임시 파일로 저장 (Python에 전달하기 위해)
-            for (int i = 0; i < extractedFrames.size(); i++) {
-                File frameFile = new File(tempDir, "frame_" + i + ".jpg");
-                Files.write(frameFile.toPath(), extractedFrames.get(i));
-                frameFiles.add(frameFile);
-            }
-            
-            // 5. Python fire_detector.py 실행 (여러 프레임을 한 번에 분석)
-            log.info("🐍 [CCTV] Running Python fire_detector.py with {} frames", frameFiles.size());
-            String resultJson = runPythonFireDetector(frameFiles, windDir, windSpeed, humidity, null);
-            
-            // 6. Python 결과 파싱
-            ObjectMapper objectMapper = new ObjectMapper();
-            @SuppressWarnings("unchecked")
-            Map<String, Object> pythonResult = objectMapper.readValue(resultJson, Map.class);
-            
-            log.info("🔍 [CCTV] Python analysis result: {}", pythonResult);
-            
-            // 7. analysis_result 추출
-            Map<String, Object> analysisResult = null;
-            if (pythonResult.get("analysis_result") instanceof Map) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> ar = (Map<String, Object>) pythonResult.get("analysis_result");
-                analysisResult = ar;
-            }
-            
-            if (analysisResult == null) {
-                log.warn("⚠️ [CCTV] No analysis_result in Python response");
-                return ResponseEntity.ok(Map.of(
-                    "fireDetected", false,
-                    "message", "분석 결과를 파싱할 수 없습니다."
-                ));
-            }
-            
-            // 8. 화재 감지 여부 확인
+            // 4. 세그먼트별 분석 시작
             boolean fireDetected = false;
-            if (analysisResult.get("is_fire_detected") instanceof Boolean) {
-                fireDetected = (Boolean) analysisResult.get("is_fire_detected");
-            }
-
-            // 🔥 감지 프레임 인덱스(0-based). 없으면 0으로 fallback.
-            int detectedFrameIndex = 0;
-            try {
-                Object idxObj = analysisResult.get("detected_frame_index");
-                if (idxObj instanceof Number n) detectedFrameIndex = n.intValue();
-                else if (idxObj != null) detectedFrameIndex = Integer.parseInt(idxObj.toString());
-            } catch (Exception ignore) {
-                detectedFrameIndex = 0;
-            }
+            Map<String, Object> finalAnalysisResult = null;
+            List<String> allFrameUrls = new ArrayList<>();
+            int detectedSegmentIndex = -1;
+            int detectedFrameIndexInSegment = 0;
+            int totalScannedSegments = 0;
             
-            log.info("🔥 [CCTV] Fire detected: {}", fireDetected);
-            
-            // 9. 프레임을 S3에 업로드
+            ObjectMapper objectMapper = new ObjectMapper();
             String cameraId = cctvCode.toLowerCase();
-            List<String> frameUrls = new ArrayList<>();
             
-            for (byte[] frameBytes : extractedFrames) {
-                String frameKey = s3Service.uploadFrame(frameBytes, cameraId);
-                String frameUrl = s3Service.toHttpUrl(frameKey);
-                frameUrls.add(frameUrl);
+            for (int seg = 0; seg < maxSegments; seg++) {
+                int segmentStartSec = seg * segmentStepSec;
+                
+                log.info("🔍 [CCTV] Analyzing segment {} (start={}s)", seg, segmentStartSec);
+                
+                // 세그먼트 시작 위치부터 프레임 추출
+                frameFiles = extractFramesFromStart(videoFile, tempDir, segmentStartSec, framesPerSegment, frameIntervalSec);
+                
+                if (frameFiles.size() < minFrames) {
+                    log.info("🛑 [CCTV] End of video reached at segment {} (frames={})", seg, frameFiles.size());
+                    break;
+                }
+                
+                totalScannedSegments++;
+                
+                // Python 실행 (이 세그먼트의 프레임들로 분석)
+                String resultJson = runPythonFireDetector(frameFiles, windDir, windSpeed, humidity, null);
+                
+                // 결과 파싱
+                @SuppressWarnings("unchecked")
+                Map<String, Object> pythonResult = objectMapper.readValue(resultJson, Map.class);
+                
+                // analysis_result 추출
+                Map<String, Object> analysisResult = null;
+                if (pythonResult.get("analysis_result") instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> ar = (Map<String, Object>) pythonResult.get("analysis_result");
+                    analysisResult = ar;
+                }
+                
+                if (analysisResult != null) {
+                    // 화재 감지 여부 확인
+                    boolean segmentFireDetected = false;
+                    if (analysisResult.get("is_fire_detected") instanceof Boolean) {
+                        segmentFireDetected = (Boolean) analysisResult.get("is_fire_detected");
+                    }
+                    
+                    // 프레임을 S3에 업로드 (감지된 경우)
+                    if (segmentFireDetected) {
+                        log.info("🔥 [CCTV] FIRE DETECTED in segment {} (start={}s)!", seg, segmentStartSec);
+                        
+                        // 프레임 업로드
+                        for (File frameFile : frameFiles) {
+                            byte[] frameBytes = Files.readAllBytes(frameFile.toPath());
+                            String frameKey = s3Service.uploadFrame(frameBytes, cameraId);
+                            String frameUrl = s3Service.toHttpUrl(frameKey);
+                            allFrameUrls.add(frameUrl);
+                        }
+                        
+                        fireDetected = true;
+                        finalAnalysisResult = analysisResult;
+                        detectedSegmentIndex = seg;
+                        
+                        // detected_frame_index 추출 (세그먼트 내 인덱스)
+                        try {
+                            Object idxObj = analysisResult.get("detected_frame_index");
+                            if (idxObj instanceof Number n) detectedFrameIndexInSegment = n.intValue();
+                            else if (idxObj != null) detectedFrameIndexInSegment = Integer.parseInt(idxObj.toString());
+                        } catch (Exception ignore) {
+                            detectedFrameIndexInSegment = 0;
+                        }
+                        
+                        if (stopOnDetect) {
+                            log.info("✋ [CCTV] Stopping on first detection (stopOnDetect=true)");
+                            break;
+                        }
+                    } else {
+                        log.info("✅ [CCTV] Segment {} clear (no fire)", seg);
+                    }
+                }
+                
+                // 다음 세그먼트를 위해 현재 프레임 파일들 삭제
+                for (File f : frameFiles) {
+                    if (f.exists()) f.delete();
+                }
+                frameFiles.clear();
             }
             
-            log.info("☁️ [CCTV] Uploaded {} frames to S3", frameUrls.size());
+            log.info("📊 [CCTV] Scan complete: scanned={} segments, detected={}", totalScannedSegments, fireDetected);
             
-            // 10. DB 저장 (화재 감지된 경우만)
+            // 5. DB 저장 (화재 감지된 경우만)
             Long incidentId = null;
             String incidentCode = null;
             boolean savedToDbResult = false;
             String clipUrl = null;
             
-            if (saveToDb && fireDetected) {
+            if (saveToDb && fireDetected && finalAnalysisResult != null) {
                 try {
                     log.info("💾 [CCTV] Saving fire incident to database");
                     Long resolvedCctvId = resolveCctvId(null, cctvCode);
                     String locationDesc = resolveCctvLocationDesc(resolvedCctvId, cctvCode);
                     
                     // Python 분석 결과를 기반으로 화재 사고 생성
-                    // createFireFromAiAnalysis는 analysis_result를 포함하는 Map을 요구
                     Map<String, Object> aiJson = new HashMap<>();
-                    aiJson.put("analysis_result", analysisResult);
+                    aiJson.put("analysis_result", finalAnalysisResult);
                     
                     var createResponse = fireService.createFireFromAiAnalysis(
                         aiJson,
@@ -2005,12 +2030,12 @@ public class CCTVController {
                     savedToDbResult = true;
                     
                     // 첫 번째 프레임을 media_file에 저장
-                    if (!frameUrls.isEmpty() && incidentId != null) {
+                    if (!allFrameUrls.isEmpty() && incidentId != null) {
                         try {
                             mediaFileService.saveFrame(
                                 incidentId, 
                                 resolvedCctvId, 
-                                frameUrls.get(0), 
+                                allFrameUrls.get(0), 
                                 OffsetDateTime.now()
                             );
                             log.info("✅ [CCTV] First frame saved to media_file");
@@ -2019,10 +2044,10 @@ public class CCTVController {
                         }
                     }
 
-                    // ✅ 감지 프레임 기준 앞뒤 10초(총 20초) 클립 추출 → S3 업로드 → media_file(VIDEO) 저장
+                    // ✅ 감지 세그먼트의 중간 시점 기준으로 클립 추출
                     try {
-                        int safeIndex = Math.max(0, Math.min(detectedFrameIndex, extractedFrames.size() - 1));
-                        int centerSeconds = safeIndex * frameIntervalSeconds;
+                        int detectedSegmentStartSec = detectedSegmentIndex * segmentStepSec;
+                        int centerSeconds = detectedSegmentStartSec + (detectedFrameIndexInSegment * frameIntervalSec);
                         File clipFile = extractVideoClip(videoFile, tempDir, centerSeconds, 20);
                         byte[] clipBytes = Files.readAllBytes(clipFile.toPath());
                         String clipKey = s3Service.uploadVideo(clipBytes, cameraId);
@@ -2039,22 +2064,25 @@ public class CCTVController {
                 }
             }
             
-            // 11. 응답 구성
+            // 6. 응답 구성
             Map<String, Object> response = new HashMap<>();
             response.put("fireDetected", fireDetected);
-            response.put("frameUrls", frameUrls);
+            response.put("frameUrls", allFrameUrls);
             response.put("overlayUrls", new ArrayList<>()); // Python 분석에서는 overlay 생성 안 함
             response.put("detectionCount", fireDetected ? 1 : 0);
             response.put("savedToDb", savedToDbResult);
-            response.put("totalFramesAnalyzed", extractedFrames.size());
-            response.put("analysisResult", analysisResult); // 전체 분석 결과 포함
+            response.put("totalFramesAnalyzed", allFrameUrls.size());
+            response.put("scannedSegments", totalScannedSegments);
+            response.put("detectedSegmentIndex", detectedSegmentIndex);
+            if (finalAnalysisResult != null) {
+                response.put("analysisResult", finalAnalysisResult); // 감지된 세그먼트의 분석 결과
+            }
             if (incidentId != null) response.put("incidentId", incidentId);
             if (incidentCode != null) response.put("incidentCode", incidentCode);
             if (clipUrl != null && !clipUrl.isBlank()) response.put("clipUrl", clipUrl);
-            response.put("detectedFrameIndex", detectedFrameIndex);
             
-            log.info("✅ [CCTV] S3 video fire analysis complete: detected={}, frames={}", 
-                     fireDetected, extractedFrames.size());
+            log.info("✅ [CCTV] S3 video fire analysis complete: detected={}, segments={}", 
+                     fireDetected, totalScannedSegments);
             
             return ResponseEntity.ok(response);
             
@@ -2063,7 +2091,7 @@ public class CCTVController {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(Map.of("error", e.getMessage()));
         } finally {
-            // 12. 임시 파일 정리
+            // 7. 임시 파일 정리
             cleanupTempFiles(videoFile, frameFiles, tempDir);
         }
     }
@@ -2192,6 +2220,237 @@ public class CCTVController {
         }
 
         throw new RuntimeException("Python 실행 커맨드를 찾지 못했습니다. app.python.command 설정을 확인하세요.", last);
+    }
+
+    /**
+     * ✅ 쓰레기 bbox 보정기(OpenCV GrabCut) 실행
+     * - Gemini가 준 bbox가 과대/오프셋인 경우를 줄이기 위해, python에서 ROI 기반으로 박스를 타이트닝합니다.
+     * - 실패하면 원본 detections를 그대로 반환(fallback)
+     */
+    private List<Map<String, Object>> refineTrashDetectionsWithPython(
+            byte[] imageBytes,
+            String cameraId,
+            List<Map<String, Object>> detections
+    ) {
+        if (imageBytes == null || imageBytes.length == 0) return detections;
+        if (detections == null || detections.isEmpty()) return detections;
+
+        File tmpDir = null;
+        File imgFile = null;
+        File detFile = null;
+        try {
+            tmpDir = new File(System.getProperty("java.io.tmpdir"), "trash-bbox-refine-" + System.currentTimeMillis());
+            tmpDir.mkdirs();
+
+            String safeCamera = (cameraId != null && !cameraId.isBlank()) ? cameraId.replaceAll("[^a-zA-Z0-9._-]", "_") : "cctv";
+            imgFile = new File(tmpDir, safeCamera + "_frame.jpg");
+            Files.write(imgFile.toPath(), imageBytes);
+
+            detFile = new File(tmpDir, safeCamera + "_detections.json");
+            objectMapper.writeValue(detFile, detections);
+
+            // script path
+            String userDir = System.getProperty("user.dir");
+            Path script1 = Paths.get(userDir, "ai", "trash_bbox_refiner.py");             // user.dir == backend
+            Path script2 = Paths.get(userDir, "backend", "ai", "trash_bbox_refiner.py");  // user.dir == repo root
+            Path scriptPath = Files.exists(script1) ? script1 : (Files.exists(script2) ? script2 : null);
+            if (scriptPath == null) {
+                return detections;
+            }
+
+            boolean isWindows = System.getProperty("os.name", "").toLowerCase().contains("win");
+
+            // python candidates (same policy as fire)
+            List<List<String>> pythonCandidates = new ArrayList<>();
+            if (configuredPythonCommand != null && !configuredPythonCommand.isBlank()) {
+                String[] parts = configuredPythonCommand.trim().split("\\s+");
+                List<String> cmd = new ArrayList<>();
+                for (String p : parts) if (!p.isBlank()) cmd.add(p);
+                if (!cmd.isEmpty()) pythonCandidates.add(cmd);
+            } else {
+                if (isWindows) {
+                    pythonCandidates.add(List.of("py", "-3"));
+                    pythonCandidates.add(List.of("py"));
+                    pythonCandidates.add(List.of("python"));
+                    pythonCandidates.add(List.of("python3"));
+                } else {
+                    pythonCandidates.add(List.of("python3"));
+                    pythonCandidates.add(List.of("python"));
+                }
+            }
+
+            Exception last = null;
+            for (List<String> pythonBase : pythonCandidates) {
+                List<String> command = new ArrayList<>();
+                command.addAll(pythonBase);
+                command.add(scriptPath.toAbsolutePath().toString());
+                command.add("--image"); command.add(imgFile.getAbsolutePath());
+                command.add("--detections"); command.add(detFile.getAbsolutePath());
+
+                log.info("🚀 [CCTV] Executing Python (trash bbox refine): {}", String.join(" ", command));
+
+                try {
+                    ProcessBuilder pb = new ProcessBuilder(command);
+                    pb.redirectErrorStream(false);
+                    Process process = pb.start();
+
+                    StringBuilder stdout = new StringBuilder();
+                    StringBuilder stderr = new StringBuilder();
+
+                    Thread outThread = new Thread(() -> {
+                        try (BufferedReader reader = new BufferedReader(
+                                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                            String line;
+                            while ((line = reader.readLine()) != null) stdout.append(line);
+                        } catch (Exception ignore) {}
+                    });
+                    Thread errThread = new Thread(() -> {
+                        try (BufferedReader reader = new BufferedReader(
+                                new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
+                            String line;
+                            while ((line = reader.readLine()) != null) stderr.append(line).append("\n");
+                        } catch (Exception ignore) {}
+                    });
+                    outThread.start();
+                    errThread.start();
+
+                    boolean finished = process.waitFor(30, TimeUnit.SECONDS);
+                    if (!finished) {
+                        process.destroyForcibly();
+                        throw new RuntimeException("trash bbox refine timeout(30s)");
+                    }
+                    try { outThread.join(1000); } catch (Exception ignore) {}
+                    try { errThread.join(1000); } catch (Exception ignore) {}
+
+                    int exitCode = process.exitValue();
+                    String out = stdout.toString();
+                    if (exitCode != 0) {
+                        String err = stderr.toString();
+                        throw new RuntimeException("trash bbox refine failed (exitCode=" + exitCode + "): " + (err != null && !err.isBlank() ? err : out));
+                    }
+                    if (stderr.length() > 0) {
+                        log.warn("⚠️ [CCTV] Python stderr (trash bbox refine): {}", stderr.toString().trim());
+                    }
+
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> parsed = objectMapper.readValue(out, Map.class);
+                    Object detsObj = parsed.get("detections");
+                    if (detsObj instanceof List<?> list) {
+                        List<Map<String, Object>> refined = new ArrayList<>();
+                        for (Object o : list) {
+                            if (o instanceof Map<?, ?>) {
+                                @SuppressWarnings("unchecked")
+                                Map<String, Object> m = (Map<String, Object>) o;
+                                refined.add(m);
+                            }
+                        }
+                        return refined;
+                    }
+                    return detections;
+                } catch (IOException ioe) {
+                    last = ioe;
+                    log.warn("⚠️ [CCTV] Python command start failed (cmd={}): {}", pythonBase, ioe.getMessage());
+                    continue;
+                } catch (Exception e) {
+                    last = e;
+                    log.warn("⚠️ [CCTV] trash bbox refine failed, fallback to original detections: {}", e.getMessage());
+                    return detections;
+                }
+            }
+
+            if (last != null) {
+                log.warn("⚠️ [CCTV] trash bbox refine: python not available, fallback. err={}", last.getMessage());
+            }
+            return detections;
+        } catch (Exception e) {
+            log.warn("⚠️ [CCTV] trash bbox refine unexpected error, fallback: {}", e.getMessage());
+            return detections;
+        } finally {
+            try { if (imgFile != null && imgFile.exists()) imgFile.delete(); } catch (Exception ignore) {}
+            try { if (detFile != null && detFile.exists()) detFile.delete(); } catch (Exception ignore) {}
+            try {
+                if (tmpDir != null && tmpDir.exists()) {
+                    File[] files = tmpDir.listFiles();
+                    if (files != null) for (File f : files) try { f.delete(); } catch (Exception ignore) {}
+                    tmpDir.delete();
+                }
+            } catch (Exception ignore) {}
+        }
+    }
+
+    /**
+     * 세그먼트 시작 위치부터 N장의 프레임을 추출 (FFmpeg 사용)
+     * 
+     * @param videoFile 영상 파일
+     * @param outputDir 출력 디렉토리
+     * @param segmentStartSec 세그먼트 시작 시점 (초)
+     * @param frameCount 추출할 프레임 수
+     * @param intervalSeconds 프레임 간격 (초)
+     * @return 추출된 프레임 파일 리스트
+     */
+    private List<File> extractFramesFromStart(File videoFile, File outputDir, int segmentStartSec, int frameCount, int intervalSeconds) throws IOException, InterruptedException {
+        List<File> frames = new ArrayList<>();
+
+        String ffmpegCommand = configuredFfmpegCommand != null ? configuredFfmpegCommand.trim() : "ffmpeg";
+        if (ffmpegCommand.isEmpty()) ffmpegCommand = "ffmpeg";
+
+        boolean isWindows = System.getProperty("os.name", "").toLowerCase().contains("win");
+        if ("ffmpeg".equalsIgnoreCase(ffmpegCommand) && isWindows) {
+            String[] candidates = new String[] {
+                    "C:\\\\bin\\\\ffmpeg.exe",
+                    "C:\\\\ffmpeg\\\\bin\\\\ffmpeg.exe"
+            };
+            for (String candidate : candidates) {
+                File f = new File(candidate);
+                if (f.exists() && f.isFile()) {
+                    ffmpegCommand = f.getAbsolutePath();
+                    break;
+                }
+            }
+        }
+
+        for (int i = 0; i < frameCount; i++) {
+            int timeSeconds = segmentStartSec + (i * intervalSeconds);
+            File outputFile = new File(outputDir, String.format("frame_%06d_%02d.jpg", segmentStartSec, i));
+
+            ProcessBuilder pb = new ProcessBuilder(
+                    ffmpegCommand,
+                    "-y",
+                    "-hide_banner",
+                    "-loglevel", "error",
+                    "-ss", String.valueOf(timeSeconds),
+                    "-i", videoFile.getAbsolutePath(),
+                    "-frames:v", "1",
+                    "-q:v", "2",
+                    "-vf", "scale=640:-1",
+                    outputFile.getAbsolutePath()
+            );
+
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+
+            // ffmpeg 출력(에러 포함) 캡쳐
+            String ffmpegOut = "";
+            try (InputStream is = process.getInputStream()) {
+                byte[] bytes = is.readAllBytes();
+                if (bytes != null && bytes.length > 0) {
+                    ffmpegOut = new String(bytes, StandardCharsets.UTF_8);
+                }
+            } catch (Exception ignore) {}
+
+            int exitCode = process.waitFor();
+            if (exitCode != 0 || !outputFile.exists() || outputFile.length() == 0) {
+                // 영상 끝에 도달하면 더 이상 프레임을 추출할 수 없음
+                String outShort = ffmpegOut == null ? "" : (ffmpegOut.length() > 200 ? ffmpegOut.substring(0, 200) : ffmpegOut);
+                log.debug("⚠️ [CCTV] FFmpeg frame extraction stopped at timeSeconds={} (exitCode={}, exists={}, size={}, out={})",
+                         timeSeconds, exitCode, outputFile.exists(), outputFile.exists() ? outputFile.length() : 0, outShort);
+                break;
+            }
+            
+            frames.add(outputFile);
+        }
+
+        return frames;
     }
 
     /**

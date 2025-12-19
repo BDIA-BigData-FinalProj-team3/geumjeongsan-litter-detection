@@ -70,6 +70,7 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
   const [dropdownPosition, setDropdownPosition] = useState<{top: number, left: number} | null>(null);
   const [assigneeModalOpen, setAssigneeModalOpen] = useState(false);
   const [pendingStatusChange, setPendingStatusChange] = useState<{ id: number; newStatus: string; dbStatus: string } | null>(null);
+  const [pendingBatchStatusChange, setPendingBatchStatusChange] = useState<{ ids: number[]; newStatus: string; dbStatus: string } | null>(null);
   
   // 신규 응급 사건 등록 모달
   const [showNewRecordModal, setShowNewRecordModal] = useState(false);
@@ -241,6 +242,38 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
   };
 
   const confirmAssigneeAndUpdate = async (assignedToId: number) => {
+    // 일괄처리인 경우
+    if (pendingBatchStatusChange) {
+      const { ids, newStatus, dbStatus } = pendingBatchStatusChange;
+      try {
+        // 모든 선택된 항목의 상태를 업데이트
+        for (const id of ids) {
+          await updateEmergencyStatus(id, dbStatus, { assignedToId });
+        }
+        
+        // 데이터 재로드
+        const [active, completed] = await Promise.all([getActiveEmergencies(), getCompletedEmergencies()]);
+        const filteredActive = active.filter(e => e.type === '응급');
+        const filteredCompleted = completed.filter(e => e.type === '응급');
+        const filteredActiveFinal = filteredActive.filter(e => !completedIncidents.has(e.cctvId));
+        setActiveEmergencies(filteredActiveFinal);
+        setCompletedEmergencies(filteredCompleted);
+        setEmergencyCount(filteredActiveFinal.length);
+        
+        // 선택 초기화
+        setSelectedIds([]);
+        alert(`${ids.length}건이 일괄처리되었습니다.`);
+      } catch (error) {
+        console.error('일괄 상태 업데이트 실패:', error);
+        alert('일괄 처리에 실패했습니다.');
+      } finally {
+        setAssigneeModalOpen(false);
+        setPendingBatchStatusChange(null);
+      }
+      return;
+    }
+    
+    // 개별처리인 경우
     if (!pendingStatusChange) return;
     const { id, newStatus, dbStatus } = pendingStatusChange;
     try {
@@ -286,26 +319,15 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
   };
 
   const handleBatchComplete = () => {
-    const now = new Date();
-    const responseTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    if (selectedIds.length === 0) return;
     
-    const itemsToComplete = activeEmergencies.filter(e => selectedIds.includes(e.id)).map(e => ({
-      ...e,
-      status: '처리완료',
-      responseTime,
-      duration: '10분'
-    }));
-    
-    // 처리완료된 사건의 CCTV ID를 전역 상태에 추가
-    itemsToComplete.forEach(item => {
-      addCompletedIncident(item.cctvId);
+    // 일괄처리: 처리자 선택 모달 띄우기
+    setPendingBatchStatusChange({ 
+      ids: selectedIds, 
+      newStatus: '처리완료', 
+      dbStatus: 'RESOLVED' 
     });
-    
-    const newActiveEmergencies = activeEmergencies.filter(e => !selectedIds.includes(e.id));
-    setCompletedEmergencies(prev => [...itemsToComplete, ...prev]);
-    setActiveEmergencies(newActiveEmergencies);
-    setEmergencyCount(newActiveEmergencies.length);
-    setSelectedIds([]);
+    setAssigneeModalOpen(true);
   };
 
   const handleEditClick = () => {
@@ -539,6 +561,7 @@ export default function EmergencyDashboard({ onNavigate }: EmergencyDashboardPro
         onClose={() => {
           setAssigneeModalOpen(false);
           setPendingStatusChange(null);
+          setPendingBatchStatusChange(null);
         }}
         onConfirm={(assignedToId) => confirmAssigneeAndUpdate(assignedToId)}
       />

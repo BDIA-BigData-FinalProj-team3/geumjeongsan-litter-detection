@@ -3,6 +3,7 @@ import { Mountain, AlertTriangle, Clock, MapPin, HelpCircle, Search, ChevronDown
 import Sidebar from '../components/Sidebar';
 import HamburgerMenuButton from '../components/HamburgerMenuButton';
 import IncidentDetailModal from '../components/IncidentDetailModal';
+import AssigneeSelectModal from '../components/AssigneeSelectModal';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useRealtimeNotification } from '../contexts/RealtimeNotificationContext';
 import { getActiveRockfalls, getCompletedRockfalls, getRockfallStats, getRockfallHotspots, createRockfall, updateRockfallStatus, getAllIncidentDetail, getRockfallDetail, updateRockfallDetail, type RockfallStatsResponse, type HotspotResponse } from '../services/api';
@@ -60,6 +61,9 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
   const [searchError, setSearchError] = useState<string | null>(null);
   const [statusDropdownOpen, setStatusDropdownOpen] = useState<number | null>(null);
   const [dropdownPosition, setDropdownPosition] = useState<{top: number, left: number} | null>(null);
+  const [assigneeModalOpen, setAssigneeModalOpen] = useState(false);
+  const [pendingStatusChange, setPendingStatusChange] = useState<{ id: number; newStatus: string; dbStatus: string } | null>(null);
+  const [pendingBatchStatusChange, setPendingBatchStatusChange] = useState<{ ids: number[]; newStatus: string; dbStatus: string } | null>(null);
   
   const handleDetailFieldChange = (field: string, value: string) => {
     setEditedDetail((prev: any) => ({
@@ -236,38 +240,80 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
                : newStatus === '대응중' ? 'IN_PROGRESS' 
                : 'PENDING';
       
+      // 대응중/처리완료는 처리자(STAFF) 선택 모달을 띄움
+      if (newStatus === '대응중' || newStatus === '처리완료') {
+        setPendingStatusChange({ id, newStatus, dbStatus });
+        setAssigneeModalOpen(true);
+        setStatusDropdownOpen(null);
+        setDropdownPosition(null);
+        return;
+      }
+      
       await updateRockfallStatus(id, dbStatus);
       
       // 성공 시 로컬 state 업데이트
-      if (newStatus === '처리완료') {
-        const now = new Date();
-        const responseTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-        
-        const itemToComplete = activeRockfalls.find(item => item.id === id);
-        if (itemToComplete) {
-          const completedItem = {
-            ...itemToComplete,
-            status: newStatus,
-            responseTime,
-            duration: '20분'
-          };
-          setCompletedRockfalls(prev => [completedItem, ...prev]);
-          setActiveRockfalls(prev => prev.filter(item => item.id !== id));
-        }
-      } else {
-        // 일반 상태 변경
-        setActiveRockfalls(prev => prev.map(item => 
-          item.id === id 
-            ? { ...item, status: newStatus }
-            : item
-        ));
-      }
+      setActiveRockfalls(prev => prev.map(item => 
+        item.id === id 
+          ? { ...item, status: newStatus }
+          : item
+      ));
       
       setStatusDropdownOpen(null);
       setDropdownPosition(null);
     } catch (error) {
       console.error('상태 업데이트 실패:', error);
       alert('상태 변경에 실패했습니다.');
+    }
+  };
+
+  const confirmAssigneeAndUpdate = async (assignedToId: number) => {
+    // 일괄처리인 경우
+    if (pendingBatchStatusChange) {
+      const { ids, newStatus, dbStatus } = pendingBatchStatusChange;
+      try {
+        // 모든 선택된 항목의 상태를 업데이트
+        for (const id of ids) {
+          await updateRockfallStatus(id, dbStatus, { assignedToId });
+        }
+        
+        // 데이터 재로드
+        const [active, completed] = await Promise.all([getActiveRockfalls(), getCompletedRockfalls()]);
+        setActiveRockfalls(active);
+        setCompletedRockfalls(completed);
+        
+        // 선택 초기화
+        setSelectedIds([]);
+        alert(`${ids.length}건이 일괄처리되었습니다.`);
+      } catch (error) {
+        console.error('일괄 상태 업데이트 실패:', error);
+        alert('일괄 처리에 실패했습니다.');
+      } finally {
+        setAssigneeModalOpen(false);
+        setPendingBatchStatusChange(null);
+      }
+      return;
+    }
+    
+    // 개별처리인 경우
+    if (!pendingStatusChange) return;
+    const { id, newStatus, dbStatus } = pendingStatusChange;
+    try {
+      await updateRockfallStatus(id, dbStatus, { assignedToId });
+
+      if (newStatus === '처리완료') {
+        const [active, completed] = await Promise.all([getActiveRockfalls(), getCompletedRockfalls()]);
+        setActiveRockfalls(active);
+        setCompletedRockfalls(completed);
+      } else {
+        const active = await getActiveRockfalls();
+        setActiveRockfalls(active);
+      }
+    } catch (error) {
+      console.error('상태 업데이트 실패:', error);
+      alert('상태 변경에 실패했습니다.');
+    } finally {
+      setAssigneeModalOpen(false);
+      setPendingStatusChange(null);
     }
   };
 
@@ -286,19 +332,15 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
   };
 
   const handleBatchComplete = () => {
-    const now = new Date();
-    const responseTime = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    if (selectedIds.length === 0) return;
     
-    const itemsToComplete = activeRockfalls.filter(r => selectedIds.includes(r.id)).map(r => ({
-      ...r,
-      status: '처리완료',
-      responseTime,
-      duration: '20분'
-    }));
-    
-    setCompletedRockfalls(prev => [...itemsToComplete, ...prev]);
-    setActiveRockfalls(prev => prev.filter(r => !selectedIds.includes(r.id)));
-    setSelectedIds([]);
+    // 일괄처리: 처리자 선택 모달 띄우기
+    setPendingBatchStatusChange({ 
+      ids: selectedIds, 
+      newStatus: '처리완료', 
+      dbStatus: 'RESOLVED' 
+    });
+    setAssigneeModalOpen(true);
   };
 
   // URL 파라미터에서 검색 코드 확인
@@ -374,6 +416,17 @@ export default function RockfallDashboard({ onNavigate }: RockfallDashboardProps
 
   return (
     <div className="flex h-screen">
+      <AssigneeSelectModal
+        open={assigneeModalOpen}
+        incidentType="ROCKFALL"
+        title="처리자 선택 (낙석)"
+        onClose={() => {
+          setAssigneeModalOpen(false);
+          setPendingStatusChange(null);
+          setPendingBatchStatusChange(null);
+        }}
+        onConfirm={(assignedToId) => confirmAssigneeAndUpdate(assignedToId)}
+      />
       {/* Sidebar - 반응형 (모바일: 75vw, PC: 고정) */}
       <div 
         className="fixed top-0 left-0 z-50 h-screen transition-transform duration-300 ease-in-out"
