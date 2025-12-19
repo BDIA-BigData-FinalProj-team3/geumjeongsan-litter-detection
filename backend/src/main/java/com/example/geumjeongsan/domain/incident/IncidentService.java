@@ -126,7 +126,7 @@ public class IncidentService {
     @Transactional
     public void updateIncidentWorkflow(Long incidentId, com.example.geumjeongsan.api.dto.IncidentWorkflowUpdateRequest req) {
         if (req == null) throw new IllegalArgumentException("request is null");
-        if (req.getActorId() == null) throw new IllegalArgumentException("actorId required");
+        // ✅ actorId가 없으면 null로 저장 (로그인하지 않은 경우 또는 시스템 자동 처리)
 
         Incident incident = incidentRepository.findById(incidentId)
                 .orElseThrow(() -> new RuntimeException("사건을 찾을 수 없습니다: " + incidentId));
