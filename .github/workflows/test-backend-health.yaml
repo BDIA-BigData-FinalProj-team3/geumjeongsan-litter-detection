@@ -3,7 +3,7 @@ name: Test Backend Health Check
 on:
   workflow_dispatch:  # 수동 실행
   schedule:
-    - cron: '*/30 * * * *'  # 30분마다 실행 (선택사항)
+    # - cron: '*/30 * * * *'  # 30분마다 실행 (선택사항)
 
 jobs:
   health-check:
